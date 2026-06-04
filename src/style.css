@@ -432,8 +432,8 @@ body {
 }
 
 .pixel-editor {
-  width: min(98vw, 1400px);
-  max-height: 95dvh;
+  width: min(96vw, 960px);
+  max-height: 92dvh;
   overflow: hidden;
   background: #1e2a3c;
   border: 1px solid var(--tcg-accent);
@@ -630,7 +630,9 @@ body {
   min-height: 0;
   flex: 1;
   min-width: 0;
-  min-height: min(85dvh, 720px);
+  flex: 1 1 auto;
+  min-height: min(50dvh, 380px);
+  max-height: min(58dvh, 420px);
 }
 
 .pixel-editor__view-controls {
