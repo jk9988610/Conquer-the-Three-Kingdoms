@@ -137,9 +137,10 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  /** 相对旧版默认格宽缩小为 1/4，缩放按钮只改格宽不改视口 */
-  const CELL_BASE_SCALE = 0.25;
-  const VIEW_AREA_SCALE = 4;
+  /** 缩放按钮只改格宽；默认格宽铺满视口（不再额外缩小 1/4） */
+  const CELL_BASE_SCALE = 1;
+  /** 预览/编辑外框相对弹窗的放大系数（v0.3.9 为 4，现减半为 2） */
+  const VIEW_AREA_SCALE = 2;
   const ZOOM_STEP = 1.2;
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
@@ -325,6 +326,7 @@ const picker = createColorPicker(
       `缩放: ${cellZoom.toFixed(2)}`,
       `网格: ${gridPixelW}×${gridPixelH}`,
       `视口: ${viewportW}×${viewportH}`,
+      `填充: ${Math.round((gridPixelW / viewportW) * 100)}%×${Math.round((gridPixelH / viewportH) * 100)}%`,
     ].join('\n');
   }
 
@@ -343,21 +345,18 @@ const picker = createColorPicker(
   function layoutViewport(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
     const bodyH =
-      bodyEl.clientHeight || Math.min(window.innerHeight * 0.85, 720);
+      bodyEl.clientHeight || Math.min(window.innerHeight * 0.55, 400);
     const sideW = TOOLS_COL_W + DEBUG_COL_W + COL_GAP;
     const cols = 2;
+    const areaMul = VIEW_AREA_SCALE / 2;
     const drawColW = Math.max(
-      160,
-      Math.floor(
-        ((bodyW - sideW - COL_GAP * (cols + 1)) / cols) * (VIEW_AREA_SCALE / 2)
-      )
+      120,
+      Math.floor(((bodyW - sideW - COL_GAP * (cols + 1)) / cols) * areaMul)
     );
 
     contentH = Math.max(
-      200,
-      Math.floor(
-        (bodyH - COL_HEAD_H * 2 - VIEW_CONTROLS_H - 16) * (VIEW_AREA_SCALE / 2)
-      )
+      140,
+      Math.floor((bodyH - COL_HEAD_H * 2 - VIEW_CONTROLS_H - 16) * areaMul)
     );
     viewportW = Math.max(GRID_COLS * 3, drawColW - 8);
     viewportH = contentH;
