@@ -1,33 +1,58 @@
-/** 卡牌标签：当前实现角色，预留动作与物品 */
-export type CardTag = 'character' | 'action' | 'item';
+/** 卡牌标签 */
+export type CardTag = 'character' | 'action' | 'item' | 'equipment';
 
 export type GamePhase = 'prep' | 'battle';
+
+/** 像素画标识，由程序绘制 */
+export type PixelArtKey =
+  | 'generic'
+  | 'lvbu'
+  | 'liu'
+  | 'guan'
+  | 'zhang'
+  | 'heal-potion'
+  | 'fangtian';
 
 export interface CardData {
   id: string;
   name: string;
   tags: CardTag[];
-  /** 角色卡展示用简短描述 */
   description?: string;
+  artKey?: PixelArtKey;
+  /** 商店售价（仅商店陈列） */
+  price?: number;
+}
+
+export interface BattleStats {
+  maxHp: number;
+  hp: number;
+  attack: number;
 }
 
 export interface CardInstance {
   instanceId: string;
   data: CardData;
+  /** 上场后的角色数值（预留装备加成等） */
+  stats?: BattleStats;
+}
+
+export interface ShopListing {
+  template: CardData;
+  /** 库存 -1 表示无限 */
+  stock: number;
 }
 
 export interface GameZones {
-  /** 我方手牌 */
   hand: CardInstance[];
-  /** 我方战场（场上下半区） */
   playerBattlefield: CardInstance[];
-  /** 敌方战场（场上上半区，战斗阶段） */
   enemyBattlefield: CardInstance[];
-  /** 商店区（准备阶段，与敌方战场共用上半区） */
   shop: CardInstance[];
 }
 
 export interface GameState {
   phase: GamePhase;
+  gold: number;
   zones: GameZones;
+  /** 商店可购列表（准备阶段） */
+  shopListings: ShopListing[];
 }
