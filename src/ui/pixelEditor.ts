@@ -10,7 +10,7 @@ import {
 import { INNER_ASPECT_RATIO } from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
-import { getOverlayMount } from './overlayRoot';
+import { getModalOverlayMount } from './overlayRoot';
 
 const GRID_COLS = 16;
 /** 与卡面内框同比例，格线为正方形 */
@@ -28,7 +28,7 @@ const PALETTE_PRESETS = [
   '#e8589a',
 ];
 
-type Tool = 'paint' | 'select' | 'move';
+type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'select' | 'move';
 
 interface Selection {
   x: number;
@@ -59,6 +59,30 @@ function normalizeRect(x0: number, y0: number, x1: number, y1: number) {
   const x = Math.min(x0, x1);
   const y = Math.min(y0, y1);
   return { x, y, w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+}
+
+function floodFill(
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  fill: Pixel
+): void {
+  const target = grid[y]?.[x] ?? null;
+  if (target === fill) return;
+
+  const stack: [number, number][] = [[x, y]];
+  const seen = new Set<string>();
+
+  while (stack.length > 0) {
+    const [cx, cy] = stack.pop()!;
+    const key = `${cx},${cy}`;
+    if (seen.has(key)) continue;
+    if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
+    if ((grid[cy][cx] ?? null) !== target) continue;
+    seen.add(key);
+    grid[cy][cx] = fill;
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
 }
 
 function copyRegion(grid: PixelGrid, rect: Selection): Pixel[][] {
@@ -128,25 +152,10 @@ export function openPixelEditor(onApplied: () => void): void {
       <h2>像素画绘制</h2>
       <button type="button" class="pixel-editor__close">×</button>
     </header>
-    <div class="pixel-editor__toolbar">
-      <label>卡牌 <select data-select></select></label>
-      <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
-      <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
-      <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
-      <button type="button" class="btn" data-toggle-grid>网格：开</button>
-      <button type="button" class="btn" data-clear>清空</button>
-      <button type="button" class="btn" data-apply>应用</button>
-      <button type="button" class="btn" data-export>导出</button>
-    </div>
-    <div class="pixel-editor__color-row">
-      <div data-color-picker></div>
-      <div class="pixel-editor__presets" data-presets></div>
-    </div>
     <div class="pixel-editor__body" data-body>
       <div class="pixel-editor__col pixel-editor__col--preview" data-col-preview>
         <div class="pixel-editor__col-head">预览</div>
-        <div class="pixel-editor__preview-workspace" data-preview-workspace>
-          <div class="pixel-editor__ruler-spacer" data-ruler-spacer></div>
+        <div class="pixel-editor__col-panel" data-preview-panel>
           <div class="pixel-editor__grid-frame" data-preview-frame>
             <canvas data-preview-grid-art></canvas>
             <canvas data-preview-grid></canvas>
@@ -155,27 +164,52 @@ export function openPixelEditor(onApplied: () => void): void {
       </div>
       <div class="pixel-editor__col pixel-editor__col--edit" data-col-edit>
         <div class="pixel-editor__col-head">绘制</div>
-        <div class="pixel-editor__workspace" data-workspace>
-          <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
-          <div class="pixel-editor__ruler-top" data-ruler-top></div>
-          <div class="pixel-editor__ruler-left" data-ruler-left></div>
-          <div class="pixel-editor__canvas-stack" data-canvas-stack>
-            <canvas data-edit-canvas></canvas>
-            <canvas data-grid-canvas></canvas>
-            <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+        <div class="pixel-editor__col-panel" data-edit-panel>
+          <div class="pixel-editor__workspace" data-workspace>
+            <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
+            <div class="pixel-editor__ruler-top" data-ruler-top></div>
+            <div class="pixel-editor__ruler-left" data-ruler-left></div>
+            <div class="pixel-editor__canvas-stack" data-canvas-stack>
+              <canvas data-edit-canvas></canvas>
+              <canvas data-grid-canvas></canvas>
+              <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pixel-editor__col pixel-editor__col--tools" data-col-tools>
+        <div class="pixel-editor__col-head">工具</div>
+        <div class="pixel-editor__tools-panel">
+          <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
+          <div class="pixel-editor__tools-grid">
+            <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
+          </div>
+          <div class="pixel-editor__color-block" data-color-picker></div>
+          <div class="pixel-editor__presets" data-presets></div>
+          <div class="pixel-editor__tools-actions">
+            <button type="button" class="btn" data-toggle-grid>网格：开</button>
+            <button type="button" class="btn" data-clear>清空</button>
+            <button type="button" class="btn" data-apply>应用</button>
+            <button type="button" class="btn" data-export>导出</button>
           </div>
         </div>
       </div>
     </div>
-    <textarea class="pixel-editor__export" data-export-area readonly rows="5"></textarea>
+    <textarea class="pixel-editor__export" data-export-area readonly rows="4"></textarea>
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
   const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
   const colPreview = panel.querySelector<HTMLElement>('[data-col-preview]')!;
   const colEdit = panel.querySelector<HTMLElement>('[data-col-edit]')!;
-  const previewWorkspace = panel.querySelector<HTMLElement>('[data-preview-workspace]')!;
-  const rulerSpacer = panel.querySelector<HTMLElement>('[data-ruler-spacer]')!;
+  const colTools = panel.querySelector<HTMLElement>('[data-col-tools]')!;
+  const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
+  const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
   const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
   const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
   const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
@@ -204,7 +238,7 @@ const picker = createColorPicker(
       paintColor = v.css;
     }
   );
-  colorPickerMount.append(picker);
+  colorPickerMount.append(picker.element);
 
   const presetsEl = panel.querySelector('[data-presets]')!;
   for (const hex of PALETTE_PRESETS) {
@@ -233,29 +267,31 @@ const picker = createColorPicker(
     return ctx;
   }
 
+  const TOOLS_COL_W = 168;
+  const COL_GAP = 12;
+  const COL_HEAD_H = 24;
+
   function layoutCanvases(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
-    const bodyH = bodyEl.clientHeight || Math.min(window.innerHeight * 0.5, 420);
-    const colGap = 14;
-    const colW = Math.max(
-      120,
-      Math.floor((bodyW - colGap) / 2),
-      colPreview.clientWidth || 0,
-      colEdit.clientWidth || 0
+    const bodyH = bodyEl.clientHeight || Math.min(window.innerHeight * 0.55, 480);
+    const drawColW = Math.max(
+      100,
+      Math.floor((bodyW - TOOLS_COL_W - COL_GAP * 2) / 2)
     );
 
-    const colHeadH = 22;
-    const editAreaW = colW - 4;
-    const editAreaH = bodyH - colHeadH;
+    const panelH = bodyH - COL_HEAD_H;
+    const editAreaW = drawColW - 4;
+    const editAreaH = panelH - 4;
 
     let nextCell = Math.floor(
       Math.min(
         (editAreaW - RULER_PX) / GRID_COLS,
-        (editAreaH - RULER_PX) / GRID_ROWS
+        editAreaH / GRID_ROWS,
+        (drawColW - 4) / GRID_COLS
       )
     );
 
-    cellSize = Math.max(12, Math.min(nextCell, 36));
+    cellSize = Math.max(10, Math.min(nextCell, 32));
     gridPixelW = GRID_COLS * cellSize;
     gridPixelH = GRID_ROWS * cellSize;
 
@@ -270,20 +306,21 @@ const picker = createColorPicker(
     previewFrame.style.width = `${gridPixelW}px`;
     previewFrame.style.height = `${gridPixelH}px`;
 
-    rulerSpacer.style.width = `${gridPixelW}px`;
-    rulerSpacer.style.height = `${RULER_PX}px`;
-
-    const workspaceSize = `${RULER_PX + gridPixelW}px`;
-    const workspaceH = `${RULER_PX + gridPixelH}px`;
-    workspace.style.width = workspaceSize;
-    workspace.style.height = workspaceH;
+    const workspaceW = RULER_PX + gridPixelW;
+    const workspaceH = RULER_PX + gridPixelH;
+    workspace.style.width = `${workspaceW}px`;
+    workspace.style.height = `${workspaceH}px`;
     workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
     workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
 
-    previewWorkspace.style.gridTemplateColumns = `${gridPixelW}px`;
-    previewWorkspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
-    previewWorkspace.style.width = `${gridPixelW}px`;
-    previewWorkspace.style.height = workspaceH;
+    const colPanelH = Math.max(workspaceH, gridPixelH);
+    previewPanel.style.minHeight = `${colPanelH}px`;
+    editPanel.style.minHeight = `${colPanelH}px`;
+    colTools.style.minHeight = `${colPanelH + COL_HEAD_H}px`;
+
+    colPreview.style.flex = `0 0 ${gridPixelW + 16}px`;
+    colEdit.style.flex = `0 0 ${workspaceW + 16}px`;
+    colTools.style.flex = `0 0 ${TOOLS_COL_W}px`;
 
     buildRulers();
     drawGridLines();
@@ -410,11 +447,19 @@ const picker = createColorPicker(
     if (next !== 'select') selectStart = null;
   }
 
-  function paintAt(x: number, y: number): void {
+  function paintAt(x: number, y: number, color: Pixel = paintColor): void {
     if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
     lastPaintCell = { x, y };
-    grid[y][x] = paintColor;
+    grid[y][x] = color;
     refreshAll();
+  }
+
+  function sampleColor(x: number, y: number): void {
+    const c = grid[y][x];
+    if (c) {
+      paintColor = c;
+      picker.setFromCss(c);
+    }
   }
 
   function finishSelection(x1: number, y1: number): void {
@@ -474,6 +519,21 @@ const picker = createColorPicker(
       paintAt(x, y);
       return;
     }
+    if (tool === 'fill') {
+      floodFill(grid, x, y, paintColor);
+      refreshAll();
+      return;
+    }
+    if (tool === 'eraser') {
+      lastPaintCell = null;
+      paintAt(x, y, null);
+      return;
+    }
+    if (tool === 'eyedropper') {
+      sampleColor(x, y);
+      setTool('paint');
+      return;
+    }
     if (tool === 'select') {
       selectStart = { x, y };
       updateSelectionBox({ x, y, w: 1, h: 1 });
@@ -500,6 +560,10 @@ const picker = createColorPicker(
     const { x, y } = cellFromEvent(e);
     if (tool === 'paint') {
       paintAt(x, y);
+      return;
+    }
+    if (tool === 'eraser') {
+      paintAt(x, y, null);
       return;
     }
     if (tool === 'select' && selectStart) {
@@ -594,7 +658,7 @@ const picker = createColorPicker(
   ro.observe(panel);
 
   overlay.append(panel);
-  getOverlayMount().append(overlay);
+  getModalOverlayMount().append(overlay);
   requestAnimationFrame(() => {
     layoutCanvases();
     requestAnimationFrame(() => layoutCanvases());

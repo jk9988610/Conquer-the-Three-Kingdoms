@@ -1,11 +1,17 @@
 import type { CardData, CardInstance, SlotKind } from '../game/types';
+import { INNER_ASPECT_RATIO } from '../tcg/dimensions';
 import { showCardBrief } from './cardBrief';
 import { createPixelArtCanvas } from './cardElement';
-import { getOverlayMount } from './overlayRoot';
+import { getModalOverlayMount } from './overlayRoot';
 
 export interface CharacterModalHandlers {
   onClose: () => void;
-  onUnequip: (slotKind: SlotKind, index: number) => void;
+  onUnequip?: (slotKind: SlotKind, index: number) => void;
+}
+
+export interface CharacterModalOptions {
+  /** 敌方角色不显示卸下装备 */
+  side: 'player' | 'enemy';
 }
 
 const SLOT_LABELS: Record<SlotKind, string> = {
@@ -16,9 +22,13 @@ const SLOT_LABELS: Record<SlotKind, string> = {
 
 export function openCharacterModal(
   character: CardInstance,
-  handlers: CharacterModalHandlers
+  handlers: CharacterModalHandlers,
+  options: CharacterModalOptions
 ): void {
   closeCharacterModal();
+
+  const { side } = options;
+  const canUnequip = side === 'player' && !!handlers.onUnequip;
 
   const overlay = document.createElement('div');
   overlay.className = 'char-modal-overlay';
@@ -27,52 +37,74 @@ export function openCharacterModal(
   const modal = document.createElement('div');
   modal.className = 'char-modal';
   modal.innerHTML = `
-    <header class="char-modal__head">
-      <h2 class="char-modal__title"></h2>
-      <button type="button" class="char-modal__close" aria-label="关闭">×</button>
-    </header>
-    <p class="char-modal__stats"></p>
-    <div class="char-modal__slots" data-slots></div>
+    <button type="button" class="char-modal__close" aria-label="关闭">×</button>
+    <div class="char-modal__layout">
+      <aside class="char-modal__equip" data-equip></aside>
+      <div class="char-modal__portrait" data-portrait></div>
+      <div class="char-modal__info">
+        <h2 class="char-modal__title"></h2>
+        <p class="char-modal__stats"></p>
+        <p class="char-modal__desc"></p>
+      </div>
+    </div>
   `;
 
+  const artKey = character.data.artKey ?? 'generic';
+  const portraitW = 140;
+  const portraitH = Math.round(portraitW / INNER_ASPECT_RATIO);
+  const portrait = createPixelArtCanvas(artKey, portraitW, portraitH);
+  portrait.className = 'char-modal__art';
+  modal.querySelector('[data-portrait]')!.append(portrait);
+
   modal.querySelector('.char-modal__title')!.textContent = character.data.name;
+  modal.querySelector('.char-modal__desc')!.textContent =
+    character.data.description ?? '';
+
   const st = character.stats;
   modal.querySelector('.char-modal__stats')!.textContent = st
-    ? `生命 ${st.hp}/${st.maxHp} · 攻击 ${st.attack}`
+    ? `生命 ${st.hp} / ${st.maxHp}　攻击 ${st.attack}`
     : '';
 
-  const slotsRoot = modal.querySelector('[data-slots]')!;
+  const equipRoot = modal.querySelector('[data-equip]')!;
   const loadout = character.loadout;
   if (loadout) {
     for (let i = 0; i < 3; i++) {
-      slotsRoot.append(
+      equipRoot.append(
         buildSlot(
           'weapon',
           i,
           `${SLOT_LABELS.weapon} ${i + 1}`,
           loadout.weapons[i],
-          handlers
+          canUnequip ? handlers : null
         )
       );
     }
-    slotsRoot.append(
-      buildSlot('vehicle', 0, SLOT_LABELS.vehicle, loadout.vehicle, handlers)
+    equipRoot.append(
+      buildSlot(
+        'vehicle',
+        0,
+        SLOT_LABELS.vehicle,
+        loadout.vehicle,
+        canUnequip ? handlers : null
+      )
     );
     for (let i = 0; i < 2; i++) {
-      slotsRoot.append(
+      equipRoot.append(
         buildSlot(
           'accessory',
           i,
           `${SLOT_LABELS.accessory} ${i + 1}`,
           loadout.accessories[i],
-          handlers
+          canUnequip ? handlers : null
         )
       );
     }
+  } else {
+    equipRoot.innerHTML = '<p class="char-modal__no-equip">无装备栏</p>';
   }
 
   overlay.append(modal);
-  getOverlayMount().append(overlay);
+  getModalOverlayMount().append(overlay);
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) handlers.onClose();
@@ -87,7 +119,7 @@ function buildSlot(
   index: number,
   label: string,
   entry: { instanceId: string; data: CardData } | null,
-  handlers: CharacterModalHandlers
+  handlers: CharacterModalHandlers | null
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'char-slot';
@@ -99,7 +131,7 @@ function buildSlot(
   const box = document.createElement('div');
   box.className = 'char-slot__box';
   if (entry) {
-    const art = createPixelArtCanvas(entry.data.artKey ?? 'generic', 56, 56);
+    const art = createPixelArtCanvas(entry.data.artKey ?? 'generic', 48, 48);
     art.classList.add('char-slot__art');
     art.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -111,14 +143,18 @@ function buildSlot(
     box.classList.add('char-slot__box--empty');
   }
 
-  const uneq = document.createElement('button');
-  uneq.type = 'button';
-  uneq.className = 'char-slot__unequip';
-  uneq.textContent = '卸下';
-  uneq.disabled = !entry;
-  uneq.addEventListener('click', () => handlers.onUnequip(kind, index));
+  wrap.append(title, box);
 
-  wrap.append(title, box, uneq);
+  if (handlers?.onUnequip) {
+    const uneq = document.createElement('button');
+    uneq.type = 'button';
+    uneq.className = 'char-slot__unequip';
+    uneq.textContent = '卸下';
+    uneq.disabled = !entry;
+    uneq.addEventListener('click', () => handlers.onUnequip!(kind, index));
+    wrap.append(uneq);
+  }
+
   return wrap;
 }
 

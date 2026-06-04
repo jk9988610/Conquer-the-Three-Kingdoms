@@ -5,10 +5,15 @@ export interface ColorPickerValue {
   alpha: number;
 }
 
+export interface ColorPickerHandle {
+  element: HTMLElement;
+  setFromCss: (css: string) => void;
+}
+
 export function createColorPicker(
   initial: ColorPickerValue,
   onChange: (v: ColorPickerValue) => void
-): HTMLElement {
+): ColorPickerHandle {
   const wrap = document.createElement('div');
   wrap.className = 'color-picker';
 
@@ -152,9 +157,34 @@ export function createColorPicker(
     }
   }
 
+  function setFromCss(css: string): void {
+    const m = css.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].split(',').map((s) => Number(s.trim()));
+      if (parts.length >= 3) {
+        [hue, sat, val] = rgbToHsv(parts[0], parts[1], parts[2]);
+        if (parts.length >= 4) alpha = parts[3];
+      }
+    } else if (css.startsWith('#')) {
+      let hex = css.slice(1);
+      if (hex.length === 3) {
+        hex = hex
+          .split('')
+          .map((ch) => ch + ch)
+          .join('');
+      }
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      [hue, sat, val] = rgbToHsv(r, g, b);
+    }
+    alphaRange.value = String(Math.round(alpha * 100));
+    emit();
+  }
+
   drawWheel();
   alphaRange.value = String(Math.round(alpha * 100));
   emit();
 
-  return wrap;
+  return { element: wrap, setFromCss };
 }

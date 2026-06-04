@@ -337,12 +337,14 @@ body {
   box-shadow: none !important;
 }
 
+.tcg-card--field-bare .tcg-card__text-layer {
+  visibility: hidden !important;
+  pointer-events: none;
+}
+
 .tcg-card--lift {
   transform: translateY(-12px);
   filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55));
-  transition:
-    transform 0.16s ease,
-    filter 0.16s ease;
   z-index: 3;
   position: relative;
 }
@@ -417,7 +419,7 @@ body {
 }
 
 .pixel-editor {
-  width: min(96vw, 820px);
+  width: min(98vw, 1060px);
   max-height: 95dvh;
   overflow: hidden;
   background: #1e2a3c;
@@ -605,12 +607,13 @@ body {
 }
 
 
-/* v0.3.3 绘制器：左预览右画布，格线为正方形 */
+/* 绘制器：预览 | 画布 | 工具 三栏等高居中 */
 .pixel-editor__body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  align-items: start;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
   min-height: 0;
   flex: 1;
   min-width: 0;
@@ -621,6 +624,74 @@ body {
   flex-direction: column;
   align-items: center;
   min-width: 0;
+  min-height: 0;
+}
+
+.pixel-editor__col-panel {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.pixel-editor__col--tools {
+  align-items: stretch;
+}
+
+.pixel-editor__tools-panel {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: #172030;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pixel-editor__card-label {
+  font-size: 0.7rem;
+  color: var(--tcg-muted);
+}
+
+.pixel-editor__card-label select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 0.7rem;
+}
+
+.pixel-editor__tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.pixel-editor__tools-grid .btn {
+  font-size: 0.65rem;
+  padding: 0.25rem 0.2rem;
+}
+
+.pixel-editor__color-block {
+  border-top: 1px solid var(--tcg-border);
+  padding-top: 6px;
+}
+
+.pixel-editor__tools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--tcg-border);
+}
+
+.pixel-editor__tools-actions .btn {
+  flex: 1 1 45%;
+  font-size: 0.62rem;
 }
 
 .pixel-editor__col-head {
@@ -835,4 +906,204 @@ body {
   border: 2px dashed #ec4;
   background: rgba(236, 196, 68, 0.12);
   pointer-events: none;
+}
+
+/* 角色详情弹窗：视口居中，左装备 / 中立绘 / 右信息 */
+.char-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.char-modal {
+  position: relative;
+  width: min(92vw, 520px);
+  max-height: 90dvh;
+  overflow: auto;
+  background: var(--tcg-surface);
+  border: 1px solid var(--tcg-accent);
+  border-radius: 10px;
+  padding: 14px 16px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.char-modal__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: transparent;
+  color: var(--tcg-text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.char-modal__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.char-modal__equip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.char-modal__no-equip {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--tcg-muted);
+}
+
+.char-modal__portrait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+}
+
+.char-modal__art {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.char-modal__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.char-modal__title {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--tcg-accent);
+}
+
+.char-modal__stats {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #8fd4a8;
+}
+
+.char-modal__desc {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--tcg-text);
+}
+
+.char-slot {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 2px 6px;
+  align-items: center;
+  font-size: 0.65rem;
+}
+
+.char-slot__label {
+  grid-column: 1;
+  color: var(--tcg-muted);
+  white-space: nowrap;
+}
+
+.char-slot__box {
+  grid-column: 2;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--tcg-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.char-slot__box--empty {
+  color: var(--tcg-muted);
+  font-size: 0.6rem;
+}
+
+.char-slot__art {
+  width: 48px;
+  height: 48px;
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+
+.char-slot__unequip {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.58rem;
+  border: 1px solid var(--tcg-border);
+  border-radius: 3px;
+  background: #253040;
+  color: var(--tcg-text);
+  cursor: pointer;
+}
+
+.char-slot__unequip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tcg-card--field-player {
+  cursor: pointer;
+}
+
+.tcg-card[data-field='enemy'] {
+  cursor: pointer;
+}
+
+.card-brief-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9200;
+  pointer-events: none;
+}
+
+.card-brief-layer--open {
+  pointer-events: auto;
+}
+
+.card-brief {
+  position: fixed;
+  max-width: 210px;
+  padding: 8px 10px;
+  background: #1e2a3c;
+  border: 1px solid var(--tcg-accent);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.card-brief__name {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--tcg-accent);
+}
+
+.card-brief__desc,
+.card-brief__effect {
+  margin: 0 0 4px;
+  color: var(--tcg-text);
+  line-height: 1.35;
 }

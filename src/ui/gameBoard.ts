@@ -42,6 +42,7 @@ export class GameBoard {
   private musicOn = false;
   private modalCharacterId: string | null = null;
   private activeDrag: DragSource | null = null;
+  private hoverLiftId: string | null = null;
 
   constructor(
     container: HTMLElement,
@@ -170,7 +171,7 @@ export class GameBoard {
       );
       if (c) {
         closeCharacterModal();
-        this.openModal(c);
+        this.openModal(c, 'player');
       } else {
         closeCharacterModal();
         this.modalCharacterId = null;
@@ -202,6 +203,25 @@ export class GameBoard {
     y: number,
     field: 'player' | 'enemy'
   ): string | null {
+    const expand = 20;
+
+    if (this.hoverLiftId) {
+      const lifted = this.root.querySelector<HTMLElement>(
+        `[data-instance-id="${this.hoverLiftId}"]`
+      );
+      if (lifted?.dataset.field === field) {
+        const r = lifted.getBoundingClientRect();
+        if (
+          x >= r.left - expand &&
+          x <= r.right + expand &&
+          y >= r.top - expand &&
+          y <= r.bottom + expand
+        ) {
+          return this.hoverLiftId;
+        }
+      }
+    }
+
     const cards = this.root.querySelectorAll<HTMLElement>(
       `.tcg-card[data-field="${field}"]`
     );
@@ -214,25 +234,40 @@ export class GameBoard {
     return null;
   }
 
-  private liftCard(instanceId: string | null): void {
-    if (!instanceId) return;
-    this.root
-      .querySelector(`[data-instance-id="${instanceId}"]`)
-      ?.classList.add('tcg-card--lift');
+  private setHoverLift(instanceId: string | null): void {
+    if (this.hoverLiftId === instanceId) return;
+    if (this.hoverLiftId) {
+      this.root
+        .querySelector(`[data-instance-id="${this.hoverLiftId}"]`)
+        ?.classList.remove('tcg-card--lift');
+    }
+    this.hoverLiftId = instanceId;
+    if (instanceId) {
+      this.root
+        .querySelector(`[data-instance-id="${instanceId}"]`)
+        ?.classList.add('tcg-card--lift');
+    }
   }
 
-  private clearHighlights(): void {
+  private clearZoneHighlights(): void {
     this.root
       .querySelectorAll('.zone__body--over')
       .forEach((z) => z.classList.remove('zone__body--over'));
-    this.root
-      .querySelectorAll('.tcg-card--lift')
-      .forEach((c) => c.classList.remove('tcg-card--lift'));
+  }
+
+  private clearHighlights(): void {
+    this.clearZoneHighlights();
+    this.setHoverLift(null);
   }
 
   private onDragMove(x: number, y: number): void {
-    this.clearHighlights();
-    if (!this.activeDrag) return;
+    this.clearZoneHighlights();
+    if (!this.activeDrag) {
+      this.setHoverLift(null);
+      return;
+    }
+
+    let nextLift: string | null = null;
 
     if (this.activeDrag.kind === 'shop' && this.pointInZone(x, y, 'hand')) {
       this.zoneBody('hand')?.classList.add('zone__body--over');
@@ -242,7 +277,10 @@ export class GameBoard {
       const card = this.state.zones.hand.find(
         (c) => c.instanceId === dragHand.instanceId
       );
-      if (!card) return;
+      if (!card) {
+        this.setHoverLift(null);
+        return;
+      }
       if (card.data.tags.includes('character') && this.pointInZone(x, y, 'player')) {
         this.zoneBody('player')?.classList.add('zone__body--over');
       }
@@ -250,16 +288,17 @@ export class GameBoard {
         card.data.tags.includes('equipment') ||
         card.data.tags.includes('item')
       ) {
-        this.liftCard(this.characterAt(x, y, 'player'));
+        nextLift = this.characterAt(x, y, 'player');
       }
       if (
         card.data.tags.includes('action') &&
         card.data.actionKind === 'attack' &&
         this.state.phase === 'battle'
       ) {
-        this.liftCard(this.characterAt(x, y, 'enemy'));
+        nextLift = this.characterAt(x, y, 'enemy');
       }
     }
+    this.setHoverLift(nextLift);
   }
 
   private handleDrop(x: number, y: number, isClick: boolean, src: DragSource): void {
@@ -372,29 +411,58 @@ export class GameBoard {
     ].join('\n');
   }
 
-  private openModal(character: CardInstance): void {
+  private openModal(character: CardInstance, side: 'player' | 'enemy'): void {
     const fresh =
-      this.state.zones.playerBattlefield.find(
-        (c) => c.instanceId === character.instanceId
-      ) ?? applyLoadoutToStats(ensureLoadout(character));
-    this.modalCharacterId = fresh.instanceId;
-    openCharacterModal(fresh, {
-      onClose: () => {
-        closeCharacterModal();
-        this.modalCharacterId = null;
+      side === 'player'
+        ? (this.state.zones.playerBattlefield.find(
+            (c) => c.instanceId === character.instanceId
+          ) ?? applyLoadoutToStats(ensureLoadout(character)))
+        : (this.state.zones.enemyBattlefield.find(
+            (c) => c.instanceId === character.instanceId
+          ) ?? applyLoadoutToStats(ensureLoadout(character)));
+
+    this.modalCharacterId = side === 'player' ? fresh.instanceId : null;
+    openCharacterModal(
+      fresh,
+      {
+        onClose: () => {
+          closeCharacterModal();
+          this.modalCharacterId = null;
+        },
+        onUnequip:
+          side === 'player'
+            ? (slotKind, index) => {
+                const id = this.modalCharacterId;
+                if (!id) return;
+                const res = unequipToHand(this.state, id, slotKind, index);
+                if (res.ok) {
+                  this.commitState(res.state);
+                  this.setHint('已卸下手牌');
+                } else {
+                  this.setHint(res.reason);
+                }
+              }
+            : undefined,
       },
-      onUnequip: (slotKind, index) => {
-        const id = this.modalCharacterId;
-        if (!id) return;
-        const res = unequipToHand(this.state, id, slotKind, index);
-        if (res.ok) {
-          this.commitState(res.state);
-          this.setHint('已卸下手牌');
-        } else {
-          this.setHint(res.reason);
-        }
-      },
-    });
+      { side }
+    );
+  }
+
+  private bindFieldTap(
+    el: HTMLElement,
+    instanceId: string,
+    side: 'player' | 'enemy'
+  ): void {
+    this.tapCleanups.push(
+      attachCardTap(el, () => {
+        const list =
+          side === 'player'
+            ? this.state.zones.playerBattlefield
+            : this.state.zones.enemyBattlefield;
+        const current = list.find((c) => c.instanceId === instanceId);
+        if (current) this.openModal(current, side);
+      })
+    );
   }
 
   private render(): void {
@@ -447,21 +515,15 @@ export class GameBoard {
       }
     } else {
       for (const card of this.state.zones.enemyBattlefield) {
-        topBody.append(createCardElement(card, { size, onField: 'enemy' }));
+        const el = createCardElement(card, { size, onField: 'enemy' });
+        this.bindFieldTap(el, card.instanceId, 'enemy');
+        topBody.append(el);
       }
     }
 
     for (const card of this.state.zones.playerBattlefield) {
       const el = createCardElement(card, { size, onField: 'player' });
-      const charId = card.instanceId;
-      this.tapCleanups.push(
-        attachCardTap(el, () => {
-          const current = this.state.zones.playerBattlefield.find(
-            (c) => c.instanceId === charId
-          );
-          if (current) this.openModal(current);
-        })
-      );
+      this.bindFieldTap(el, card.instanceId, 'player');
       playerBody.append(el);
     }
 
