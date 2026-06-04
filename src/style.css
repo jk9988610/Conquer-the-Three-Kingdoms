@@ -496,7 +496,7 @@ body {
 }
 
 
-/* v0.3.3 绘制器：左预览右画布，方格等大 */
+/* v0.3.3 绘制器：左预览右画布，格线为正方形 */
 .pixel-editor__body {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -540,7 +540,7 @@ body {
   box-sizing: border-box;
 }
 
-.pixel-editor__square-frame {
+.pixel-editor__grid-frame {
   position: relative;
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
   border: 1px solid #555;
@@ -548,7 +548,7 @@ body {
   flex-shrink: 0;
 }
 
-.pixel-editor__square-frame canvas {
+.pixel-editor__grid-frame canvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -557,11 +557,11 @@ body {
   image-rendering: crisp-edges;
 }
 
-.pixel-editor__square-frame [data-preview-square] {
+.pixel-editor__grid-frame [data-preview-grid-art] {
   z-index: 1;
 }
 
-.pixel-editor__square-frame [data-preview-grid] {
+.pixel-editor__grid-frame [data-preview-grid] {
   z-index: 2;
   pointer-events: none;
 }

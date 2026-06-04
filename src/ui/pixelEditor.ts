@@ -13,7 +13,8 @@ import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getOverlayMount } from './overlayRoot';
 
 const GRID_COLS = 16;
-const GRID_ROWS = 16;
+/** 与卡面内框同比例，格线为正方形 */
+const GRID_ROWS = Math.max(1, Math.round(GRID_COLS / INNER_ASPECT_RATIO));
 const RULER_PX = 18;
 
 const PALETTE_PRESETS = [
@@ -144,8 +145,8 @@ export function openPixelEditor(onApplied: () => void): void {
         <div class="pixel-editor__col-head">预览</div>
         <div class="pixel-editor__preview-workspace" data-preview-workspace>
           <div class="pixel-editor__ruler-spacer" data-ruler-spacer></div>
-          <div class="pixel-editor__square-frame" data-preview-frame>
-            <canvas data-preview-square></canvas>
+          <div class="pixel-editor__grid-frame" data-preview-frame>
+            <canvas data-preview-grid-art></canvas>
             <canvas data-preview-grid></canvas>
           </div>
         </div>
@@ -179,7 +180,7 @@ export function openPixelEditor(onApplied: () => void): void {
   const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
   const gridCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-canvas]')!;
-  const previewSquare = panel.querySelector<HTMLCanvasElement>('[data-preview-square]')!;
+  const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
   const previewGridCanvas = panel.querySelector<HTMLCanvasElement>('[data-preview-grid]')!;
   const previewCard = panel.querySelector<HTMLCanvasElement>('[data-preview-card]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
@@ -252,7 +253,10 @@ const picker = createColorPicker(
     const editAreaH = bodyH - colHeadH;
 
     let nextCell = Math.floor(
-      Math.min(editAreaW - RULER_PX, editAreaH - RULER_PX) / GRID_COLS
+      Math.min(
+        (editAreaW - RULER_PX) / GRID_COLS,
+        (editAreaH - RULER_PX) / GRID_ROWS
+      )
     );
 
     const cardWGuess = GRID_COLS * nextCell;
@@ -274,7 +278,7 @@ const picker = createColorPicker(
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
     setupCanvas(gridCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(previewSquare, gridPixelW, gridPixelH, dpr);
+    setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
     setupCanvas(previewGridCanvas, gridPixelW, gridPixelH, dpr);
 
     const cardW = gridPixelW;
@@ -369,7 +373,7 @@ const picker = createColorPicker(
   }
 
   function refreshPreview(): void {
-    const sq = previewSquare.getContext('2d');
+    const sq = previewGridArt.getContext('2d');
     if (sq) {
       sq.clearRect(0, 0, gridPixelW, gridPixelH);
       drawGridToCanvas(sq, grid, gridPixelW, gridPixelH);
