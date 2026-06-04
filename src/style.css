@@ -308,13 +308,15 @@ body {
 }
 
 .pixel-editor {
-  width: min(100%, 520px);
+  width: min(96vw, 820px);
   max-height: 95dvh;
   overflow: auto;
   background: #1e2a3c;
   border: 1px solid var(--tcg-accent);
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
 }
 
 .pixel-editor__head {
@@ -491,6 +493,94 @@ body {
   color: #b8d4a8;
   border: 1px solid #555;
   border-radius: 4px;
+}
+
+
+/* v0.3.3 绘制器：左预览右画布，方格等大 */
+.pixel-editor__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+  min-height: min(58vh, 460px);
+  flex: 1;
+  min-width: 0;
+}
+
+.pixel-editor__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.pixel-editor__col-head {
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--tcg-muted);
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.pixel-editor__col-head--sub {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.pixel-editor__preview-workspace {
+  display: grid;
+  gap: 0;
+  justify-content: center;
+}
+
+.pixel-editor__ruler-spacer {
+  background: #0e1420;
+  border: 1px solid #555;
+  border-bottom: none;
+  box-sizing: border-box;
+}
+
+.pixel-editor__square-frame {
+  position: relative;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid #555;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.pixel-editor__square-frame canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pixel-editor__square-frame [data-preview-square] {
+  z-index: 1;
+}
+
+.pixel-editor__square-frame [data-preview-grid] {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.pixel-editor__preview-card {
+  display: block;
+  flex-shrink: 0;
+  border: 1px solid #555;
+  background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 50% / 10px 10px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pixel-editor__col--edit {
+  align-items: center;
+}
+
+.pixel-editor__workspace {
+  margin-bottom: 0;
 }
 
 /* v0.3.2 绘制器：方格画布 + 色盘 */
