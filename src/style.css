@@ -305,12 +305,14 @@ body {
   align-items: center;
   justify-content: center;
   padding: 8px;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
 }
 
 .pixel-editor {
   width: min(96vw, 820px);
   max-height: 95dvh;
-  overflow: auto;
+  overflow: hidden;
   background: #1e2a3c;
   border: 1px solid var(--tcg-accent);
   border-radius: 8px;
@@ -502,7 +504,7 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
   align-items: start;
-  min-height: min(58vh, 460px);
+  min-height: 0;
   flex: 1;
   min-width: 0;
 }
@@ -566,14 +568,6 @@ body {
   pointer-events: none;
 }
 
-.pixel-editor__preview-card {
-  display: block;
-  flex-shrink: 0;
-  border: 1px solid #555;
-  background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 50% / 10px 10px;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-}
 
 .pixel-editor__col--edit {
   align-items: center;
@@ -642,6 +636,36 @@ body {
   justify-content: start;
   margin-bottom: 8px;
 }
+.pixel-editor__ruler-corner {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  height: 100%;
+  background: #0e1420;
+  border: 1px solid #555;
+  box-sizing: border-box;
+}
+
+.pixel-editor__workspace .pixel-editor__ruler-top {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.pixel-editor__workspace .pixel-editor__ruler-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.pixel-editor__workspace .pixel-editor__canvas-stack {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.pixel-editor__canvas-stack [data-edit-canvas] {
+  touch-action: none;
+  cursor: crosshair;
+}
+
 
 .pixel-editor__ruler-top {
   display: flex;
