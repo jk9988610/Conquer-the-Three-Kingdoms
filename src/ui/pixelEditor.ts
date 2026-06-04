@@ -108,6 +108,14 @@ function normalizeRect(x0: number, y0: number, x1: number, y1: number) {
   return { x, y, w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
 }
 
+function pixelEquals(a: Pixel, b: Pixel): boolean {
+  if (a === b) return true;
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return a.replace(/\s/g, '').toLowerCase() === b.replace(/\s/g, '').toLowerCase();
+}
+
+/** 在逻辑像素格上填充（与参考网格线无关） */
 function floodFill(
   grid: PixelGrid,
   cols: number,
@@ -117,7 +125,7 @@ function floodFill(
   fill: Pixel
 ): void {
   const target = grid[y]?.[x] ?? null;
-  if (target === fill) return;
+  if (pixelEquals(target, fill)) return;
 
   const stack: [number, number][] = [[x, y]];
   const seen = new Set<string>();
@@ -127,7 +135,7 @@ function floodFill(
     const key = `${cx},${cy}`;
     if (seen.has(key)) continue;
     if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
-    if ((grid[cy][cx] ?? null) !== target) continue;
+    if (!pixelEquals(grid[cy][cx] ?? null, target)) continue;
     seen.add(key);
     grid[cy][cx] = fill;
     stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
@@ -210,6 +218,8 @@ export function openPixelEditor(onApplied: () => void): void {
   const navPointers = new Map<number, { x: number; y: number }>();
   let navPinchDist0 = 0;
   let navPinchZoom0 = 1;
+  let pinchRaf = 0;
+  let pendingPinchFocal: { stageX: number; stageY: number } | null = null;
   let brushSize = 1;
   let baseCellSize = 4;
   let cellSize = 4;
@@ -433,7 +443,21 @@ const picker = createColorPicker(
     buildRulers();
   }
 
-  /** 捏合过程中只改格宽与平移，不触发 snapPanHome / 整页重排 */
+  function syncWorkspaceLayout(): void {
+    const pad = canvasPadPx();
+    const contentW = gridPixelW + 2 * pad;
+    const contentH = gridPixelH + 2 * pad;
+    gridScrollW = RULER_PX + Math.max(viewportW, contentW);
+    gridScrollH = RULER_PX + Math.max(viewportH, contentH);
+    const dpr = window.devicePixelRatio || 1;
+    setupCanvas(gridLayerCanvas, gridScrollW, gridScrollH, dpr);
+    workspace.style.width = `${gridScrollW}px`;
+    workspace.style.height = `${gridScrollH}px`;
+    editScrollInner.style.minWidth = `${gridScrollW}px`;
+    editScrollInner.style.minHeight = `${gridScrollH}px`;
+  }
+
+  /** 捏合过程中实时改格宽、平移、参考层（松手不再整页跳变） */
   function applyPinchZoom(pinchFocal: { stageX: number; stageY: number }): void {
     const oldCellSize = cellSize;
     const oldPanX = panOffset.x;
@@ -459,14 +483,25 @@ const picker = createColorPicker(
     }
 
     const pad = canvasPadPx();
-    const contentW = gridPixelW + 2 * pad;
-    const contentH = gridPixelH + 2 * pad;
-    artPan.style.width = `${contentW}px`;
-    artPan.style.height = `${contentH}px`;
+    artPan.style.width = `${gridPixelW + 2 * pad}px`;
+    artPan.style.height = `${gridPixelH + 2 * pad}px`;
+    editCanvas.style.left = `${pad}px`;
+    editCanvas.style.top = `${pad}px`;
+    syncWorkspaceLayout();
     applyPanTransform();
     refreshEditCanvas();
     updateSelectionBox();
     updateEditorDebug();
+  }
+
+  function schedulePinchZoom(focal: { stageX: number; stageY: number }): void {
+    pendingPinchFocal = focal;
+    if (pinchRaf) return;
+    pinchRaf = requestAnimationFrame(() => {
+      pinchRaf = 0;
+      if (pendingPinchFocal) applyPinchZoom(pendingPinchFocal);
+      pendingPinchFocal = null;
+    });
   }
 
   function ensureArtGridDims(): void {
@@ -598,12 +633,7 @@ const picker = createColorPicker(
       snapPanHome();
     }
 
-    gridScrollW = RULER_PX + Math.max(viewportW, contentW);
-    gridScrollH = RULER_PX + Math.max(viewportH, contentH);
-    setupCanvas(gridLayerCanvas, gridScrollW, gridScrollH, dpr);
-
-    workspace.style.width = `${gridScrollW}px`;
-    workspace.style.height = `${gridScrollH}px`;
+    syncWorkspaceLayout();
     workspace.style.gridTemplateColumns = `${RULER_PX}px 1fr`;
     workspace.style.gridTemplateRows = `${RULER_PX}px 1fr`;
 
@@ -611,9 +641,6 @@ const picker = createColorPicker(
     gridLayerCanvas.style.gridRow = '1 / -1';
     artStage.style.gridColumn = '2';
     artStage.style.gridRow = '2';
-
-    editScrollInner.style.minWidth = `${gridScrollW}px`;
-    editScrollInner.style.minHeight = `${gridScrollH}px`;
 
     previewInner.style.width = `${viewportW}px`;
     previewInner.style.height = `${viewportH}px`;
@@ -733,25 +760,37 @@ const picker = createColorPicker(
     updateSelectionBox();
   }
 
-  /** 指针 → 格子：优先 offsetX/Y（避免裁剪后 getBoundingClientRect 偏大） */
-  function cellFromEvent(e: PointerEvent): { x: number; y: number } {
-    let canvasX: number;
-    let canvasY: number;
-    if (e.target === editCanvas) {
+  /** 屏幕坐标 → 逻辑像素格（仅 TCG 画布内；参考格线外延区返回 null） */
+  function cellFromPointer(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = editCanvas.getBoundingClientRect();
+    const dw = rect.width > 0 ? rect.width : gridPixelW || 1;
+    const dh = rect.height > 0 ? rect.height : gridPixelH || 1;
+    const canvasX = ((clientX - rect.left) / dw) * gridPixelW;
+    const canvasY = ((clientY - rect.top) / dh) * gridPixelH;
+    if (canvasX < 0 || canvasY < 0 || canvasX >= gridPixelW || canvasY >= gridPixelH) {
+      return null;
+    }
+    return {
+      x: clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1),
+      y: clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1),
+    };
+  }
+
+  function cellFromEvent(e: PointerEvent): { x: number; y: number } | null {
+    if (e.target === editCanvas && typeof e.offsetX === 'number') {
       const dw = editCanvas.clientWidth || gridPixelW || 1;
       const dh = editCanvas.clientHeight || gridPixelH || 1;
-      canvasX = (e.offsetX / dw) * gridPixelW;
-      canvasY = (e.offsetY / dh) * gridPixelH;
-    } else {
-      const rect = editCanvas.getBoundingClientRect();
-      const dw = rect.width > 0 ? rect.width : gridPixelW;
-      const dh = rect.height > 0 ? rect.height : gridPixelH;
-      canvasX = ((e.clientX - rect.left) / dw) * gridPixelW;
-      canvasY = ((e.clientY - rect.top) / dh) * gridPixelH;
+      const canvasX = (e.offsetX / dw) * gridPixelW;
+      const canvasY = (e.offsetY / dh) * gridPixelH;
+      if (canvasX < 0 || canvasY < 0 || canvasX >= gridPixelW || canvasY >= gridPixelH) {
+        return null;
+      }
+      return {
+        x: clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1),
+        y: clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1),
+      };
     }
-    const x = clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1);
-    const y = clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1);
-    return { x, y };
+    return cellFromPointer(e.clientX, e.clientY);
   }
 
   function updateSelectionBox(rect?: { x: number; y: number; w: number; h: number }): void {
@@ -913,7 +952,7 @@ const picker = createColorPicker(
             ZOOM_MAX
           );
           const stageRect = artStage.getBoundingClientRect();
-          applyPinchZoom({
+          schedulePinchZoom({
             stageX: (pts[0].x + pts[1].x) / 2 - stageRect.left,
             stageY: (pts[0].y + pts[1].y) / 2 - stageRect.top,
           });
@@ -934,7 +973,15 @@ const picker = createColorPicker(
     navPointers.delete(e.pointerId);
     if (navPointers.size < 2) {
       if (wasPinching) {
-        layoutGrid();
+        if (pinchRaf) {
+          cancelAnimationFrame(pinchRaf);
+          pinchRaf = 0;
+        }
+        if (pendingPinchFocal) {
+          applyPinchZoom(pendingPinchFocal);
+          pendingPinchFocal = null;
+        }
+        refreshPreview();
       }
       navPinchDist0 = 0;
     }
@@ -951,9 +998,11 @@ const picker = createColorPicker(
   editCanvas.addEventListener('pointerdown', (e) => {
     if (zoomMode) return;
     e.preventDefault();
+    const cell = cellFromEvent(e);
+    if (!cell) return;
     pointerDrawing = true;
     editCanvas.setPointerCapture(e.pointerId);
-    const { x, y } = cellFromEvent(e);
+    const { x, y } = cell;
     if (tool === 'paint') {
       lastPaintCell = null;
       paintAt(x, y);
@@ -997,7 +1046,9 @@ const picker = createColorPicker(
   editCanvas.addEventListener('pointermove', (e) => {
     if (zoomMode || !editCanvas.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
-    const { x, y } = cellFromEvent(e);
+    const cell = cellFromEvent(e);
+    if (!cell) return;
+    const { x, y } = cell;
     if (tool === 'paint') {
       paintAt(x, y);
       return;
@@ -1021,7 +1072,18 @@ const picker = createColorPicker(
   });
 
   editCanvas.addEventListener('pointerup', (e) => {
-    const { x, y } = cellFromEvent(e);
+    const cell = cellFromEvent(e);
+    if (!cell) {
+      lastPaintCell = null;
+      pointerDrawing = false;
+      try {
+        editCanvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    const { x, y } = cell;
     if (tool === 'select' && selectStart) finishSelection(x, y);
     if (tool === 'move' && moveAnchor && selection) {
       commitMove(x - moveOffset.x, y - moveOffset.y);
@@ -1125,6 +1187,9 @@ const picker = createColorPicker(
   editorTeardown = () => {
     ro.disconnect();
     document.removeEventListener('keydown', onEscape);
+    if (pinchRaf) cancelAnimationFrame(pinchRaf);
+    pinchRaf = 0;
+    pendingPinchFocal = null;
     navPointers.clear();
     panDrag = null;
   };
