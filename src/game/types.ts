@@ -5,6 +5,8 @@ export type GamePhase = 'prep' | 'battle';
 
 export type SlotKind = 'weapon' | 'vehicle' | 'accessory';
 
+export type ActionKind = 'attack';
+
 export type PixelArtKey =
   | 'generic'
   | 'lvbu'
@@ -12,7 +14,10 @@ export type PixelArtKey =
   | 'guan'
   | 'zhang'
   | 'heal-potion'
-  | 'fangtian';
+  | 'fangtian'
+  | 'attack-red'
+  | 'attack-orange'
+  | 'attack-purple';
 
 export interface CardData {
   id: string;
@@ -24,6 +29,8 @@ export interface CardData {
   /** 装备占用的槽位类型 */
   equipSlot?: SlotKind;
   attackBonus?: number;
+  /** 动作牌类型（如攻击） */
+  actionKind?: ActionKind;
 }
 
 export interface BattleStats {

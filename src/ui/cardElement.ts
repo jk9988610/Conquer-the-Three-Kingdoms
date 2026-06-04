@@ -4,7 +4,8 @@ import type { TcgScaledSize } from '../tcg/dimensions';
 
 export interface CardElementOptions {
   size: TcgScaledSize;
-  onFieldPlayer?: boolean;
+  /** 场上角色：透明外框，仅显示像素与文本 */
+  onField?: 'player' | 'enemy';
   showPrice?: number;
   soldOut?: boolean;
 }
@@ -26,7 +27,7 @@ export function createCardElement(
   card: CardInstance,
   options: CardElementOptions
 ): HTMLElement {
-  const { size, onFieldPlayer = false, showPrice, soldOut = false } = options;
+  const { size, onField, showPrice, soldOut = false } = options;
 
   const el = document.createElement('article');
   el.className = 'tcg-card';
@@ -37,9 +38,12 @@ export function createCardElement(
   el.style.width = `${size.cardWidth}px`;
   el.style.height = `${size.cardHeight}px`;
 
-  if (onFieldPlayer) {
+  if (onField === 'player') {
     el.dataset.field = 'player';
-    el.classList.add('tcg-card--field-player');
+    el.classList.add('tcg-card--field-player', 'tcg-card--field-bare');
+  } else if (onField === 'enemy') {
+    el.dataset.field = 'enemy';
+    el.classList.add('tcg-card--field-bare');
   }
 
   const { left, top, width, height } = size.innerFrame;
