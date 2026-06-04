@@ -7,16 +7,14 @@ import {
   type PixelGrid,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
-import {
-  ART_PREVIEW_HEIGHT,
-  ART_PREVIEW_WIDTH,
-} from '../tcg/dimensions';
+import { INNER_ASPECT_RATIO } from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getOverlayMount } from './overlayRoot';
 
 const GRID_COLS = 16;
-const GRID_ROWS = 16;
+/** 与卡面内框同比例，格线为正方形 */
+const GRID_ROWS = Math.max(1, Math.round(GRID_COLS / INNER_ASPECT_RATIO));
 const RULER_PX = 18;
 
 const PALETTE_PRESETS = [
@@ -142,36 +140,55 @@ export function openPixelEditor(onApplied: () => void): void {
       <div data-color-picker></div>
       <div class="pixel-editor__presets" data-presets></div>
     </div>
-    <div class="pixel-editor__workspace" data-workspace>
-      <div class="pixel-editor__ruler-top" data-ruler-top></div>
-      <div class="pixel-editor__ruler-left" data-ruler-left></div>
-      <div class="pixel-editor__canvas-stack" data-canvas-stack>
-        <canvas data-edit-canvas></canvas>
-        <canvas data-grid-canvas></canvas>
-        <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+    <div class="pixel-editor__body" data-body>
+      <div class="pixel-editor__col pixel-editor__col--preview" data-col-preview>
+        <div class="pixel-editor__col-head">预览</div>
+        <div class="pixel-editor__preview-workspace" data-preview-workspace>
+          <div class="pixel-editor__ruler-spacer" data-ruler-spacer></div>
+          <div class="pixel-editor__grid-frame" data-preview-frame>
+            <canvas data-preview-grid-art></canvas>
+            <canvas data-preview-grid></canvas>
+          </div>
+        </div>
+        <div class="pixel-editor__col-head pixel-editor__col-head--sub">卡面贴合</div>
+        <canvas class="pixel-editor__preview-card" data-preview-card></canvas>
       </div>
-    </div>
-    <div class="pixel-editor__preview-wrap">
-      <span class="pixel-editor__preview-label">卡面预览</span>
-      <canvas class="pixel-editor__preview" data-preview></canvas>
+      <div class="pixel-editor__col pixel-editor__col--edit" data-col-edit>
+        <div class="pixel-editor__col-head">绘制</div>
+        <div class="pixel-editor__workspace" data-workspace>
+          <div class="pixel-editor__ruler-top" data-ruler-top></div>
+          <div class="pixel-editor__ruler-left" data-ruler-left></div>
+          <div class="pixel-editor__canvas-stack" data-canvas-stack>
+            <canvas data-edit-canvas></canvas>
+            <canvas data-grid-canvas></canvas>
+            <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+          </div>
+        </div>
+      </div>
     </div>
     <textarea class="pixel-editor__export" data-export-area readonly rows="5"></textarea>
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
+  const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
+  const colPreview = panel.querySelector<HTMLElement>('[data-col-preview]')!;
+  const colEdit = panel.querySelector<HTMLElement>('[data-col-edit]')!;
+  const previewWorkspace = panel.querySelector<HTMLElement>('[data-preview-workspace]')!;
+  const rulerSpacer = panel.querySelector<HTMLElement>('[data-ruler-spacer]')!;
+  const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
   const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
   const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
   const gridCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-canvas]')!;
-  const preview = panel.querySelector<HTMLCanvasElement>('[data-preview]')!;
+  const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
+  const previewGridCanvas = panel.querySelector<HTMLCanvasElement>('[data-preview-grid]')!;
+  const previewCard = panel.querySelector<HTMLCanvasElement>('[data-preview-card]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
   const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
   const exportArea = panel.querySelector<HTMLTextAreaElement>('[data-export-area]')!;
   const colorPickerMount = panel.querySelector('[data-color-picker]')!;
 
-  preview.width = ART_PREVIEW_WIDTH;
-  preview.height = ART_PREVIEW_HEIGHT;
 
   for (const k of PIXEL_ART_KEYS) {
     const opt = document.createElement('option');
@@ -201,32 +218,96 @@ const picker = createColorPicker(
     presetsEl.append(b);
   }
 
+  function setupCanvas(
+    canvas: HTMLCanvasElement,
+    w: number,
+    h: number,
+    dpr: number
+  ): CanvasRenderingContext2D | null {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+  }
+
   function layoutCanvases(): void {
-    const stackW = canvasStack.clientWidth || 240;
-    const stackH = canvasStack.clientHeight || 320;
-    cellSize = Math.max(6, Math.floor(Math.min(stackW / GRID_COLS, stackH / GRID_ROWS)));
+    const bodyW = bodyEl.clientWidth || panel.clientWidth;
+    const bodyH =
+      bodyEl.clientHeight || Math.min(window.innerHeight * 0.58, 500);
+    const colGap = 14;
+    const colW = Math.max(
+      120,
+      Math.floor((bodyW - colGap) / 2),
+      colPreview.clientWidth || 0,
+      colEdit.clientWidth || 0
+    );
+
+    const colHeadH = 22;
+    const subHeadH = 18;
+    const cardStripGap = 6;
+
+    const editAreaW = colW - 4;
+    const editAreaH = bodyH - colHeadH;
+
+    let nextCell = Math.floor(
+      Math.min(
+        (editAreaW - RULER_PX) / GRID_COLS,
+        (editAreaH - RULER_PX) / GRID_ROWS
+      )
+    );
+
+    const cardWGuess = GRID_COLS * nextCell;
+    const cardHGuess = Math.max(1, Math.round(cardWGuess / INNER_ASPECT_RATIO));
+    const previewStackH =
+      RULER_PX + GRID_ROWS * nextCell + subHeadH + cardStripGap + cardHGuess;
+    if (previewStackH > editAreaH + colHeadH) {
+      const maxCellFromPreview = Math.floor(
+        (editAreaH + colHeadH - subHeadH - cardStripGap - cardHGuess - RULER_PX) /
+          GRID_ROWS
+      );
+      nextCell = Math.min(nextCell, maxCellFromPreview);
+    }
+
+    cellSize = Math.max(12, Math.min(nextCell, 36));
     gridPixelW = GRID_COLS * cellSize;
     gridPixelH = GRID_ROWS * cellSize;
 
     const dpr = window.devicePixelRatio || 1;
-    for (const c of [editCanvas, gridCanvas]) {
-      c.width = Math.round(gridPixelW * dpr);
-      c.height = Math.round(gridPixelH * dpr);
-      c.style.width = `${gridPixelW}px`;
-      c.style.height = `${gridPixelH}px`;
-      const ctx = c.getContext('2d');
-      ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
+    setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
+    setupCanvas(gridCanvas, gridPixelW, gridPixelH, dpr);
+    setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
+    setupCanvas(previewGridCanvas, gridPixelW, gridPixelH, dpr);
+
+    const cardW = gridPixelW;
+    const cardH = Math.max(1, Math.round(cardW / INNER_ASPECT_RATIO));
+    setupCanvas(previewCard, cardW, cardH, dpr);
+    previewCard.style.width = `${cardW}px`;
+    previewCard.style.height = `${cardH}px`;
 
     canvasStack.style.width = `${gridPixelW}px`;
     canvasStack.style.height = `${gridPixelH}px`;
+    previewFrame.style.width = `${gridPixelW}px`;
+    previewFrame.style.height = `${gridPixelH}px`;
+
+    rulerSpacer.style.width = `${gridPixelW}px`;
+    rulerSpacer.style.height = `${RULER_PX}px`;
 
     workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
     workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
+    workspace.style.width = `${RULER_PX + gridPixelW}px`;
+    workspace.style.height = `${RULER_PX + gridPixelH}px`;
+
+    previewWorkspace.style.gridTemplateColumns = `${gridPixelW}px`;
+    previewWorkspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
+    previewWorkspace.style.width = `${gridPixelW}px`;
+    previewWorkspace.style.height = `${RULER_PX + gridPixelH}px`;
 
     buildRulers();
     drawGridLines();
-    refreshEditCanvas();
+    refreshAll();
     updateSelectionBox();
   }
 
@@ -252,11 +333,7 @@ const picker = createColorPicker(
     }
   }
 
-  function drawGridLines(): void {
-    const ctx = gridCanvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    if (!showGrid) return;
+  function strokeSquareGrid(ctx: CanvasRenderingContext2D): void {
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
     ctx.lineWidth = 1;
     for (let x = 0; x <= GRID_COLS; x++) {
@@ -275,6 +352,19 @@ const picker = createColorPicker(
     }
   }
 
+  function drawGridLines(): void {
+    const editGrid = gridCanvas.getContext('2d');
+    if (editGrid) {
+      editGrid.clearRect(0, 0, gridPixelW, gridPixelH);
+      if (showGrid) strokeSquareGrid(editGrid);
+    }
+    const previewGrid = previewGridCanvas.getContext('2d');
+    if (previewGrid) {
+      previewGrid.clearRect(0, 0, gridPixelW, gridPixelH);
+      if (showGrid) strokeSquareGrid(previewGrid);
+    }
+  }
+
   function refreshEditCanvas(): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
@@ -283,10 +373,18 @@ const picker = createColorPicker(
   }
 
   function refreshPreview(): void {
-    const ctx = preview.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, ART_PREVIEW_WIDTH, ART_PREVIEW_HEIGHT);
-    drawGridToCanvas(ctx, grid, ART_PREVIEW_WIDTH, ART_PREVIEW_HEIGHT);
+    const sq = previewGridArt.getContext('2d');
+    if (sq) {
+      sq.clearRect(0, 0, gridPixelW, gridPixelH);
+      drawGridToCanvas(sq, grid, gridPixelW, gridPixelH);
+    }
+    const cardW = gridPixelW;
+    const cardH = Math.max(1, Math.round(cardW / INNER_ASPECT_RATIO));
+    const card = previewCard.getContext('2d');
+    if (card) {
+      card.clearRect(0, 0, cardW, cardH);
+      drawGridToCanvas(card, grid, cardW, cardH);
+    }
   }
 
   function refreshAll(): void {
@@ -494,11 +592,15 @@ const picker = createColorPicker(
   });
 
   const ro = new ResizeObserver(() => layoutCanvases());
-  ro.observe(canvasStack);
+  ro.observe(bodyEl);
+  ro.observe(panel);
 
   overlay.append(panel);
   getOverlayMount().append(overlay);
-  requestAnimationFrame(() => layoutCanvases());
+  requestAnimationFrame(() => {
+    layoutCanvases();
+    requestAnimationFrame(() => layoutCanvases());
+  });
 }
 
 export function closePixelEditor(): void {
