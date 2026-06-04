@@ -110,10 +110,6 @@ body {
 }
 
 .game-board__module--tools {
-  flex: 0 0 auto;
-}
-
-.game-board__module--debug {
   flex: 1 1 0;
   min-height: 0;
 }
@@ -134,10 +130,23 @@ body {
   font-size: 0.72rem;
 }
 
-.game-board__module-body--tools {
+.game-board__module-body--tools-row {
   display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 0;
+  padding: 6px;
+}
+
+.game-board__tool-buttons {
+  display: flex;
+  flex-direction: column;
   flex-wrap: wrap;
   gap: 4px;
+  flex: 0 0 auto;
+  max-height: 120px;
 }
 
 .game-board__stat-line {
@@ -181,7 +190,11 @@ body {
   white-space: pre-wrap;
   overflow: auto;
   flex: 1 1 0;
-  min-height: 0;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .btn {
@@ -419,7 +432,7 @@ body {
 }
 
 .pixel-editor {
-  width: min(98vw, 1060px);
+  width: min(98vw, 1280px);
   max-height: 95dvh;
   overflow: hidden;
   background: #1e2a3c;
@@ -617,6 +630,50 @@ body {
   min-height: 0;
   flex: 1;
   min-width: 0;
+  min-height: min(82dvh, 640px);
+}
+
+.pixel-editor__view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 4px;
+  width: 100%;
+}
+
+.pixel-editor__view-controls .btn {
+  font-size: 0.62rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.pixel-editor--pan-mode .pixel-editor__edit-scroll {
+  cursor: grab;
+  touch-action: none;
+}
+
+.pixel-editor--pan-mode [data-edit-canvas] {
+  pointer-events: none;
+}
+
+.pixel-editor__edit-scroll {
+  overflow: auto;
+  max-width: 100%;
+  border: 1px solid var(--tcg-border);
+  border-radius: 4px;
+  background: #0e1420;
+}
+
+.pixel-editor__brush-size {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.65rem;
+  color: var(--tcg-muted);
+}
+
+.pixel-editor__brush-size input[type='range'] {
+  width: 100%;
 }
 
 .pixel-editor__col {
@@ -908,7 +965,7 @@ body {
   pointer-events: none;
 }
 
-/* 角色详情弹窗：视口居中，左装备 / 中立绘 / 右信息 */
+/* 角色详情弹窗：左信息 / 中立绘 / 右装备 */
 .char-modal-overlay {
   position: fixed;
   inset: 0;
@@ -947,17 +1004,48 @@ body {
 
 .char-modal__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.char-modal__equip-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.char-modal__equip-title {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--tcg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .char-modal__equip {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.15);
   max-height: 320px;
   overflow-y: auto;
+}
+
+.char-modal__equip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.char-modal__equip-row--weapons {
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--tcg-border);
 }
 
 .char-modal__no-equip {
@@ -985,8 +1073,23 @@ body {
 .char-modal__info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.char-modal__info-block {
+  padding: 8px 10px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.char-modal__info-block--stats {
+  border-color: rgba(143, 212, 168, 0.35);
+}
+
+.char-modal__info-block--desc {
+  flex: 1 1 auto;
 }
 
 .char-modal__title {

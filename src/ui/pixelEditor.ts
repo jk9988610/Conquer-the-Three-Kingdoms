@@ -137,7 +137,19 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  let cellSize = 14;
+  /** 相对旧版默认格宽缩小为 1/4，可由缩放按钮放大 */
+  const CELL_BASE_SCALE = 0.25;
+  const VIEW_AREA_SCALE = 2;
+  const ZOOM_STEP = 1.2;
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 4;
+
+  let cellZoom = 1;
+  let panMode = false;
+  let panOffset = { x: 0, y: 0 };
+  let panDrag: { px: number; py: number; ox: number; oy: number } | null = null;
+  let brushSize = 1;
+  let cellSize = 4;
   let gridPixelW = GRID_COLS * cellSize;
   let gridPixelH = GRID_ROWS * cellSize;
 
@@ -164,7 +176,13 @@ export function openPixelEditor(onApplied: () => void): void {
       </div>
       <div class="pixel-editor__col pixel-editor__col--edit" data-col-edit>
         <div class="pixel-editor__col-head">绘制</div>
+        <div class="pixel-editor__view-controls">
+          <button type="button" class="btn" data-zoom-out title="缩小格子">缩小</button>
+          <button type="button" class="btn" data-zoom-in title="放大格子">放大</button>
+          <button type="button" class="btn" data-pan-toggle title="拖动画布视口">拖动</button>
+        </div>
         <div class="pixel-editor__col-panel" data-edit-panel>
+          <div class="pixel-editor__edit-scroll" data-edit-scroll>
           <div class="pixel-editor__workspace" data-workspace>
             <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
             <div class="pixel-editor__ruler-top" data-ruler-top></div>
@@ -174,6 +192,7 @@ export function openPixelEditor(onApplied: () => void): void {
               <canvas data-grid-canvas></canvas>
               <div class="pixel-editor__sel-box" data-sel-box hidden></div>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -189,6 +208,11 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
             <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
           </div>
+          <label class="pixel-editor__brush-size">
+            <span>画笔粗细</span>
+            <input type="range" data-brush-size min="1" max="8" value="1" />
+            <span data-brush-size-label>1</span>
+          </label>
           <div class="pixel-editor__color-block" data-color-picker></div>
           <div class="pixel-editor__presets" data-presets></div>
           <div class="pixel-editor__tools-actions">
@@ -210,6 +234,7 @@ export function openPixelEditor(onApplied: () => void): void {
   const colTools = panel.querySelector<HTMLElement>('[data-col-tools]')!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
+  const editScroll = panel.querySelector<HTMLElement>('[data-edit-scroll]')!;
   const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
   const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
   const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
@@ -271,27 +296,42 @@ const picker = createColorPicker(
   const COL_GAP = 12;
   const COL_HEAD_H = 24;
 
+  function applyPanTransform(): void {
+    workspace.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
+  }
+
+  function updatePanUi(): void {
+    panel.classList.toggle('pixel-editor--pan-mode', panMode);
+    const panBtn = panel.querySelector<HTMLElement>('[data-pan-toggle]');
+    if (panBtn) panBtn.textContent = panMode ? '拖动：开' : '拖动';
+    editCanvas.style.cursor = panMode ? 'grab' : 'crosshair';
+  }
+
   function layoutCanvases(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
-    const bodyH = bodyEl.clientHeight || Math.min(window.innerHeight * 0.55, 480);
+    const bodyH =
+      bodyEl.clientHeight ||
+      Math.min(window.innerHeight * 0.82, 640) * VIEW_AREA_SCALE;
     const drawColW = Math.max(
-      100,
-      Math.floor((bodyW - TOOLS_COL_W - COL_GAP * 2) / 2)
+      140,
+      Math.floor(((bodyW - TOOLS_COL_W - COL_GAP * 2) / 2) * VIEW_AREA_SCALE)
     );
 
-    const panelH = bodyH - COL_HEAD_H;
+    const panelH = bodyH - COL_HEAD_H - 28;
     const editAreaW = drawColW - 4;
     const editAreaH = panelH - 4;
 
-    let nextCell = Math.floor(
-      Math.min(
-        (editAreaW - RULER_PX) / GRID_COLS,
-        editAreaH / GRID_ROWS,
-        (drawColW - 4) / GRID_COLS
-      )
+    const rawCell = Math.min(
+      (editAreaW - RULER_PX) / GRID_COLS,
+      editAreaH / GRID_ROWS,
+      (drawColW - 4) / GRID_COLS
     );
+    const nextCell = Math.floor(rawCell * CELL_BASE_SCALE);
 
-    cellSize = Math.max(10, Math.min(nextCell, 32));
+    cellSize = Math.max(
+      3,
+      Math.min(Math.round(nextCell * cellZoom), 56)
+    );
     gridPixelW = GRID_COLS * cellSize;
     gridPixelH = GRID_ROWS * cellSize;
 
@@ -318,9 +358,13 @@ const picker = createColorPicker(
     editPanel.style.minHeight = `${colPanelH}px`;
     colTools.style.minHeight = `${colPanelH + COL_HEAD_H}px`;
 
-    colPreview.style.flex = `0 0 ${gridPixelW + 16}px`;
-    colEdit.style.flex = `0 0 ${workspaceW + 16}px`;
+    const colPad = 16 * VIEW_AREA_SCALE;
+    colPreview.style.flex = `0 0 ${gridPixelW + colPad}px`;
+    colEdit.style.flex = `0 0 ${Math.max(workspaceW + colPad, drawColW)}px`;
     colTools.style.flex = `0 0 ${TOOLS_COL_W}px`;
+
+    editScroll.style.maxHeight = `${Math.max(panelH, workspaceH + 8)}px`;
+    applyPanTransform();
 
     buildRulers();
     drawGridLines();
@@ -378,7 +422,6 @@ const picker = createColorPicker(
     const previewGrid = previewGridCanvas.getContext('2d');
     if (previewGrid) {
       previewGrid.clearRect(0, 0, gridPixelW, gridPixelH);
-      if (showGrid) strokeSquareGrid(previewGrid);
     }
   }
 
@@ -448,9 +491,25 @@ const picker = createColorPicker(
   }
 
   function paintAt(x: number, y: number, color: Pixel = paintColor): void {
-    if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
+    const r = Math.floor(brushSize / 2);
+    let changed = false;
+    for (let dy = -r; dy <= brushSize - 1 - r; dy++) {
+      for (let dx = -r; dx <= brushSize - 1 - r; dx++) {
+        const cx = x + dx;
+        const cy = y + dy;
+        if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
+        if (lastPaintCell?.x === cx && lastPaintCell?.y === cy && brushSize === 1) {
+          continue;
+        }
+        grid[cy][cx] = color;
+        changed = true;
+      }
+    }
+    if (!changed && brushSize === 1) {
+      if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
+      grid[y][x] = color;
+    }
     lastPaintCell = { x, y };
-    grid[y][x] = color;
     refreshAll();
   }
 
@@ -509,7 +568,43 @@ const picker = createColorPicker(
     { passive: false }
   );
 
+  editScroll.addEventListener('pointerdown', (e) => {
+    if (!panMode) return;
+    if (e.target !== editScroll && e.target !== workspace) return;
+    e.preventDefault();
+    panDrag = {
+      px: e.clientX,
+      py: e.clientY,
+      ox: panOffset.x,
+      oy: panOffset.y,
+    };
+    editScroll.setPointerCapture(e.pointerId);
+  });
+
+  editScroll.addEventListener('pointermove', (e) => {
+    if (!panDrag || !editScroll.hasPointerCapture(e.pointerId)) return;
+    e.preventDefault();
+    panOffset = {
+      x: panDrag.ox + (e.clientX - panDrag.px),
+      y: panDrag.oy + (e.clientY - panDrag.py),
+    };
+    applyPanTransform();
+  });
+
+  const endPanDrag = (e: PointerEvent) => {
+    if (!panDrag) return;
+    panDrag = null;
+    try {
+      editScroll.releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+  editScroll.addEventListener('pointerup', endPanDrag);
+  editScroll.addEventListener('pointercancel', endPanDrag);
+
   editCanvas.addEventListener('pointerdown', (e) => {
+    if (panMode) return;
     e.preventDefault();
     pointerDrawing = true;
     editCanvas.setPointerCapture(e.pointerId);
@@ -555,7 +650,7 @@ const picker = createColorPicker(
   });
 
   editCanvas.addEventListener('pointermove', (e) => {
-    if (!editCanvas.hasPointerCapture(e.pointerId)) return;
+    if (panMode || !editCanvas.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
     const { x, y } = cellFromEvent(e);
     if (tool === 'paint') {
@@ -610,6 +705,28 @@ const picker = createColorPicker(
     btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
   });
 
+  panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
+    cellZoom = Math.min(ZOOM_MAX, cellZoom * ZOOM_STEP);
+    layoutCanvases();
+  });
+
+  panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
+    cellZoom = Math.max(ZOOM_MIN, cellZoom / ZOOM_STEP);
+    layoutCanvases();
+  });
+
+  panel.querySelector('[data-pan-toggle]')?.addEventListener('click', () => {
+    panMode = !panMode;
+    updatePanUi();
+  });
+
+  const brushRange = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
+  const brushLabel = panel.querySelector('[data-brush-size-label]')!;
+  brushRange.addEventListener('input', () => {
+    brushSize = clamp(Number(brushRange.value) || 1, 1, 8);
+    brushLabel.textContent = String(brushSize);
+  });
+
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
     drawGridLines();
@@ -659,6 +776,7 @@ const picker = createColorPicker(
 
   overlay.append(panel);
   getModalOverlayMount().append(overlay);
+  updatePanUi();
   requestAnimationFrame(() => {
     layoutCanvases();
     requestAnimationFrame(() => layoutCanvases());

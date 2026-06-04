@@ -166,6 +166,7 @@ export function drawGridToCanvas(
   const { cols, rows } = gridDimensions(grid);
   const cellW = width / cols;
   const cellH = height / rows;
+  ctx.imageSmoothingEnabled = false;
 
   for (let y = 0; y < grid.length; y++) {
     const row = grid[y];
@@ -174,7 +175,11 @@ export function drawGridToCanvas(
       if (!c) continue;
       const { r, g, b, a } = parsePixelColor(c);
       ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+      const px = Math.floor(x * cellW);
+      const py = Math.floor(y * cellH);
+      const pw = Math.ceil((x + 1) * cellW) - px;
+      const ph = Math.ceil((y + 1) * cellH) - py;
+      ctx.fillRect(px, py, pw, ph);
     }
   }
 }

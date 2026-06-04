@@ -39,13 +39,22 @@ export function openCharacterModal(
   modal.innerHTML = `
     <button type="button" class="char-modal__close" aria-label="关闭">×</button>
     <div class="char-modal__layout">
-      <aside class="char-modal__equip" data-equip></aside>
-      <div class="char-modal__portrait" data-portrait></div>
       <div class="char-modal__info">
-        <h2 class="char-modal__title"></h2>
-        <p class="char-modal__stats"></p>
-        <p class="char-modal__desc"></p>
+        <div class="char-modal__info-block">
+          <h2 class="char-modal__title"></h2>
+        </div>
+        <div class="char-modal__info-block char-modal__info-block--stats">
+          <p class="char-modal__stats"></p>
+        </div>
+        <div class="char-modal__info-block char-modal__info-block--desc">
+          <p class="char-modal__desc"></p>
+        </div>
       </div>
+      <div class="char-modal__portrait" data-portrait></div>
+      <aside class="char-modal__equip-panel">
+        <h3 class="char-modal__equip-title">装备</h3>
+        <div class="char-modal__equip" data-equip></div>
+      </aside>
     </div>
   `;
 
@@ -68,8 +77,10 @@ export function openCharacterModal(
   const equipRoot = modal.querySelector('[data-equip]')!;
   const loadout = character.loadout;
   if (loadout) {
+    const weaponsRow = document.createElement('div');
+    weaponsRow.className = 'char-modal__equip-row char-modal__equip-row--weapons';
     for (let i = 0; i < 3; i++) {
-      equipRoot.append(
+      weaponsRow.append(
         buildSlot(
           'weapon',
           i,
@@ -79,7 +90,10 @@ export function openCharacterModal(
         )
       );
     }
-    equipRoot.append(
+
+    const miscRow = document.createElement('div');
+    miscRow.className = 'char-modal__equip-row char-modal__equip-row--misc';
+    miscRow.append(
       buildSlot(
         'vehicle',
         0,
@@ -89,7 +103,7 @@ export function openCharacterModal(
       )
     );
     for (let i = 0; i < 2; i++) {
-      equipRoot.append(
+      miscRow.append(
         buildSlot(
           'accessory',
           i,
@@ -99,6 +113,8 @@ export function openCharacterModal(
         )
       );
     }
+
+    equipRoot.append(weaponsRow, miscRow);
   } else {
     equipRoot.innerHTML = '<p class="char-modal__no-equip">无装备栏</p>';
   }

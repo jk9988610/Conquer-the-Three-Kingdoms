@@ -19,7 +19,10 @@ export function createPixelArtCanvas(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (ctx) drawPixelArt(ctx, artKey, width, height, { transparent: true });
+  if (ctx) {
+    ctx.imageSmoothingEnabled = false;
+    drawPixelArt(ctx, artKey, width, height, { transparent: true });
+  }
   return canvas;
 }
 
