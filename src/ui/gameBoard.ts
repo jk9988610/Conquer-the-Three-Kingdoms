@@ -83,16 +83,15 @@ export class GameBoard {
           </div>
           <div class="game-board__module game-board__module--tools">
             <h3 class="game-board__module-title">工具</h3>
-            <div class="game-board__module-body game-board__module-body--tools">
-              <button type="button" class="btn" data-action="toggle-phase">阶段</button>
-              <button type="button" class="btn" data-action="toggle-music">音乐</button>
-              <button type="button" class="btn" data-action="pixel-editor">绘制</button>
-              <button type="button" class="btn" data-action="fullscreen">全屏</button>
+            <div class="game-board__module-body game-board__module-body--tools-row">
+              <div class="game-board__tool-buttons">
+                <button type="button" class="btn" data-action="toggle-phase">阶段</button>
+                <button type="button" class="btn" data-action="toggle-music">音乐</button>
+                <button type="button" class="btn" data-action="pixel-editor">绘制</button>
+                <button type="button" class="btn" data-action="fullscreen">全屏</button>
+              </div>
+              <pre class="game-board__debug" data-debug aria-label="调试信息"></pre>
             </div>
-          </div>
-          <div class="game-board__module game-board__module--debug">
-            <h3 class="game-board__module-title">调试</h3>
-            <pre class="game-board__debug" data-debug></pre>
           </div>
         </aside>
       </div>

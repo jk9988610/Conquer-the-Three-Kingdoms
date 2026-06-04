@@ -3,7 +3,7 @@ export function getOverlayMount(): HTMLElement {
   return (document.fullscreenElement as HTMLElement | null) ?? document.body;
 }
 
-/** 居中弹层（角色详情、绘制器等）：始终挂 body，避免相对棋盘偏移 */
+/** 居中弹层：全屏时挂到全屏元素内，否则 body（与拖拽幽灵一致，避免全屏下不可见） */
 export function getModalOverlayMount(): HTMLElement {
-  return document.body;
+  return (document.fullscreenElement as HTMLElement | null) ?? document.body;
 }
