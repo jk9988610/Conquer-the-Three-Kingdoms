@@ -1,10 +1,10 @@
 import './style.css';
-import { defaultHand } from './game/catalog';
+import { defaultPlayerHand } from './game/catalog';
 import { createInitialState } from './game/state';
 import type { GameState } from './game/types';
 import { GameBoard } from './ui/gameBoard';
 
-let gameState: GameState = createInitialState(defaultHand());
+let gameState: GameState = createInitialState(defaultPlayerHand());
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {

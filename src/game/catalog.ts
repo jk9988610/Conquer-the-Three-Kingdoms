@@ -1,5 +1,29 @@
 import type { CardData, ShopListing } from './types';
 
+export const CARD_LIU: CardData = {
+  id: 'char-liu',
+  name: '刘备',
+  tags: ['character'],
+  description: '仁德之主',
+  artKey: 'liu',
+};
+
+export const CARD_GUAN: CardData = {
+  id: 'char-guan',
+  name: '关羽',
+  tags: ['character'],
+  description: '武圣',
+  artKey: 'guan',
+};
+
+export const CARD_ZHANG: CardData = {
+  id: 'char-zhang',
+  name: '张飞',
+  tags: ['character'],
+  description: '万夫不当',
+  artKey: 'zhang',
+};
+
 export const CARD_LVBU: CardData = {
   id: 'char-lvbu',
   name: '吕布',
@@ -24,6 +48,8 @@ export const CARD_FANGTIAN: CardData = {
   description: '增加10点角色攻击力',
   artKey: 'fangtian',
   price: 100,
+  equipSlot: 'weapon',
+  attackBonus: 10,
 };
 
 export const DEFAULT_SHOP_LISTINGS: ShopListing[] = [
@@ -33,40 +59,22 @@ export const DEFAULT_SHOP_LISTINGS: ShopListing[] = [
 
 export const STARTING_GOLD = 1000;
 
-export function defaultHand(): CardData[] {
-  return [
-    {
-      id: 'char-liu',
-      name: '刘备',
-      tags: ['character'],
-      description: '仁德之主',
-      artKey: 'liu',
-    },
-    {
-      id: 'char-guan',
-      name: '关羽',
-      tags: ['character'],
-      description: '武圣',
-      artKey: 'guan',
-    },
-    {
-      id: 'char-zhang',
-      name: '张飞',
-      tags: ['character'],
-      description: '万夫不当',
-      artKey: 'zhang',
-    },
-    CARD_LVBU,
-  ];
+export function defaultPlayerHand(): CardData[] {
+  return [CARD_LVBU];
+}
+
+export function defaultEnemyRoster(): CardData[] {
+  return [CARD_GUAN, CARD_LIU, CARD_ZHANG];
 }
 
 export function characterBattleStats(data: CardData): {
   maxHp: number;
   hp: number;
   attack: number;
+  baseAttack: number;
 } {
-  const attack =
+  const baseAttack =
     data.id === 'char-lvbu' ? 12 : data.id === 'char-zhang' ? 9 : 7;
   const maxHp = data.id === 'char-lvbu' ? 30 : 25;
-  return { maxHp, hp: maxHp, attack };
+  return { maxHp, hp: maxHp, attack: baseAttack, baseAttack };
 }

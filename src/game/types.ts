@@ -3,7 +3,8 @@ export type CardTag = 'character' | 'action' | 'item' | 'equipment';
 
 export type GamePhase = 'prep' | 'battle';
 
-/** 像素画标识，由程序绘制 */
+export type SlotKind = 'weapon' | 'vehicle' | 'accessory';
+
 export type PixelArtKey =
   | 'generic'
   | 'lvbu'
@@ -19,26 +20,48 @@ export interface CardData {
   tags: CardTag[];
   description?: string;
   artKey?: PixelArtKey;
-  /** 商店售价（仅商店陈列） */
   price?: number;
+  /** 装备占用的槽位类型 */
+  equipSlot?: SlotKind;
+  attackBonus?: number;
 }
 
 export interface BattleStats {
   maxHp: number;
   hp: number;
   attack: number;
+  /** 基础攻击（未含装备） */
+  baseAttack: number;
+}
+
+export interface EquippedEntry {
+  instanceId: string;
+  data: CardData;
+}
+
+export interface CharacterLoadout {
+  weapons: [EquippedEntry | null, EquippedEntry | null, EquippedEntry | null];
+  vehicle: EquippedEntry | null;
+  accessories: [EquippedEntry | null, EquippedEntry | null];
+}
+
+export function emptyLoadout(): CharacterLoadout {
+  return {
+    weapons: [null, null, null],
+    vehicle: null,
+    accessories: [null, null],
+  };
 }
 
 export interface CardInstance {
   instanceId: string;
   data: CardData;
-  /** 上场后的角色数值（预留装备加成等） */
   stats?: BattleStats;
+  loadout?: CharacterLoadout;
 }
 
 export interface ShopListing {
   template: CardData;
-  /** 库存 -1 表示无限 */
   stock: number;
 }
 
@@ -46,13 +69,13 @@ export interface GameZones {
   hand: CardInstance[];
   playerBattlefield: CardInstance[];
   enemyBattlefield: CardInstance[];
-  shop: CardInstance[];
 }
 
 export interface GameState {
   phase: GamePhase;
   gold: number;
   zones: GameZones;
-  /** 商店可购列表（准备阶段） */
   shopListings: ShopListing[];
+  /** 战斗阶段从名册恢复敌方单位 */
+  enemyRoster: CardInstance[];
 }

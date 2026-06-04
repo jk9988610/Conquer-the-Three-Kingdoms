@@ -1,28 +1,32 @@
 import { drawPixelArt } from '../art/pixelArt';
-import type { CardInstance } from '../game/types';
+import type { CardInstance, PixelArtKey } from '../game/types';
 import type { TcgScaledSize } from '../tcg/dimensions';
 
 export interface CardElementOptions {
   size: TcgScaledSize;
-  /** 手牌角色：可拖拽上场 */
-  draggableToBattle?: boolean;
-  showTags?: boolean;
-  /** 商店：显示购买按钮 */
-  shopPrice?: number;
-  onBuy?: () => void;
+  /** 我方场上角色，可点击查看详情 */
+  onFieldPlayer?: boolean;
+  showPrice?: number;
+}
+
+export function createPixelArtCanvas(
+  artKey: PixelArtKey,
+  width: number,
+  height: number
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) drawPixelArt(ctx, artKey, width, height);
+  return canvas;
 }
 
 export function createCardElement(
   card: CardInstance,
   options: CardElementOptions
 ): HTMLElement {
-  const {
-    size,
-    draggableToBattle = false,
-    showTags = true,
-    shopPrice,
-    onBuy,
-  } = options;
+  const { size, onFieldPlayer = false, showPrice } = options;
 
   const el = document.createElement('article');
   el.className = 'tcg-card';
@@ -31,9 +35,9 @@ export function createCardElement(
   el.style.width = `${size.cardWidth}px`;
   el.style.height = `${size.cardHeight}px`;
 
-  if (draggableToBattle) {
-    el.classList.add('tcg-card--draggable');
-    el.setAttribute('aria-label', `拖拽 ${card.data.name} 至我方战场`);
+  if (onFieldPlayer) {
+    el.dataset.field = 'player';
+    el.classList.add('tcg-card--field-player');
   }
 
   const { left, top, width, height } = size.innerFrame;
@@ -46,14 +50,13 @@ export function createCardElement(
 
   const artLayer = document.createElement('div');
   artLayer.className = 'tcg-card__art-layer';
-  const canvas = document.createElement('canvas');
+  const artH = Math.floor(height * 0.58);
+  const canvas = createPixelArtCanvas(
+    card.data.artKey ?? 'generic',
+    Math.max(1, Math.floor(width)),
+    Math.max(1, artH)
+  );
   canvas.className = 'tcg-card__art';
-  canvas.width = Math.max(1, Math.floor(width));
-  canvas.height = Math.max(1, Math.floor(Math.floor(height * 0.62)));
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    drawPixelArt(ctx, card.data.artKey ?? 'generic', canvas.width, canvas.height);
-  }
   artLayer.append(canvas);
 
   const textLayer = document.createElement('div');
@@ -67,40 +70,33 @@ export function createCardElement(
   desc.className = 'tcg-card__desc';
   desc.textContent = card.data.description ?? '';
 
+  textLayer.append(title, desc);
+
   if (card.stats) {
     const stats = document.createElement('p');
     stats.className = 'tcg-card__stats';
-    stats.textContent = `生命 ${card.stats.hp}/${card.stats.maxHp} · 攻击 ${card.stats.attack}`;
-    textLayer.append(title, desc, stats);
-  } else {
-    textLayer.append(title, desc);
+    stats.textContent = `HP ${card.stats.hp}/${card.stats.maxHp} ATK ${card.stats.attack}`;
+    textLayer.append(stats);
+  }
+
+  if (showPrice !== undefined) {
+    const price = document.createElement('span');
+    price.className = 'tcg-card__price';
+    price.textContent = `${showPrice}金`;
+    textLayer.append(price);
   }
 
   inner.append(artLayer, textLayer);
 
-  if (showTags && card.data.tags.length > 0) {
-    const tags = document.createElement('div');
-    tags.className = 'tcg-card__tags';
-    for (const tag of card.data.tags) {
-      const badge = document.createElement('span');
-      badge.className = `tcg-card__tag tcg-card__tag--${tag}`;
-      badge.textContent = tagLabel(tag);
-      tags.append(badge);
-    }
-    inner.append(tags);
+  const tags = document.createElement('div');
+  tags.className = 'tcg-card__tags';
+  for (const tag of card.data.tags) {
+    const badge = document.createElement('span');
+    badge.className = `tcg-card__tag tcg-card__tag--${tag}`;
+    badge.textContent = tagLabel(tag);
+    tags.append(badge);
   }
-
-  if (shopPrice !== undefined && onBuy) {
-    const buy = document.createElement('button');
-    buy.type = 'button';
-    buy.className = 'tcg-card__buy';
-    buy.textContent = `购买 ${shopPrice}`;
-    buy.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onBuy();
-    });
-    el.append(buy);
-  }
+  inner.append(tags);
 
   el.append(inner);
   return el;
@@ -114,7 +110,6 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
   ghost.style.position = 'fixed';
   ghost.style.zIndex = '9999';
   ghost.style.pointerEvents = 'none';
-  ghost.style.margin = '0';
   return ghost;
 }
 
