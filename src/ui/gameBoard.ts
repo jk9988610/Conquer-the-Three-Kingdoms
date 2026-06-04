@@ -98,6 +98,7 @@ export class GameBoard {
     `;
 
     this.root.querySelector('[data-version]')!.textContent = `v${APP_VERSION}`;
+    this.root.addEventListener('contextmenu', (e) => e.preventDefault());
     this.bindControls();
     this.updateLayoutSize();
     window.addEventListener('resize', () => this.updateLayoutSize());

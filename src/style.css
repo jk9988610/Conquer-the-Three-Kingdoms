@@ -23,6 +23,7 @@ body,
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+  touch-action: none;
 }
 
 body {
@@ -429,7 +430,8 @@ body {
   justify-content: center;
   padding: 8px;
   overscroll-behavior: contain;
-  touch-action: manipulation;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .pixel-editor {
@@ -442,6 +444,8 @@ body {
   padding: 12px;
   display: flex;
   flex-direction: column;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .pixel-editor__head {
@@ -609,18 +613,6 @@ body {
   color: var(--tcg-accent);
 }
 
-.pixel-editor__export {
-  width: 100%;
-  margin-top: 8px;
-  font-family: monospace;
-  font-size: 0.65rem;
-  background: #0e1420;
-  color: #b8d4a8;
-  border: 1px solid #555;
-  border-radius: 4px;
-}
-
-
 /* 绘制器：预览 | 画布 | 工具+调试 整体居中 */
 .pixel-editor__body {
   display: flex;
@@ -649,13 +641,19 @@ body {
   padding: 0.2rem 0.35rem;
 }
 
-.pixel-editor--pan-mode .pixel-editor__edit-scroll {
+.pixel-editor--zoom-mode .pixel-editor__edit-scroll {
   cursor: grab;
   touch-action: none;
 }
 
-.pixel-editor--pan-mode [data-edit-canvas] {
+.pixel-editor--zoom-mode [data-edit-canvas],
+.pixel-editor--zoom-mode [data-grid-canvas] {
   pointer-events: none;
+}
+
+.pixel-editor__zoom-mode--active {
+  border-color: var(--tcg-accent) !important;
+  color: var(--tcg-accent);
 }
 
 .pixel-editor__edit-scroll {
