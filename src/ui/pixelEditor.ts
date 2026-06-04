@@ -137,21 +137,30 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  /** 相对旧版默认格宽缩小为 1/4，可由缩放按钮放大 */
+  /** 相对旧版默认格宽缩小为 1/4，缩放按钮只改格宽不改视口 */
   const CELL_BASE_SCALE = 0.25;
-  const VIEW_AREA_SCALE = 2;
+  const VIEW_AREA_SCALE = 4;
   const ZOOM_STEP = 1.2;
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
+  const TOOLS_COL_W = 168;
+  const DEBUG_COL_W = 132;
+  const COL_GAP = 12;
+  const COL_HEAD_H = 24;
+  const VIEW_CONTROLS_H = 28;
 
   let cellZoom = 1;
   let panMode = false;
   let panOffset = { x: 0, y: 0 };
   let panDrag: { px: number; py: number; ox: number; oy: number } | null = null;
   let brushSize = 1;
+  let baseCellSize = 4;
   let cellSize = 4;
   let gridPixelW = GRID_COLS * cellSize;
   let gridPixelH = GRID_ROWS * cellSize;
+  let viewportW = 200;
+  let viewportH = 274;
+  let contentH = 274;
 
   const overlay = document.createElement('div');
   overlay.className = 'pixel-editor-overlay';
@@ -169,8 +178,10 @@ export function openPixelEditor(onApplied: () => void): void {
         <div class="pixel-editor__col-head">预览</div>
         <div class="pixel-editor__col-panel" data-preview-panel>
           <div class="pixel-editor__grid-frame" data-preview-frame>
-            <canvas data-preview-grid-art></canvas>
-            <canvas data-preview-grid></canvas>
+            <div class="pixel-editor__grid-inner" data-preview-inner>
+              <canvas data-preview-grid-art></canvas>
+              <canvas data-preview-grid></canvas>
+            </div>
           </div>
         </div>
       </div>
@@ -183,6 +194,7 @@ export function openPixelEditor(onApplied: () => void): void {
         </div>
         <div class="pixel-editor__col-panel" data-edit-panel>
           <div class="pixel-editor__edit-scroll" data-edit-scroll>
+          <div class="pixel-editor__edit-scroll-inner" data-edit-scroll-inner>
           <div class="pixel-editor__workspace" data-workspace>
             <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
             <div class="pixel-editor__ruler-top" data-ruler-top></div>
@@ -194,10 +206,12 @@ export function openPixelEditor(onApplied: () => void): void {
             </div>
           </div>
           </div>
+          </div>
         </div>
       </div>
-      <div class="pixel-editor__col pixel-editor__col--tools" data-col-tools>
+      <div class="pixel-editor__col pixel-editor__col--side" data-col-side>
         <div class="pixel-editor__col-head">工具</div>
+        <div class="pixel-editor__side-panel" data-side-panel>
         <div class="pixel-editor__tools-panel">
           <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
           <div class="pixel-editor__tools-grid">
@@ -222,6 +236,11 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-export>导出</button>
           </div>
         </div>
+        <div class="pixel-editor__editor-debug">
+          <div class="pixel-editor__editor-debug-title">调试</div>
+          <pre class="pixel-editor__editor-debug-body" data-pixel-debug></pre>
+        </div>
+        </div>
       </div>
     </div>
     <textarea class="pixel-editor__export" data-export-area readonly rows="4"></textarea>
@@ -231,11 +250,15 @@ export function openPixelEditor(onApplied: () => void): void {
   const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
   const colPreview = panel.querySelector<HTMLElement>('[data-col-preview]')!;
   const colEdit = panel.querySelector<HTMLElement>('[data-col-edit]')!;
-  const colTools = panel.querySelector<HTMLElement>('[data-col-tools]')!;
+  const colSide = panel.querySelector<HTMLElement>('[data-col-side]')!;
+  const sidePanel = panel.querySelector<HTMLElement>('[data-side-panel]')!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
   const editScroll = panel.querySelector<HTMLElement>('[data-edit-scroll]')!;
+  const editScrollInner = panel.querySelector<HTMLElement>('[data-edit-scroll-inner]')!;
   const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
+  const previewInner = panel.querySelector<HTMLElement>('[data-preview-inner]')!;
+  const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
   const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
   const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
@@ -292,9 +315,18 @@ const picker = createColorPicker(
     return ctx;
   }
 
-  const TOOLS_COL_W = 168;
-  const COL_GAP = 12;
-  const COL_HEAD_H = 24;
+  function updateEditorDebug(): void {
+    if (!debugEl) return;
+    debugEl.textContent = [
+      `卡牌: ${currentKey}`,
+      `工具: ${tool}`,
+      `画笔: ${brushSize}`,
+      `格宽: ${cellSize}px`,
+      `缩放: ${cellZoom.toFixed(2)}`,
+      `网格: ${gridPixelW}×${gridPixelH}`,
+      `视口: ${viewportW}×${viewportH}`,
+    ].join('\n');
+  }
 
   function applyPanTransform(): void {
     workspace.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
@@ -307,30 +339,54 @@ const picker = createColorPicker(
     editCanvas.style.cursor = panMode ? 'grab' : 'crosshair';
   }
 
-  function layoutCanvases(): void {
+  /** 仅根据窗口调整固定视口与基准格宽 */
+  function layoutViewport(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
     const bodyH =
-      bodyEl.clientHeight ||
-      Math.min(window.innerHeight * 0.82, 640) * VIEW_AREA_SCALE;
+      bodyEl.clientHeight || Math.min(window.innerHeight * 0.85, 720);
+    const sideW = TOOLS_COL_W + DEBUG_COL_W + COL_GAP;
+    const cols = 2;
     const drawColW = Math.max(
-      140,
-      Math.floor(((bodyW - TOOLS_COL_W - COL_GAP * 2) / 2) * VIEW_AREA_SCALE)
+      160,
+      Math.floor(
+        ((bodyW - sideW - COL_GAP * (cols + 1)) / cols) * (VIEW_AREA_SCALE / 2)
+      )
     );
 
-    const panelH = bodyH - COL_HEAD_H - 28;
-    const editAreaW = drawColW - 4;
-    const editAreaH = panelH - 4;
-
-    const rawCell = Math.min(
-      (editAreaW - RULER_PX) / GRID_COLS,
-      editAreaH / GRID_ROWS,
-      (drawColW - 4) / GRID_COLS
+    contentH = Math.max(
+      200,
+      Math.floor(
+        (bodyH - COL_HEAD_H * 2 - VIEW_CONTROLS_H - 16) * (VIEW_AREA_SCALE / 2)
+      )
     );
-    const nextCell = Math.floor(rawCell * CELL_BASE_SCALE);
+    viewportW = Math.max(GRID_COLS * 3, drawColW - 8);
+    viewportH = contentH;
 
+    const rawCell = Math.min(viewportW / GRID_COLS, viewportH / GRID_ROWS);
+    baseCellSize = Math.max(3, Math.floor(rawCell * CELL_BASE_SCALE));
+
+    const colPad = 20;
+    colPreview.style.flex = `0 0 ${viewportW + colPad}px`;
+    colEdit.style.flex = `0 0 ${viewportW + RULER_PX + colPad}px`;
+    colSide.style.flex = `0 0 ${sideW}px`;
+
+    previewPanel.style.height = `${contentH}px`;
+    editPanel.style.height = `${contentH}px`;
+    sidePanel.style.height = `${contentH}px`;
+
+    previewFrame.style.width = `${viewportW}px`;
+    previewFrame.style.height = `${viewportH}px`;
+    editScroll.style.width = `${viewportW + RULER_PX}px`;
+    editScroll.style.height = `${viewportH + RULER_PX}px`;
+
+    layoutGrid();
+  }
+
+  /** 缩放只改格宽与网格像素尺寸，视口尺寸不变 */
+  function layoutGrid(): void {
     cellSize = Math.max(
       3,
-      Math.min(Math.round(nextCell * cellZoom), 56)
+      Math.min(Math.round(baseCellSize * cellZoom), 64)
     );
     gridPixelW = GRID_COLS * cellSize;
     gridPixelH = GRID_ROWS * cellSize;
@@ -343,8 +399,8 @@ const picker = createColorPicker(
 
     canvasStack.style.width = `${gridPixelW}px`;
     canvasStack.style.height = `${gridPixelH}px`;
-    previewFrame.style.width = `${gridPixelW}px`;
-    previewFrame.style.height = `${gridPixelH}px`;
+    previewInner.style.width = `${gridPixelW}px`;
+    previewInner.style.height = `${gridPixelH}px`;
 
     const workspaceW = RULER_PX + gridPixelW;
     const workspaceH = RULER_PX + gridPixelH;
@@ -353,23 +409,17 @@ const picker = createColorPicker(
     workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
     workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
 
-    const colPanelH = Math.max(workspaceH, gridPixelH);
-    previewPanel.style.minHeight = `${colPanelH}px`;
-    editPanel.style.minHeight = `${colPanelH}px`;
-    colTools.style.minHeight = `${colPanelH + COL_HEAD_H}px`;
+    editScrollInner.style.minWidth =
+      workspaceW < viewportW + RULER_PX ? `${viewportW + RULER_PX}px` : `${workspaceW}px`;
+    editScrollInner.style.minHeight =
+      workspaceH < viewportH + RULER_PX ? `${viewportH + RULER_PX}px` : `${workspaceH}px`;
 
-    const colPad = 16 * VIEW_AREA_SCALE;
-    colPreview.style.flex = `0 0 ${gridPixelW + colPad}px`;
-    colEdit.style.flex = `0 0 ${Math.max(workspaceW + colPad, drawColW)}px`;
-    colTools.style.flex = `0 0 ${TOOLS_COL_W}px`;
-
-    editScroll.style.maxHeight = `${Math.max(panelH, workspaceH + 8)}px`;
     applyPanTransform();
-
     buildRulers();
     drawGridLines();
     refreshAll();
     updateSelectionBox();
+    updateEditorDebug();
   }
 
   function buildRulers(): void {
@@ -488,6 +538,7 @@ const picker = createColorPicker(
     });
     if (next !== 'move') moveAnchor = null;
     if (next !== 'select') selectStart = null;
+    updateEditorDebug();
   }
 
   function paintAt(x: number, y: number, color: Pixel = paintColor): void {
@@ -707,12 +758,12 @@ const picker = createColorPicker(
 
   panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
     cellZoom = Math.min(ZOOM_MAX, cellZoom * ZOOM_STEP);
-    layoutCanvases();
+    layoutGrid();
   });
 
   panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
     cellZoom = Math.max(ZOOM_MIN, cellZoom / ZOOM_STEP);
-    layoutCanvases();
+    layoutGrid();
   });
 
   panel.querySelector('[data-pan-toggle]')?.addEventListener('click', () => {
@@ -725,6 +776,7 @@ const picker = createColorPicker(
   brushRange.addEventListener('input', () => {
     brushSize = clamp(Number(brushRange.value) || 1, 1, 8);
     brushLabel.textContent = String(brushSize);
+    updateEditorDebug();
   });
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
@@ -770,7 +822,7 @@ const picker = createColorPicker(
     if (e.target === overlay) closePixelEditor();
   });
 
-  const ro = new ResizeObserver(() => layoutCanvases());
+  const ro = new ResizeObserver(() => layoutViewport());
   ro.observe(bodyEl);
   ro.observe(panel);
 
@@ -778,8 +830,8 @@ const picker = createColorPicker(
   getModalOverlayMount().append(overlay);
   updatePanUi();
   requestAnimationFrame(() => {
-    layoutCanvases();
-    requestAnimationFrame(() => layoutCanvases());
+    layoutViewport();
+    requestAnimationFrame(() => layoutViewport());
   });
 }
 
