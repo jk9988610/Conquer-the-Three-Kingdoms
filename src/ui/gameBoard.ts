@@ -16,6 +16,7 @@ import {
 import { createCardElement, createDragGhost } from './cardElement';
 import { cardSizeForZone } from './layout';
 import { attachPointerDrag } from './pointerDrag';
+import { openPixelEditor } from './pixelEditor';
 import { APP_VERSION } from '../version';
 
 export interface GameBoardCallbacks {
@@ -55,6 +56,7 @@ export class GameBoard {
           <span class="game-board__hint-text" data-hint title=""></span>
           <button type="button" class="btn" data-action="toggle-phase">阶段</button>
           <button type="button" class="btn" data-action="toggle-music">音乐</button>
+          <button type="button" class="btn" data-action="pixel-editor">绘制</button>
           <button type="button" class="btn" data-action="fullscreen">全屏</button>
         </div>
       </header>
@@ -103,6 +105,12 @@ export class GameBoard {
         else this.music.stop();
         const btn = this.root.querySelector('[data-action="toggle-music"]');
         if (btn) btn.textContent = this.musicOn ? '音乐开' : '音乐';
+      });
+
+    this.root
+      .querySelector('[data-action="pixel-editor"]')
+      ?.addEventListener('click', () => {
+        openPixelEditor(() => this.render());
       });
 
     this.root
@@ -356,14 +364,17 @@ export class GameBoard {
 
     if (isPrep) {
       for (const listing of this.state.shopListings) {
-        if (listing.stock === 0) continue;
+        const soldOut = listing.stock === 0;
         const display = createCardInstance(listing.template);
         const el = createCardElement(display, {
           size,
           showPrice: listing.template.price,
+          soldOut,
         });
         el.dataset.shop = '1';
-        this.bindDrag(el, { kind: 'shop', templateId: listing.template.id });
+        if (!soldOut) {
+          this.bindDrag(el, { kind: 'shop', templateId: listing.template.id });
+        }
         topBody.append(el);
       }
     } else {
@@ -375,7 +386,6 @@ export class GameBoard {
     for (const card of this.state.zones.playerBattlefield) {
       const el = createCardElement(card, { size, onFieldPlayer: true });
       el.addEventListener('click', () => this.openModal(card));
-      this.bindDrag(el, { kind: 'hand', instanceId: card.instanceId }, card);
       playerBody.append(el);
     }
 

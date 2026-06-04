@@ -67,9 +67,8 @@ export function buyFromShop(state: GameState, templateId: string): ActionResult 
   }
 
   const listings = [...state.shopListings];
-  if (listing.stock > 0) {
-    listings[listingIndex] = { ...listing, stock: listing.stock - 1 };
-  }
+  const nextStock = listing.stock < 0 ? 0 : Math.max(0, listing.stock - 1);
+  listings[listingIndex] = { ...listing, stock: nextStock };
 
   const purchased = createCardInstance({
     ...listing.template,

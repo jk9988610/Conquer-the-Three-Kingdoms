@@ -53,8 +53,8 @@ export const CARD_FANGTIAN: CardData = {
 };
 
 export const DEFAULT_SHOP_LISTINGS: ShopListing[] = [
-  { template: CARD_HEAL_POTION, stock: -1 },
-  { template: CARD_FANGTIAN, stock: -1 },
+  { template: CARD_HEAL_POTION, stock: 1 },
+  { template: CARD_FANGTIAN, stock: 1 },
 ];
 
 export const STARTING_GOLD = 1000;

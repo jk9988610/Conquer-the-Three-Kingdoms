@@ -7,6 +7,10 @@ export interface PointerDragOptions {
   onMove?: (clientX: number, clientY: number) => void;
 }
 
+function dragMountRoot(): HTMLElement {
+  return (document.fullscreenElement as HTMLElement | null) ?? document.body;
+}
+
 export function attachPointerDrag(options: PointerDragOptions): () => void {
   const { source, createGhost, onDrop, onMove } = options;
   let ghost: HTMLElement | null = null;
@@ -17,6 +21,7 @@ export function attachPointerDrag(options: PointerDragOptions): () => void {
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
+    if (source.classList.contains('tcg-card--sold-out')) return;
     e.preventDefault();
     dragging = true;
     startX = e.clientX;
@@ -25,7 +30,17 @@ export function attachPointerDrag(options: PointerDragOptions): () => void {
     source.classList.add('tcg-card--dragging');
 
     ghost = createGhost(source);
-    document.body.append(ghost);
+    const mount = dragMountRoot();
+    mount.append(ghost);
+    Object.assign(ghost.style, {
+      position: 'fixed',
+      left: '0',
+      top: '0',
+      zIndex: '2147483647',
+      pointerEvents: 'none',
+      margin: '0',
+    });
+
     const rect = source.getBoundingClientRect();
     offset.x = e.clientX - rect.left;
     offset.y = e.clientY - rect.top;

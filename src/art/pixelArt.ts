@@ -1,60 +1,21 @@
 import type { PixelArtKey } from '../game/types';
 
-type Pixel = string | null;
-
-
-function fill(
-  ctx: CanvasRenderingContext2D,
-  grid: Pixel[][],
-  ox: number,
-  oy: number,
-  cell: number
-): void {
-  for (let y = 0; y < grid.length; y++) {
-    for (let x = 0; x < grid[y].length; x++) {
-      const c = grid[y][x];
-      if (!c) continue;
-      ctx.fillStyle = c;
-      ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
-    }
-  }
-}
-
-/** 在画布内绘制像素画（程序生成，非图片文件） */
-export function drawPixelArt(
-  ctx: CanvasRenderingContext2D,
-  key: PixelArtKey,
-  width: number,
-  height: number
-): void {
-  ctx.clearRect(0, 0, width, height);
-  const bg = ctx.createLinearGradient(0, 0, 0, height);
-  bg.addColorStop(0, '#2a3a52');
-  bg.addColorStop(1, '#1a2438');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, width, height);
-
-  const gridW = 16;
-  const gridH = 14;
-  const cell = Math.floor(Math.min(width / gridW, height / gridH));
-  const ox = Math.floor((width - gridW * cell) / 2);
-  const oy = Math.floor((height - gridH * cell) / 2);
-
-  const art = ART[key] ?? ART.generic;
-  fill(ctx, art, ox, oy, cell);
-}
+export type Pixel = string | null;
+export type PixelGrid = Pixel[][];
 
 const R = '#c44';
 const D = '#422';
 const G = '#6a8';
 const B = '#48c';
 const Y = '#ec4';
-const W = '#ddd';
+const W = '#fff';
 const K = '#222';
-const P = '#a6c';
+const P = '#e8589a';
 const H = '#8b5';
+const GL = '#5ecf7a';
+const DK = '#3a2518';
 
-const ART: Record<PixelArtKey, Pixel[][]> = {
+const BASE_ART: Record<PixelArtKey, PixelGrid> = {
   generic: [
     [null, null, G, G, G, G, null, null],
     [null, G, G, G, G, G, G, null],
@@ -95,12 +56,13 @@ const ART: Record<PixelArtKey, Pixel[][]> = {
     [K, K, null, K, K],
   ],
   'heal-potion': [
-    [null, P, P, null],
-    [P, W, W, P],
-    [P, B, B, P],
-    [P, B, B, P],
-    [null, G, G, null],
-    [null, G, G, null],
+    [null, null, P, P, P, null, null],
+    [null, P, W, W, W, P, null],
+    [null, P, B, B, B, P, null],
+    [null, P, B, B, B, P, null],
+    [null, P, P, P, P, P, null],
+    [null, null, GL, GL, GL, null, null],
+    [null, null, DK, DK, DK, null, null],
   ],
   fangtian: [
     [null, null, Y, null, null],
@@ -111,3 +73,80 @@ const ART: Record<PixelArtKey, Pixel[][]> = {
     [null, null, K, null, null],
   ],
 };
+
+const customOverrides: Partial<Record<PixelArtKey, PixelGrid>> = {};
+
+export const PIXEL_ART_KEYS = Object.keys(BASE_ART) as PixelArtKey[];
+
+export function getArtGrid(key: PixelArtKey): PixelGrid {
+  const custom = customOverrides[key];
+  if (custom) return custom.map((row) => [...row]);
+  return BASE_ART[key] ?? BASE_ART.generic;
+}
+
+export function setCustomArtGrid(key: PixelArtKey, grid: PixelGrid): void {
+  customOverrides[key] = grid.map((row) => [...row]);
+}
+
+export function gridToExportCode(key: string, grid: PixelGrid): string {
+  const lines = grid.map((row) => {
+    const cells = row.map((c) => (c === null ? 'null' : JSON.stringify(c)));
+    return `    [${cells.join(', ')}],`;
+  });
+  return `  '${key}': [\n${lines.join('\n')}\n  ],`;
+}
+
+function gridSize(grid: PixelGrid): { cols: number; rows: number } {
+  const rows = grid.length;
+  const cols = Math.max(1, ...grid.map((r) => r.length));
+  return { cols, rows };
+}
+
+function fill(
+  ctx: CanvasRenderingContext2D,
+  grid: PixelGrid,
+  ox: number,
+  oy: number,
+  cell: number
+): void {
+  for (let y = 0; y < grid.length; y++) {
+    const row = grid[y];
+    for (let x = 0; x < row.length; x++) {
+      const c = row[x];
+      if (!c) continue;
+      ctx.fillStyle = c;
+      ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
+    }
+  }
+}
+
+export interface DrawPixelArtOptions {
+  /** true：未上色区域透明（卡牌用） */
+  transparent?: boolean;
+}
+
+export function drawPixelArt(
+  ctx: CanvasRenderingContext2D,
+  key: PixelArtKey,
+  width: number,
+  height: number,
+  options: DrawPixelArtOptions = {}
+): void {
+  const { transparent = false } = options;
+  ctx.clearRect(0, 0, width, height);
+
+  if (!transparent) {
+    const bg = ctx.createLinearGradient(0, 0, 0, height);
+    bg.addColorStop(0, '#2a3a52');
+    bg.addColorStop(1, '#1a2438');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  const grid = getArtGrid(key);
+  const { cols, rows } = gridSize(grid);
+  const cell = Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
+  const ox = Math.floor((width - cols * cell) / 2);
+  const oy = Math.floor((height - rows * cell) / 2);
+  fill(ctx, grid, ox, oy, cell);
+}
