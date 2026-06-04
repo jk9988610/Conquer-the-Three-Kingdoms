@@ -111,6 +111,8 @@ export function openPixelEditor(onApplied: () => void): void {
   let selectStart: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
+  let lastPaintCell: { x: number; y: number } | null = null;
+  let pointerDrawing = false;
   let cellSize = 14;
   let gridPixelW = GRID_COLS * cellSize;
   let gridPixelH = GRID_ROWS * cellSize;
@@ -150,12 +152,11 @@ export function openPixelEditor(onApplied: () => void): void {
             <canvas data-preview-grid></canvas>
           </div>
         </div>
-        <div class="pixel-editor__col-head pixel-editor__col-head--sub">卡面贴合</div>
-        <canvas class="pixel-editor__preview-card" data-preview-card></canvas>
       </div>
       <div class="pixel-editor__col pixel-editor__col--edit" data-col-edit>
         <div class="pixel-editor__col-head">绘制</div>
         <div class="pixel-editor__workspace" data-workspace>
+          <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
           <div class="pixel-editor__ruler-top" data-ruler-top></div>
           <div class="pixel-editor__ruler-left" data-ruler-left></div>
           <div class="pixel-editor__canvas-stack" data-canvas-stack>
@@ -182,7 +183,6 @@ export function openPixelEditor(onApplied: () => void): void {
   const gridCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-canvas]')!;
   const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
   const previewGridCanvas = panel.querySelector<HTMLCanvasElement>('[data-preview-grid]')!;
-  const previewCard = panel.querySelector<HTMLCanvasElement>('[data-preview-card]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
   const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
@@ -235,8 +235,7 @@ const picker = createColorPicker(
 
   function layoutCanvases(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
-    const bodyH =
-      bodyEl.clientHeight || Math.min(window.innerHeight * 0.58, 500);
+    const bodyH = bodyEl.clientHeight || Math.min(window.innerHeight * 0.5, 420);
     const colGap = 14;
     const colW = Math.max(
       120,
@@ -246,9 +245,6 @@ const picker = createColorPicker(
     );
 
     const colHeadH = 22;
-    const subHeadH = 18;
-    const cardStripGap = 6;
-
     const editAreaW = colW - 4;
     const editAreaH = bodyH - colHeadH;
 
@@ -258,18 +254,6 @@ const picker = createColorPicker(
         (editAreaH - RULER_PX) / GRID_ROWS
       )
     );
-
-    const cardWGuess = GRID_COLS * nextCell;
-    const cardHGuess = Math.max(1, Math.round(cardWGuess / INNER_ASPECT_RATIO));
-    const previewStackH =
-      RULER_PX + GRID_ROWS * nextCell + subHeadH + cardStripGap + cardHGuess;
-    if (previewStackH > editAreaH + colHeadH) {
-      const maxCellFromPreview = Math.floor(
-        (editAreaH + colHeadH - subHeadH - cardStripGap - cardHGuess - RULER_PX) /
-          GRID_ROWS
-      );
-      nextCell = Math.min(nextCell, maxCellFromPreview);
-    }
 
     cellSize = Math.max(12, Math.min(nextCell, 36));
     gridPixelW = GRID_COLS * cellSize;
@@ -281,12 +265,6 @@ const picker = createColorPicker(
     setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
     setupCanvas(previewGridCanvas, gridPixelW, gridPixelH, dpr);
 
-    const cardW = gridPixelW;
-    const cardH = Math.max(1, Math.round(cardW / INNER_ASPECT_RATIO));
-    setupCanvas(previewCard, cardW, cardH, dpr);
-    previewCard.style.width = `${cardW}px`;
-    previewCard.style.height = `${cardH}px`;
-
     canvasStack.style.width = `${gridPixelW}px`;
     canvasStack.style.height = `${gridPixelH}px`;
     previewFrame.style.width = `${gridPixelW}px`;
@@ -295,15 +273,17 @@ const picker = createColorPicker(
     rulerSpacer.style.width = `${gridPixelW}px`;
     rulerSpacer.style.height = `${RULER_PX}px`;
 
+    const workspaceSize = `${RULER_PX + gridPixelW}px`;
+    const workspaceH = `${RULER_PX + gridPixelH}px`;
+    workspace.style.width = workspaceSize;
+    workspace.style.height = workspaceH;
     workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
     workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
-    workspace.style.width = `${RULER_PX + gridPixelW}px`;
-    workspace.style.height = `${RULER_PX + gridPixelH}px`;
 
     previewWorkspace.style.gridTemplateColumns = `${gridPixelW}px`;
     previewWorkspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
     previewWorkspace.style.width = `${gridPixelW}px`;
-    previewWorkspace.style.height = `${RULER_PX + gridPixelH}px`;
+    previewWorkspace.style.height = workspaceH;
 
     buildRulers();
     drawGridLines();
@@ -378,13 +358,6 @@ const picker = createColorPicker(
       sq.clearRect(0, 0, gridPixelW, gridPixelH);
       drawGridToCanvas(sq, grid, gridPixelW, gridPixelH);
     }
-    const cardW = gridPixelW;
-    const cardH = Math.max(1, Math.round(cardW / INNER_ASPECT_RATIO));
-    const card = previewCard.getContext('2d');
-    if (card) {
-      card.clearRect(0, 0, cardW, cardH);
-      drawGridToCanvas(card, grid, cardW, cardH);
-    }
   }
 
   function refreshAll(): void {
@@ -438,6 +411,8 @@ const picker = createColorPicker(
   }
 
   function paintAt(x: number, y: number): void {
+    if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
+    lastPaintCell = { x, y };
     grid[y][x] = paintColor;
     refreshAll();
   }
@@ -481,11 +456,21 @@ const picker = createColorPicker(
     refreshAll();
   }
 
+  panel.addEventListener(
+    'touchmove',
+    (e) => {
+      if (pointerDrawing) e.preventDefault();
+    },
+    { passive: false }
+  );
+
   editCanvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    pointerDrawing = true;
     editCanvas.setPointerCapture(e.pointerId);
     const { x, y } = cellFromEvent(e);
     if (tool === 'paint') {
+      lastPaintCell = null;
       paintAt(x, y);
       return;
     }
@@ -511,8 +496,9 @@ const picker = createColorPicker(
 
   editCanvas.addEventListener('pointermove', (e) => {
     if (!editCanvas.hasPointerCapture(e.pointerId)) return;
+    e.preventDefault();
     const { x, y } = cellFromEvent(e);
-    if (tool === 'paint' && e.buttons === 1) {
+    if (tool === 'paint') {
       paintAt(x, y);
       return;
     }
@@ -537,6 +523,18 @@ const picker = createColorPicker(
       commitMove(x - moveOffset.x, y - moveOffset.y);
       moveAnchor = null;
     }
+    lastPaintCell = null;
+    pointerDrawing = false;
+    try {
+      editCanvas.releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  });
+
+  editCanvas.addEventListener('pointercancel', (e) => {
+    lastPaintCell = null;
+    pointerDrawing = false;
     try {
       editCanvas.releasePointerCapture(e.pointerId);
     } catch {
