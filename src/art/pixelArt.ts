@@ -102,10 +102,40 @@ export function gridDimensions(grid: PixelGrid): { cols: number; rows: number } 
   return { cols, rows };
 }
 
-/**
- * 将像素网格铺满整个画布（上下左右贴边）。
- * 格元可非正方形，以填满 width×height。
- */
+function parsePixelColor(c: string): { r: number; g: number; b: number; a: number } {
+  const rgba = c.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/i);
+  if (rgba) {
+    return {
+      r: Number(rgba[1]),
+      g: Number(rgba[2]),
+      b: Number(rgba[3]),
+      a: rgba[4] !== undefined ? Number(rgba[4]) : 1,
+    };
+  }
+  let hex = c.replace('#', '');
+  if (hex.length === 8) {
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16),
+      a: parseInt(hex.slice(6, 8), 16) / 255,
+    };
+  }
+  if (hex.length === 3) {
+    hex = hex
+      .split('')
+      .map((ch) => ch + ch)
+      .join('');
+  }
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+    a: 1,
+  };
+}
+
+/** 将像素网格铺满画布；支持 #rgb / #rrggbb / #rrggbbaa / rgba() */
 export function drawGridToCanvas(
   ctx: CanvasRenderingContext2D,
   grid: PixelGrid,
@@ -121,7 +151,8 @@ export function drawGridToCanvas(
     for (let x = 0; x < row.length; x++) {
       const c = row[x];
       if (!c) continue;
-      ctx.fillStyle = c;
+      const { r, g, b, a } = parsePixelColor(c);
+      ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
       ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
     }
   }

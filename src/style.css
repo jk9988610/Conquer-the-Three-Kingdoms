@@ -492,3 +492,126 @@ body {
   border: 1px solid #555;
   border-radius: 4px;
 }
+
+/* v0.3.2 绘制器：方格画布 + 色盘 */
+.pixel-editor__color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.pixel-editor__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-content: flex-start;
+}
+
+.pixel-editor__preset {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #666;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.color-picker__wheel {
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-picker__preview {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #888;
+  border-radius: 4px;
+}
+
+.color-picker__alpha {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.7rem;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.pixel-editor__workspace {
+  display: grid;
+  gap: 0;
+  justify-content: start;
+  margin-bottom: 8px;
+}
+
+.pixel-editor__ruler-top {
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  background: #1a2438;
+  border: 1px solid #555;
+  font-size: 0.5rem;
+  line-height: 1;
+  color: #9ab;
+}
+
+.pixel-editor__ruler-left {
+  display: flex;
+  flex-direction: column;
+  background: #1a2438;
+  border: 1px solid #555;
+  border-top: none;
+  font-size: 0.5rem;
+  color: #9ab;
+}
+
+.pixel-editor__ruler-tick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pixel-editor__canvas-stack {
+  position: relative;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid #555;
+}
+
+.pixel-editor__canvas-stack canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pixel-editor__canvas-stack [data-edit-canvas] {
+  z-index: 1;
+}
+
+.pixel-editor__canvas-stack [data-grid-canvas] {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.pixel-editor__sel-box {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  border: 2px dashed #ec4;
+  background: rgba(236, 196, 68, 0.12);
+  pointer-events: none;
+}

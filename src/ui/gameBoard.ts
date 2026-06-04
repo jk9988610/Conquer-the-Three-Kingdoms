@@ -5,6 +5,7 @@ import {
   playCharacterFromHand,
   unequipToHand,
 } from '../game/actions';
+import { applyLoadoutToStats, ensureLoadout } from '../game/equipment';
 import { createCardInstance, setPhase } from '../game/state';
 import type { CardInstance, GameState } from '../game/types';
 import type { TcgScaledSize } from '../tcg/dimensions';
@@ -13,6 +14,7 @@ import {
   closeCharacterModal,
   openCharacterModal,
 } from './characterModal';
+import { attachCardTap } from './cardTap';
 import { createCardElement, createDragGhost } from './cardElement';
 import { cardSizeForZone } from './layout';
 import { attachPointerDrag } from './pointerDrag';
@@ -33,6 +35,7 @@ export class GameBoard {
   private callbacks: GameBoardCallbacks;
   private cardSize: TcgScaledSize | null = null;
   private dragCleanups: (() => void)[] = [];
+  private tapCleanups: (() => void)[] = [];
   private music = new MidiSampler();
   private musicOn = false;
   private modalCharacterId: string | null = null;
@@ -161,6 +164,8 @@ export class GameBoard {
   private clearDrags(): void {
     for (const fn of this.dragCleanups) fn();
     this.dragCleanups = [];
+    for (const fn of this.tapCleanups) fn();
+    this.tapCleanups = [];
   }
 
   private zoneBody(id: 'top' | 'player' | 'hand'): HTMLElement | null {
@@ -308,19 +313,20 @@ export class GameBoard {
   }
 
   private openModal(character: CardInstance): void {
-    this.modalCharacterId = character.instanceId;
-    openCharacterModal(character, {
+    const fresh =
+      this.state.zones.playerBattlefield.find(
+        (c) => c.instanceId === character.instanceId
+      ) ?? applyLoadoutToStats(ensureLoadout(character));
+    this.modalCharacterId = fresh.instanceId;
+    openCharacterModal(fresh, {
       onClose: () => {
         closeCharacterModal();
         this.modalCharacterId = null;
       },
       onUnequip: (slotKind, index) => {
-        const res = unequipToHand(
-          this.state,
-          character.instanceId,
-          slotKind,
-          index
-        );
+        const id = this.modalCharacterId;
+        if (!id) return;
+        const res = unequipToHand(this.state, id, slotKind, index);
         if (res.ok) {
           this.commitState(res.state);
           this.setHint('已卸下手牌');
@@ -385,7 +391,15 @@ export class GameBoard {
 
     for (const card of this.state.zones.playerBattlefield) {
       const el = createCardElement(card, { size, onFieldPlayer: true });
-      el.addEventListener('click', () => this.openModal(card));
+      const charId = card.instanceId;
+      this.tapCleanups.push(
+        attachCardTap(el, () => {
+          const current = this.state.zones.playerBattlefield.find(
+            (c) => c.instanceId === charId
+          );
+          if (current) this.openModal(current);
+        })
+      );
       playerBody.append(el);
     }
 

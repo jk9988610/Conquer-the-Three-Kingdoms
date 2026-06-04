@@ -12,24 +12,22 @@ import {
   ART_PREVIEW_WIDTH,
 } from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
+import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getOverlayMount } from './overlayRoot';
 
-const EDITOR_COLS = 16;
-const EDITOR_ROWS = 16;
+const GRID_COLS = 16;
+const GRID_ROWS = 16;
+const RULER_PX = 18;
 
-const PALETTE = [
+const PALETTE_PRESETS = [
   '#c44',
   '#422',
   '#6a8',
   '#48c',
   '#ec4',
-  '#fff',
-  '#222',
+  '#ffffff',
+  '#000000',
   '#e8589a',
-  '#8b5',
-  '#5ecf7a',
-  '#3a2518',
-  '#e8c86a',
 ];
 
 type Tool = 'paint' | 'select' | 'move';
@@ -44,10 +42,10 @@ interface Selection {
 
 function normalizeGrid(g: PixelGrid): PixelGrid {
   const rows: PixelGrid = [];
-  for (let y = 0; y < EDITOR_ROWS; y++) {
+  for (let y = 0; y < GRID_ROWS; y++) {
     const src = g[y] ?? [];
     const row: Pixel[] = [];
-    for (let x = 0; x < EDITOR_COLS; x++) {
+    for (let x = 0; x < GRID_COLS; x++) {
       row.push(src[x] ?? null);
     }
     rows.push(row);
@@ -59,17 +57,10 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-function normalizeRect(
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number
-): { x: number; y: number; w: number; h: number } {
+function normalizeRect(x0: number, y0: number, x1: number, y1: number) {
   const x = Math.min(x0, x1);
   const y = Math.min(y0, y1);
-  const w = Math.abs(x1 - x0) + 1;
-  const h = Math.abs(y1 - y0) + 1;
-  return { x, y, w, h };
+  return { x, y, w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
 }
 
 function copyRegion(grid: PixelGrid, rect: Selection): Pixel[][] {
@@ -104,7 +95,7 @@ function pasteRegion(
     for (let dx = 0; dx < pixels[dy].length; dx++) {
       const yy = atY + dy;
       const xx = atX + dx;
-      if (yy < 0 || yy >= EDITOR_ROWS || xx < 0 || xx >= EDITOR_COLS) continue;
+      if (yy < 0 || yy >= GRID_ROWS || xx < 0 || xx >= GRID_COLS) continue;
       grid[yy][xx] = pixels[dy][dx];
     }
   }
@@ -115,13 +106,16 @@ export function openPixelEditor(onApplied: () => void): void {
 
   let currentKey: PixelArtKey = 'heal-potion';
   let grid = normalizeGrid(getArtGrid(currentKey));
-  let paintColor: Pixel = '#fff';
+  let paintColor: Pixel = 'rgba(255,255,255,1)';
   let tool: Tool = 'paint';
   let showGrid = true;
   let selection: Selection | null = null;
   let selectStart: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
+  let cellSize = 14;
+  let gridPixelW = GRID_COLS * cellSize;
+  let gridPixelH = GRID_ROWS * cellSize;
 
   const overlay = document.createElement('div');
   overlay.className = 'pixel-editor-overlay';
@@ -139,47 +133,45 @@ export function openPixelEditor(onApplied: () => void): void {
       <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
       <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
       <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
-      <button type="button" class="btn" data-toggle-grid>网格</button>
+      <button type="button" class="btn" data-toggle-grid>网格：开</button>
       <button type="button" class="btn" data-clear>清空</button>
       <button type="button" class="btn" data-apply>应用</button>
       <button type="button" class="btn" data-export>导出</button>
     </div>
-    <div class="pixel-editor__palette" data-palette></div>
-    <div class="pixel-editor__main">
-      <div class="pixel-editor__edit-wrap">
-        <div class="pixel-editor__ruler-corner"></div>
-        <div class="pixel-editor__ruler-top" data-ruler-top></div>
-        <div class="pixel-editor__ruler-left" data-ruler-left></div>
-        <div class="pixel-editor__canvas-box" data-canvas-box>
-          <canvas class="pixel-editor__edit-canvas" data-edit-canvas></canvas>
-          <div class="pixel-editor__grid-overlay" data-grid-overlay></div>
-          <div class="pixel-editor__sel-box" data-sel-box hidden></div>
-        </div>
-      </div>
-      <div class="pixel-editor__preview-wrap">
-        <span class="pixel-editor__preview-label">卡面预览</span>
-        <canvas class="pixel-editor__preview" data-preview></canvas>
+    <div class="pixel-editor__color-row">
+      <div data-color-picker></div>
+      <div class="pixel-editor__presets" data-presets></div>
+    </div>
+    <div class="pixel-editor__workspace" data-workspace>
+      <div class="pixel-editor__ruler-top" data-ruler-top></div>
+      <div class="pixel-editor__ruler-left" data-ruler-left></div>
+      <div class="pixel-editor__canvas-stack" data-canvas-stack>
+        <canvas data-edit-canvas></canvas>
+        <canvas data-grid-canvas></canvas>
+        <div class="pixel-editor__sel-box" data-sel-box hidden></div>
       </div>
     </div>
-    <textarea class="pixel-editor__export" data-export-area readonly rows="6" placeholder="导出代码"></textarea>
+    <div class="pixel-editor__preview-wrap">
+      <span class="pixel-editor__preview-label">卡面预览</span>
+      <canvas class="pixel-editor__preview" data-preview></canvas>
+    </div>
+    <textarea class="pixel-editor__export" data-export-area readonly rows="5"></textarea>
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
+  const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
+  const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
+  const gridCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-canvas]')!;
   const preview = panel.querySelector<HTMLCanvasElement>('[data-preview]')!;
-  const gridOverlay = panel.querySelector<HTMLElement>('[data-grid-overlay]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
   const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
   const exportArea = panel.querySelector<HTMLTextAreaElement>('[data-export-area]')!;
+  const colorPickerMount = panel.querySelector('[data-color-picker]')!;
 
   preview.width = ART_PREVIEW_WIDTH;
   preview.height = ART_PREVIEW_HEIGHT;
-
-  const editW = ART_PREVIEW_WIDTH * 2;
-  const editH = Math.round(editW / (ART_PREVIEW_WIDTH / ART_PREVIEW_HEIGHT));
-  editCanvas.width = editW;
-  editCanvas.height = editH;
 
   for (const k of PIXEL_ART_KEYS) {
     const opt = document.createElement('option');
@@ -189,43 +181,105 @@ export function openPixelEditor(onApplied: () => void): void {
   }
   select.value = currentKey;
 
-  const paletteEl = panel.querySelector('[data-palette]')!;
-  for (const color of PALETTE) {
-    const sw = document.createElement('button');
-    sw.type = 'button';
-    sw.className = 'pixel-editor__swatch';
-    sw.style.background = color;
-    if (color === paintColor) sw.classList.add('pixel-editor__swatch--active');
-    sw.addEventListener('click', () => {
-      paintColor = color;
-      paletteEl
-        .querySelectorAll('.pixel-editor__swatch')
-        .forEach((b) => b.classList.remove('pixel-editor__swatch--active'));
-      sw.classList.add('pixel-editor__swatch--active');
+const picker = createColorPicker(
+    { css: 'rgba(255,255,255,1)', hex: '#ffffff', alpha: 1 },
+    (v: ColorPickerValue) => {
+      paintColor = v.css;
+    }
+  );
+  colorPickerMount.append(picker);
+
+  const presetsEl = panel.querySelector('[data-presets]')!;
+  for (const hex of PALETTE_PRESETS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pixel-editor__preset';
+    b.style.background = hex;
+    b.addEventListener('click', () => {
+      paintColor = hex.startsWith('#') ? hex : `rgba(255,255,255,1)`;
     });
-    paletteEl.append(sw);
+    presetsEl.append(b);
+  }
+
+  function layoutCanvases(): void {
+    const stackW = canvasStack.clientWidth || 240;
+    const stackH = canvasStack.clientHeight || 320;
+    cellSize = Math.max(6, Math.floor(Math.min(stackW / GRID_COLS, stackH / GRID_ROWS)));
+    gridPixelW = GRID_COLS * cellSize;
+    gridPixelH = GRID_ROWS * cellSize;
+
+    const dpr = window.devicePixelRatio || 1;
+    for (const c of [editCanvas, gridCanvas]) {
+      c.width = Math.round(gridPixelW * dpr);
+      c.height = Math.round(gridPixelH * dpr);
+      c.style.width = `${gridPixelW}px`;
+      c.style.height = `${gridPixelH}px`;
+      const ctx = c.getContext('2d');
+      ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    canvasStack.style.width = `${gridPixelW}px`;
+    canvasStack.style.height = `${gridPixelH}px`;
+
+    workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
+    workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
+
+    buildRulers();
+    drawGridLines();
+    refreshEditCanvas();
+    updateSelectionBox();
   }
 
   function buildRulers(): void {
     rulerTop.innerHTML = '';
     rulerLeft.innerHTML = '';
-    for (let x = 0; x < EDITOR_COLS; x++) {
+    rulerTop.style.width = `${gridPixelW}px`;
+    rulerLeft.style.height = `${gridPixelH}px`;
+
+    for (let x = 0; x < GRID_COLS; x++) {
       const s = document.createElement('span');
+      s.className = 'pixel-editor__ruler-tick';
+      s.style.width = `${cellSize}px`;
       s.textContent = String(x);
       rulerTop.append(s);
     }
-    for (let y = 0; y < EDITOR_ROWS; y++) {
+    for (let y = 0; y < GRID_ROWS; y++) {
       const s = document.createElement('span');
+      s.className = 'pixel-editor__ruler-tick';
+      s.style.height = `${cellSize}px`;
       s.textContent = String(y);
       rulerLeft.append(s);
+    }
+  }
+
+  function drawGridLines(): void {
+    const ctx = gridCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
+    if (!showGrid) return;
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= GRID_COLS; x++) {
+      const px = x * cellSize + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, gridPixelH);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= GRID_ROWS; y++) {
+      const py = y * cellSize + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, py);
+      ctx.lineTo(gridPixelW, py);
+      ctx.stroke();
     }
   }
 
   function refreshEditCanvas(): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
-    ctx.clearRect(0, 0, editW, editH);
-    drawGridToCanvas(ctx, grid, editW, editH);
+    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
+    drawGridToCanvas(ctx, grid, gridPixelW, gridPixelH);
   }
 
   function refreshPreview(): void {
@@ -241,45 +295,36 @@ export function openPixelEditor(onApplied: () => void): void {
     updateSelectionBox();
   }
 
-  function updateGridOverlay(): void {
-    gridOverlay.classList.toggle('pixel-editor__grid-overlay--hidden', !showGrid);
-    const cellW = 100 / EDITOR_COLS;
-    const cellH = 100 / EDITOR_ROWS;
-    gridOverlay.style.backgroundImage = `
-      linear-gradient(to right, rgba(255,255,255,0.35) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255,255,255,0.35) 1px, transparent 1px)
-    `;
-    gridOverlay.style.backgroundSize = `${cellW}% ${cellH}%`;
-  }
-
   function cellFromEvent(e: PointerEvent): { x: number; y: number } {
     const r = editCanvas.getBoundingClientRect();
     const x = clamp(
-      Math.floor(((e.clientX - r.left) / r.width) * EDITOR_COLS),
+      Math.floor(((e.clientX - r.left) / r.width) * GRID_COLS),
       0,
-      EDITOR_COLS - 1
+      GRID_COLS - 1
     );
     const y = clamp(
-      Math.floor(((e.clientY - r.top) / r.height) * EDITOR_ROWS),
+      Math.floor(((e.clientY - r.top) / r.height) * GRID_ROWS),
       0,
-      EDITOR_ROWS - 1
+      GRID_ROWS - 1
     );
     return { x, y };
   }
 
   function updateSelectionBox(rect?: { x: number; y: number; w: number; h: number }): void {
-    const r = rect ?? (selection ? { x: selection.x, y: selection.y, w: selection.w, h: selection.h } : null);
+    const r =
+      rect ??
+      (selection
+        ? { x: selection.x, y: selection.y, w: selection.w, h: selection.h }
+        : null);
     if (!r) {
       selBox.hidden = true;
       return;
     }
     selBox.hidden = false;
-    const cw = 100 / EDITOR_COLS;
-    const ch = 100 / EDITOR_ROWS;
-    selBox.style.left = `${r.x * cw}%`;
-    selBox.style.top = `${r.y * ch}%`;
-    selBox.style.width = `${r.w * cw}%`;
-    selBox.style.height = `${r.h * ch}%`;
+    selBox.style.left = `${r.x * cellSize}px`;
+    selBox.style.top = `${r.y * cellSize}px`;
+    selBox.style.width = `${r.w * cellSize}px`;
+    selBox.style.height = `${r.h * cellSize}px`;
   }
 
   function setTool(next: Tool): void {
@@ -302,27 +347,24 @@ export function openPixelEditor(onApplied: () => void): void {
   function finishSelection(x1: number, y1: number): void {
     if (!selectStart) return;
     const rect = normalizeRect(selectStart.x, selectStart.y, x1, y1);
-    rect.x = clamp(rect.x, 0, EDITOR_COLS - 1);
-    rect.y = clamp(rect.y, 0, EDITOR_ROWS - 1);
-    rect.w = Math.min(rect.w, EDITOR_COLS - rect.x);
-    rect.h = Math.min(rect.h, EDITOR_ROWS - rect.y);
+    rect.x = clamp(rect.x, 0, GRID_COLS - 1);
+    rect.y = clamp(rect.y, 0, GRID_ROWS - 1);
+    rect.w = Math.min(rect.w, GRID_COLS - rect.x);
+    rect.h = Math.min(rect.h, GRID_ROWS - rect.y);
     if (rect.w < 1 || rect.h < 1) {
       selection = null;
       selBox.hidden = true;
       return;
     }
-    selection = {
-      ...rect,
-      pixels: copyRegion(grid, rect as Selection),
-    };
+    selection = { ...rect, pixels: copyRegion(grid, rect as Selection) };
     updateSelectionBox(rect);
     selectStart = null;
   }
 
   function commitMove(targetX: number, targetY: number): void {
     if (!selection) return;
-    const tx = clamp(targetX, 0, EDITOR_COLS - selection.w);
-    const ty = clamp(targetY, 0, EDITOR_ROWS - selection.h);
+    const tx = clamp(targetX, 0, GRID_COLS - selection.w);
+    const ty = clamp(targetY, 0, GRID_ROWS - selection.h);
     clearRegion(grid, selection);
     pasteRegion(grid, tx, ty, selection.pixels);
     selection = {
@@ -330,7 +372,13 @@ export function openPixelEditor(onApplied: () => void): void {
       y: ty,
       w: selection.w,
       h: selection.h,
-      pixels: copyRegion(grid, { x: tx, y: ty, w: selection.w, h: selection.h, pixels: [] }),
+      pixels: copyRegion(grid, {
+        x: tx,
+        y: ty,
+        w: selection.w,
+        h: selection.h,
+        pixels: [],
+      }),
     };
     refreshAll();
   }
@@ -339,7 +387,6 @@ export function openPixelEditor(onApplied: () => void): void {
     e.preventDefault();
     editCanvas.setPointerCapture(e.pointerId);
     const { x, y } = cellFromEvent(e);
-
     if (tool === 'paint') {
       paintAt(x, y);
       return;
@@ -349,8 +396,7 @@ export function openPixelEditor(onApplied: () => void): void {
       updateSelectionBox({ x, y, w: 1, h: 1 });
       return;
     }
-    if (tool === 'move') {
-      if (!selection) return;
+    if (tool === 'move' && selection) {
       const inside =
         x >= selection.x &&
         x < selection.x + selection.w &&
@@ -368,22 +414,18 @@ export function openPixelEditor(onApplied: () => void): void {
   editCanvas.addEventListener('pointermove', (e) => {
     if (!editCanvas.hasPointerCapture(e.pointerId)) return;
     const { x, y } = cellFromEvent(e);
-
     if (tool === 'paint' && e.buttons === 1) {
       paintAt(x, y);
       return;
     }
     if (tool === 'select' && selectStart) {
-      const rect = normalizeRect(selectStart.x, selectStart.y, x, y);
-      updateSelectionBox(rect);
+      updateSelectionBox(normalizeRect(selectStart.x, selectStart.y, x, y));
       return;
     }
     if (tool === 'move' && moveAnchor && selection) {
-      const tx = clamp(x - moveOffset.x, 0, EDITOR_COLS - selection.w);
-      const ty = clamp(y - moveOffset.y, 0, EDITOR_ROWS - selection.h);
       updateSelectionBox({
-        x: tx,
-        y: ty,
+        x: clamp(x - moveOffset.x, 0, GRID_COLS - selection.w),
+        y: clamp(y - moveOffset.y, 0, GRID_ROWS - selection.h),
         w: selection.w,
         h: selection.h,
       });
@@ -392,9 +434,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   editCanvas.addEventListener('pointerup', (e) => {
     const { x, y } = cellFromEvent(e);
-    if (tool === 'select' && selectStart) {
-      finishSelection(x, y);
-    }
+    if (tool === 'select' && selectStart) finishSelection(x, y);
     if (tool === 'move' && moveAnchor && selection) {
       commitMove(x - moveOffset.x, y - moveOffset.y);
       moveAnchor = null;
@@ -407,14 +447,12 @@ export function openPixelEditor(onApplied: () => void): void {
   });
 
   panel.querySelectorAll('[data-tool]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setTool((btn as HTMLElement).dataset.tool as Tool);
-    });
+    btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
   });
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
-    updateGridOverlay();
+    drawGridLines();
     const btn = panel.querySelector('[data-toggle-grid]');
     if (btn) btn.textContent = showGrid ? '网格：开' : '网格';
   });
@@ -424,16 +462,9 @@ export function openPixelEditor(onApplied: () => void): void {
     grid = normalizeGrid(getArtGrid(currentKey));
     selection = null;
     selectStart = null;
-    buildGridUi();
     refreshAll();
     exportArea.value = '';
   });
-
-  function buildGridUi(): void {
-    buildRulers();
-    updateGridOverlay();
-    refreshAll();
-  }
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
     grid = normalizeGrid([]);
@@ -462,9 +493,12 @@ export function openPixelEditor(onApplied: () => void): void {
     if (e.target === overlay) closePixelEditor();
   });
 
-  buildGridUi();
+  const ro = new ResizeObserver(() => layoutCanvases());
+  ro.observe(canvasStack);
+
   overlay.append(panel);
   getOverlayMount().append(overlay);
+  requestAnimationFrame(() => layoutCanvases());
 }
 
 export function closePixelEditor(): void {
