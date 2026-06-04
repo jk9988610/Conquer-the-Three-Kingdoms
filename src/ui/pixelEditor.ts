@@ -662,18 +662,13 @@ const picker = createColorPicker(
     updateSelectionBox();
   }
 
+  /** 将指针坐标映射到格子：相对 art-stage 视口，再减去平移量（勿用 canvas 的 getBoundingClientRect，裁剪后会错位） */
   function cellFromEvent(e: PointerEvent): { x: number; y: number } {
-    const r = editCanvas.getBoundingClientRect();
-    const x = clamp(
-      Math.floor(((e.clientX - r.left) / r.width) * gridCols),
-      0,
-      gridCols - 1
-    );
-    const y = clamp(
-      Math.floor(((e.clientY - r.top) / r.height) * gridRows),
-      0,
-      gridRows - 1
-    );
+    const stageRect = artStage.getBoundingClientRect();
+    const canvasX = e.clientX - stageRect.left - panOffset.x;
+    const canvasY = e.clientY - stageRect.top - panOffset.y;
+    const x = clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1);
+    const y = clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1);
     return { x, y };
   }
 
