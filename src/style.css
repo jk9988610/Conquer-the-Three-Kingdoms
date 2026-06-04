@@ -432,7 +432,7 @@ body {
 }
 
 .pixel-editor {
-  width: min(98vw, 1280px);
+  width: min(98vw, 1400px);
   max-height: 95dvh;
   overflow: hidden;
   background: #1e2a3c;
@@ -620,17 +620,17 @@ body {
 }
 
 
-/* 绘制器：预览 | 画布 | 工具 三栏等高居中 */
+/* 绘制器：预览 | 画布 | 工具+调试 整体居中 */
 .pixel-editor__body {
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: center;
   justify-content: center;
   gap: 12px;
   min-height: 0;
   flex: 1;
   min-width: 0;
-  min-height: min(82dvh, 640px);
+  min-height: min(85dvh, 720px);
 }
 
 .pixel-editor__view-controls {
@@ -658,10 +658,18 @@ body {
 
 .pixel-editor__edit-scroll {
   overflow: auto;
-  max-width: 100%;
+  flex-shrink: 0;
   border: 1px solid var(--tcg-border);
   border-radius: 4px;
   background: #0e1420;
+  box-sizing: border-box;
+}
+
+.pixel-editor__edit-scroll-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .pixel-editor__brush-size {
@@ -680,24 +688,35 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   min-width: 0;
   min-height: 0;
 }
 
 .pixel-editor__col-panel {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+}
+
+.pixel-editor__col--side {
+  align-items: stretch;
+  align-self: center;
+}
+
+.pixel-editor__side-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: border-box;
   min-height: 0;
 }
 
-.pixel-editor__col--tools {
-  align-items: stretch;
-}
-
 .pixel-editor__tools-panel {
-  flex: 1 1 0;
+  flex: 0 0 168px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -707,6 +726,44 @@ body {
   background: #172030;
   min-height: 0;
   overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.pixel-editor__editor-debug {
+  flex: 1 1 0;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: #172030;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.pixel-editor__editor-debug-title {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--tcg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--tcg-border);
+  flex-shrink: 0;
+}
+
+.pixel-editor__editor-debug-body {
+  margin: 0;
+  padding: 6px 8px;
+  flex: 1 1 0;
+  font-size: 0.58rem;
+  line-height: 1.4;
+  font-family: ui-monospace, monospace;
+  color: #9ab;
+  white-space: pre-wrap;
+  overflow: auto;
+  min-height: 0;
 }
 
 .pixel-editor__card-label {
@@ -779,13 +836,22 @@ body {
 
 .pixel-editor__grid-frame {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
   border: 1px solid #555;
   box-sizing: border-box;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
-.pixel-editor__grid-frame canvas {
+.pixel-editor__grid-inner {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.pixel-editor__grid-inner canvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -794,11 +860,11 @@ body {
   image-rendering: crisp-edges;
 }
 
-.pixel-editor__grid-frame [data-preview-grid-art] {
+.pixel-editor__grid-inner [data-preview-grid-art] {
   z-index: 1;
 }
 
-.pixel-editor__grid-frame [data-preview-grid] {
+.pixel-editor__grid-inner [data-preview-grid] {
   z-index: 2;
   pointer-events: none;
 }
@@ -806,6 +872,11 @@ body {
 
 .pixel-editor__col--edit {
   align-items: center;
+  align-self: center;
+}
+
+.pixel-editor__col--preview {
+  align-self: center;
 }
 
 .pixel-editor__workspace {
@@ -979,7 +1050,7 @@ body {
 
 .char-modal {
   position: relative;
-  width: min(92vw, 520px);
+  width: min(94vw, 720px);
   max-height: 90dvh;
   overflow: auto;
   background: var(--tcg-surface);
@@ -1056,18 +1127,21 @@ body {
 
 .char-modal__portrait {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 8px;
-  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  padding: 8px 8px 0;
+  background: transparent;
   border: 1px solid var(--tcg-border);
   border-radius: 6px;
+  align-self: start;
 }
 
 .char-modal__art {
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  background: transparent;
+  vertical-align: top;
 }
 
 .char-modal__info {
