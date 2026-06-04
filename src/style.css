@@ -1030,10 +1030,6 @@ body {
   pointer-events: none;
 }
 
-:root {
-  --tcg-inner-aspect: 0.729;
-}
-
 .pixel-editor__sel-box {
   position: absolute;
   z-index: 3;
