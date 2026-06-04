@@ -1018,6 +1018,7 @@ body {
   position: relative;
   z-index: 3;
   pointer-events: none;
+  display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
