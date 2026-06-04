@@ -12,10 +12,9 @@ import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getModalOverlayMount } from './overlayRoot';
 
-const GRID_COLS = 16;
-/** 与卡面内框同比例，格线为正方形 */
-const GRID_ROWS = Math.max(1, Math.round(GRID_COLS / INNER_ASPECT_RATIO));
 const RULER_PX = 18;
+const MIN_CELL_PX = 3;
+const HEIGHT_SCALE = 1.3;
 
 const PALETTE_PRESETS = [
   '#c44',
@@ -38,17 +37,75 @@ interface Selection {
   pixels: Pixel[][];
 }
 
-function normalizeGrid(g: PixelGrid): PixelGrid {
-  const rows: PixelGrid = [];
-  for (let y = 0; y < GRID_ROWS; y++) {
-    const src = g[y] ?? [];
+function isCellEmpty(p: Pixel): boolean {
+  return p === null || p === undefined;
+}
+
+function pixelAlpha(p: Pixel): number {
+  if (isCellEmpty(p)) return 0;
+  const s = p as string;
+  const rgba = s.match(/rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/i);
+  if (rgba) return Number(rgba[1]);
+  let hex = s.replace('#', '');
+  if (hex.length === 8) return parseInt(hex.slice(6, 8), 16) / 255;
+  return 1;
+}
+
+/** 无像素或几乎全透明：可显示辅助网格线 */
+function showGridAtCell(p: Pixel): boolean {
+  return isCellEmpty(p) || pixelAlpha(p) < 0.08;
+}
+
+function normalizeGrid(g: PixelGrid, cols: number, rows: number): PixelGrid {
+  const out: PixelGrid = [];
+  const srcRows = Math.max(1, g.length);
+  const srcCols = Math.max(1, ...g.map((r) => r.length));
+  for (let y = 0; y < rows; y++) {
     const row: Pixel[] = [];
-    for (let x = 0; x < GRID_COLS; x++) {
-      row.push(src[x] ?? null);
+    const sy = Math.min(rows - 1, Math.floor((y / rows) * srcRows));
+    const src = g[sy] ?? [];
+    for (let x = 0; x < cols; x++) {
+      const sx = Math.min(srcCols - 1, Math.floor((x / cols) * srcCols));
+      row.push(src[sx] ?? null);
     }
-    rows.push(row);
+    out.push(row);
   }
-  return rows;
+  return out;
+}
+
+function resampleGrid(
+  g: PixelGrid,
+  oldCols: number,
+  oldRows: number,
+  newCols: number,
+  newRows: number
+): PixelGrid {
+  if (oldCols === newCols && oldRows === newRows) return normalizeGrid(g, newCols, newRows);
+  const out: PixelGrid = [];
+  for (let y = 0; y < newRows; y++) {
+    const row: Pixel[] = [];
+    for (let x = 0; x < newCols; x++) {
+      const sx = Math.min(oldCols - 1, Math.floor((x / newCols) * oldCols));
+      const sy = Math.min(oldRows - 1, Math.floor((y / newRows) * oldRows));
+      row.push(g[sy]?.[sx] ?? null);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function fitGridToViewport(
+  vw: number,
+  vh: number,
+  targetCell: number
+): { cols: number; rows: number; cell: number; gridW: number; gridH: number } {
+  let cell = Math.max(MIN_CELL_PX, Math.floor(targetCell));
+  let cols = Math.max(4, Math.floor(vw / cell));
+  let rows = Math.max(4, Math.floor(vh / cell));
+  cell = Math.max(MIN_CELL_PX, Math.floor(Math.min(vw / cols, vh / rows)));
+  cols = Math.max(4, Math.floor(vw / cell));
+  rows = Math.max(4, Math.floor(vh / cell));
+  return { cols, rows, cell, gridW: cols * cell, gridH: rows * cell };
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -63,6 +120,8 @@ function normalizeRect(x0: number, y0: number, x1: number, y1: number) {
 
 function floodFill(
   grid: PixelGrid,
+  cols: number,
+  rows: number,
   x: number,
   y: number,
   fill: Pixel
@@ -77,7 +136,7 @@ function floodFill(
     const [cx, cy] = stack.pop()!;
     const key = `${cx},${cy}`;
     if (seen.has(key)) continue;
-    if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
+    if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
     if ((grid[cy][cx] ?? null) !== target) continue;
     seen.add(key);
     grid[cy][cx] = fill;
@@ -109,6 +168,8 @@ function clearRegion(grid: PixelGrid, rect: Selection): void {
 
 function pasteRegion(
   grid: PixelGrid,
+  cols: number,
+  rows: number,
   atX: number,
   atY: number,
   pixels: Pixel[][]
@@ -117,7 +178,7 @@ function pasteRegion(
     for (let dx = 0; dx < pixels[dy].length; dx++) {
       const yy = atY + dy;
       const xx = atX + dx;
-      if (yy < 0 || yy >= GRID_ROWS || xx < 0 || xx >= GRID_COLS) continue;
+      if (yy < 0 || yy >= rows || xx < 0 || xx >= cols) continue;
       grid[yy][xx] = pixels[dy][dx];
     }
   }
@@ -127,7 +188,9 @@ export function openPixelEditor(onApplied: () => void): void {
   closePixelEditor();
 
   let currentKey: PixelArtKey = 'heal-potion';
-  let grid = normalizeGrid(getArtGrid(currentKey));
+  let gridCols = 16;
+  let gridRows = 22;
+  let grid = normalizeGrid(getArtGrid(currentKey), gridCols, gridRows);
   let paintColor: Pixel = 'rgba(255,255,255,1)';
   let tool: Tool = 'paint';
   let showGrid = true;
@@ -137,9 +200,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  /** 缩放按钮只改格宽；默认格宽铺满视口（不再额外缩小 1/4） */
-  const CELL_BASE_SCALE = 1;
-  /** 预览/编辑外框相对弹窗的放大系数（v0.3.9 为 4，现减半为 2） */
+  /** 预览/编辑外框相对弹窗的放大系数 */
   const VIEW_AREA_SCALE = 2;
   const ZOOM_STEP = 1.2;
   const ZOOM_MIN = 0.5;
@@ -148,17 +209,16 @@ export function openPixelEditor(onApplied: () => void): void {
   const DEBUG_COL_W = 132;
   const COL_GAP = 12;
   const COL_HEAD_H = 24;
-  const VIEW_CONTROLS_H = 28;
 
-  let cellZoom = 1;
+  let cellZoom = ZOOM_MIN;
   let panMode = false;
   let panOffset = { x: 0, y: 0 };
   let panDrag: { px: number; py: number; ox: number; oy: number } | null = null;
   let brushSize = 1;
   let baseCellSize = 4;
   let cellSize = 4;
-  let gridPixelW = GRID_COLS * cellSize;
-  let gridPixelH = GRID_ROWS * cellSize;
+  let gridPixelW = gridCols * cellSize;
+  let gridPixelH = gridRows * cellSize;
   let viewportW = 200;
   let viewportH = 274;
   let contentH = 274;
@@ -188,11 +248,6 @@ export function openPixelEditor(onApplied: () => void): void {
       </div>
       <div class="pixel-editor__col pixel-editor__col--edit" data-col-edit>
         <div class="pixel-editor__col-head">绘制</div>
-        <div class="pixel-editor__view-controls">
-          <button type="button" class="btn" data-zoom-out title="缩小格子">缩小</button>
-          <button type="button" class="btn" data-zoom-in title="放大格子">放大</button>
-          <button type="button" class="btn" data-pan-toggle title="拖动画布视口">拖动</button>
-        </div>
         <div class="pixel-editor__col-panel" data-edit-panel>
           <div class="pixel-editor__edit-scroll" data-edit-scroll>
           <div class="pixel-editor__edit-scroll-inner" data-edit-scroll-inner>
@@ -215,6 +270,11 @@ export function openPixelEditor(onApplied: () => void): void {
         <div class="pixel-editor__side-panel" data-side-panel>
         <div class="pixel-editor__tools-panel">
           <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
+          <div class="pixel-editor__tools-zoom">
+            <button type="button" class="btn" data-zoom-out title="缩小格子">缩小</button>
+            <button type="button" class="btn" data-zoom-in title="放大格子">放大</button>
+            <button type="button" class="btn" data-pan-toggle title="拖动画布视口">拖动</button>
+          </div>
           <div class="pixel-editor__tools-grid">
             <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
             <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
@@ -324,7 +384,8 @@ const picker = createColorPicker(
       `画笔: ${brushSize}`,
       `格宽: ${cellSize}px`,
       `缩放: ${cellZoom.toFixed(2)}`,
-      `网格: ${gridPixelW}×${gridPixelH}`,
+      `网格: ${gridCols}×${gridRows}`,
+      `像素: ${gridPixelW}×${gridPixelH}`,
       `视口: ${viewportW}×${viewportH}`,
       `填充: ${Math.round((gridPixelW / viewportW) * 100)}%×${Math.round((gridPixelH / viewportH) * 100)}%`,
     ].join('\n');
@@ -341,28 +402,43 @@ const picker = createColorPicker(
     editCanvas.style.cursor = panMode ? 'grab' : 'crosshair';
   }
 
-  /** 仅根据窗口调整固定视口与基准格宽 */
+  /** 固定 TCG 内框比例视口；高度 ×1.3 */
   function layoutViewport(): void {
     const bodyW = bodyEl.clientWidth || panel.clientWidth;
     const bodyH =
       bodyEl.clientHeight || Math.min(window.innerHeight * 0.55, 400);
     const sideW = TOOLS_COL_W + DEBUG_COL_W + COL_GAP;
-    const cols = 2;
+    const colCount = 2;
     const areaMul = VIEW_AREA_SCALE / 2;
     const drawColW = Math.max(
       120,
-      Math.floor(((bodyW - sideW - COL_GAP * (cols + 1)) / cols) * areaMul)
+      Math.floor(
+        ((bodyW - sideW - COL_GAP * (colCount + 1)) / colCount) * areaMul
+      )
     );
 
     contentH = Math.max(
       140,
-      Math.floor((bodyH - COL_HEAD_H * 2 - VIEW_CONTROLS_H - 16) * areaMul)
+      Math.floor(
+        (bodyH - COL_HEAD_H * 2 - 16) * areaMul * HEIGHT_SCALE
+      )
     );
-    viewportW = Math.max(GRID_COLS * 3, drawColW - 8);
     viewportH = contentH;
+    viewportW = Math.max(
+      MIN_CELL_PX * 4,
+      Math.round(viewportH * INNER_ASPECT_RATIO)
+    );
+    if (viewportW > drawColW - 8) {
+      viewportW = drawColW - 8;
+      viewportH = Math.max(
+        MIN_CELL_PX * 4,
+        Math.round(viewportW / INNER_ASPECT_RATIO)
+      );
+      contentH = viewportH;
+    }
 
-    const rawCell = Math.min(viewportW / GRID_COLS, viewportH / GRID_ROWS);
-    baseCellSize = Math.max(3, Math.floor(rawCell * CELL_BASE_SCALE));
+    const fitMin = fitGridToViewport(viewportW, viewportH, MIN_CELL_PX);
+    baseCellSize = fitMin.cell;
 
     const colPad = 20;
     colPreview.style.flex = `0 0 ${viewportW + colPad}px`;
@@ -381,14 +457,24 @@ const picker = createColorPicker(
     layoutGrid();
   }
 
-  /** 缩放只改格宽与网格像素尺寸，视口尺寸不变 */
+  /** 缩放只改格宽与行列数；视口（TCG 外框）不变 */
   function layoutGrid(): void {
-    cellSize = Math.max(
-      3,
-      Math.min(Math.round(baseCellSize * cellZoom), 64)
-    );
-    gridPixelW = GRID_COLS * cellSize;
-    gridPixelH = GRID_ROWS * cellSize;
+    const targetCell = baseCellSize * cellZoom;
+    const fit = fitGridToViewport(viewportW, viewportH, targetCell);
+    const nextCols = fit.cols;
+    const nextRows = fit.rows;
+
+    if (nextCols !== gridCols || nextRows !== gridRows) {
+      grid = resampleGrid(grid, gridCols, gridRows, nextCols, nextRows);
+      gridCols = nextCols;
+      gridRows = nextRows;
+      selection = null;
+      selectStart = null;
+    }
+
+    cellSize = fit.cell;
+    gridPixelW = fit.gridW;
+    gridPixelH = fit.gridH;
 
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
@@ -413,6 +499,11 @@ const picker = createColorPicker(
     editScrollInner.style.minHeight =
       workspaceH < viewportH + RULER_PX ? `${viewportH + RULER_PX}px` : `${workspaceH}px`;
 
+    const padX = Math.max(0, Math.floor((viewportW - gridPixelW) / 2));
+    const padY = Math.max(0, Math.floor((viewportH - gridPixelH) / 2));
+    previewInner.style.marginLeft = `${padX}px`;
+    previewInner.style.marginTop = `${padY}px`;
+
     applyPanTransform();
     buildRulers();
     drawGridLines();
@@ -427,14 +518,14 @@ const picker = createColorPicker(
     rulerTop.style.width = `${gridPixelW}px`;
     rulerLeft.style.height = `${gridPixelH}px`;
 
-    for (let x = 0; x < GRID_COLS; x++) {
+    for (let x = 0; x < gridCols; x++) {
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.width = `${cellSize}px`;
       s.textContent = String(x);
       rulerTop.append(s);
     }
-    for (let y = 0; y < GRID_ROWS; y++) {
+    for (let y = 0; y < gridRows; y++) {
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.height = `${cellSize}px`;
@@ -443,22 +534,47 @@ const picker = createColorPicker(
     }
   }
 
-  function strokeSquareGrid(ctx: CanvasRenderingContext2D): void {
+  function strokeGridOnEmptyCells(ctx: CanvasRenderingContext2D): void {
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
     ctx.lineWidth = 1;
-    for (let x = 0; x <= GRID_COLS; x++) {
-      const px = x * cellSize + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, gridPixelH);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= GRID_ROWS; y++) {
-      const py = y * cellSize + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, py);
-      ctx.lineTo(gridPixelW, py);
-      ctx.stroke();
+    for (let y = 0; y < gridRows; y++) {
+      for (let x = 0; x < gridCols; x++) {
+        if (!showGridAtCell(grid[y]?.[x] ?? null)) continue;
+        const x0 = x * cellSize + 0.5;
+        const y0 = y * cellSize + 0.5;
+        const x1 = (x + 1) * cellSize + 0.5;
+        const y1 = (y + 1) * cellSize + 0.5;
+        if (y === 0 || showGridAtCell(grid[y - 1]?.[x] ?? null)) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y0);
+          ctx.stroke();
+        }
+        if (x === 0 || showGridAtCell(grid[y]?.[x - 1] ?? null)) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x0, y1);
+          ctx.stroke();
+        }
+        if (
+          y === gridRows - 1 ||
+          showGridAtCell(grid[y + 1]?.[x] ?? null)
+        ) {
+          ctx.beginPath();
+          ctx.moveTo(x0, y1);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+        if (
+          x === gridCols - 1 ||
+          showGridAtCell(grid[y]?.[x + 1] ?? null)
+        ) {
+          ctx.beginPath();
+          ctx.moveTo(x1, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+      }
     }
   }
 
@@ -466,7 +582,7 @@ const picker = createColorPicker(
     const editGrid = gridCanvas.getContext('2d');
     if (editGrid) {
       editGrid.clearRect(0, 0, gridPixelW, gridPixelH);
-      if (showGrid) strokeSquareGrid(editGrid);
+      if (showGrid) strokeGridOnEmptyCells(editGrid);
     }
     const previewGrid = previewGridCanvas.getContext('2d');
     if (previewGrid) {
@@ -498,14 +614,14 @@ const picker = createColorPicker(
   function cellFromEvent(e: PointerEvent): { x: number; y: number } {
     const r = editCanvas.getBoundingClientRect();
     const x = clamp(
-      Math.floor(((e.clientX - r.left) / r.width) * GRID_COLS),
+      Math.floor(((e.clientX - r.left) / r.width) * gridCols),
       0,
-      GRID_COLS - 1
+      gridCols - 1
     );
     const y = clamp(
-      Math.floor(((e.clientY - r.top) / r.height) * GRID_ROWS),
+      Math.floor(((e.clientY - r.top) / r.height) * gridRows),
       0,
-      GRID_ROWS - 1
+      gridRows - 1
     );
     return { x, y };
   }
@@ -547,7 +663,7 @@ const picker = createColorPicker(
       for (let dx = -r; dx <= brushSize - 1 - r; dx++) {
         const cx = x + dx;
         const cy = y + dy;
-        if (cx < 0 || cy < 0 || cx >= GRID_COLS || cy >= GRID_ROWS) continue;
+        if (cx < 0 || cy < 0 || cx >= gridCols || cy >= gridRows) continue;
         if (lastPaintCell?.x === cx && lastPaintCell?.y === cy && brushSize === 1) {
           continue;
         }
@@ -574,10 +690,10 @@ const picker = createColorPicker(
   function finishSelection(x1: number, y1: number): void {
     if (!selectStart) return;
     const rect = normalizeRect(selectStart.x, selectStart.y, x1, y1);
-    rect.x = clamp(rect.x, 0, GRID_COLS - 1);
-    rect.y = clamp(rect.y, 0, GRID_ROWS - 1);
-    rect.w = Math.min(rect.w, GRID_COLS - rect.x);
-    rect.h = Math.min(rect.h, GRID_ROWS - rect.y);
+    rect.x = clamp(rect.x, 0, gridCols - 1);
+    rect.y = clamp(rect.y, 0, gridRows - 1);
+    rect.w = Math.min(rect.w, gridCols - rect.x);
+    rect.h = Math.min(rect.h, gridRows - rect.y);
     if (rect.w < 1 || rect.h < 1) {
       selection = null;
       selBox.hidden = true;
@@ -590,10 +706,10 @@ const picker = createColorPicker(
 
   function commitMove(targetX: number, targetY: number): void {
     if (!selection) return;
-    const tx = clamp(targetX, 0, GRID_COLS - selection.w);
-    const ty = clamp(targetY, 0, GRID_ROWS - selection.h);
+    const tx = clamp(targetX, 0, gridCols - selection.w);
+    const ty = clamp(targetY, 0, gridRows - selection.h);
     clearRegion(grid, selection);
-    pasteRegion(grid, tx, ty, selection.pixels);
+    pasteRegion(grid, gridCols, gridRows, tx, ty, selection.pixels);
     selection = {
       x: tx,
       y: ty,
@@ -665,7 +781,7 @@ const picker = createColorPicker(
       return;
     }
     if (tool === 'fill') {
-      floodFill(grid, x, y, paintColor);
+      floodFill(grid, gridCols, gridRows, x, y, paintColor);
       refreshAll();
       return;
     }
@@ -717,8 +833,8 @@ const picker = createColorPicker(
     }
     if (tool === 'move' && moveAnchor && selection) {
       updateSelectionBox({
-        x: clamp(x - moveOffset.x, 0, GRID_COLS - selection.w),
-        y: clamp(y - moveOffset.y, 0, GRID_ROWS - selection.h),
+        x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
+        y: clamp(y - moveOffset.y, 0, gridRows - selection.h),
         w: selection.w,
         h: selection.h,
       });
@@ -787,7 +903,7 @@ const picker = createColorPicker(
 
   select.addEventListener('change', () => {
     currentKey = select.value as PixelArtKey;
-    grid = normalizeGrid(getArtGrid(currentKey));
+    grid = normalizeGrid(getArtGrid(currentKey), gridCols, gridRows);
     selection = null;
     selectStart = null;
     refreshAll();
@@ -795,7 +911,7 @@ const picker = createColorPicker(
   });
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
-    grid = normalizeGrid([]);
+    grid = normalizeGrid([], gridCols, gridRows);
     selection = null;
     refreshAll();
   });

@@ -82,7 +82,7 @@ export class GameBoard {
             </div>
           </div>
           <div class="game-board__module game-board__module--tools">
-            <h3 class="game-board__module-title">工具</h3>
+            <h3 class="game-board__module-title">设置</h3>
             <div class="game-board__module-body game-board__module-body--tools-row">
               <div class="game-board__tool-buttons">
                 <button type="button" class="btn" data-action="toggle-phase">阶段</button>
