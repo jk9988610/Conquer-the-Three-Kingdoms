@@ -647,7 +647,7 @@ body {
 }
 
 .pixel-editor--zoom-mode [data-edit-canvas],
-.pixel-editor--zoom-mode [data-grid-canvas] {
+.pixel-editor--zoom-mode [data-grid-layer] {
   pointer-events: none;
 }
 
@@ -963,16 +963,10 @@ body {
   grid-row: 2;
 }
 
-.pixel-editor__workspace .pixel-editor__canvas-stack {
+.pixel-editor__workspace .pixel-editor__art-stage {
   grid-column: 2;
   grid-row: 2;
 }
-
-.pixel-editor__canvas-stack [data-edit-canvas] {
-  touch-action: none;
-  cursor: crosshair;
-}
-
 
 .pixel-editor__ruler-top {
   display: flex;
@@ -1005,27 +999,48 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.pixel-editor__canvas-stack {
-  position: relative;
-  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
-  border: 1px solid #555;
+.pixel-editor__ruler-tick--major {
+  font-weight: 600;
+  color: #cde;
 }
 
-.pixel-editor__canvas-stack canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
+.pixel-editor__grid-layer {
+  position: relative;
+  z-index: 3;
+  pointer-events: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
-.pixel-editor__canvas-stack [data-edit-canvas] {
-  z-index: 1;
+.pixel-editor__workspace .pixel-editor__ruler-top,
+.pixel-editor__workspace .pixel-editor__ruler-left,
+.pixel-editor__workspace .pixel-editor__ruler-corner {
+  position: relative;
+  z-index: 4;
 }
 
-.pixel-editor__canvas-stack [data-grid-canvas] {
-  z-index: 2;
-  pointer-events: none;
+.pixel-editor__art-stage {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid #555;
+  box-sizing: border-box;
+}
+
+.pixel-editor__art-pan {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.pixel-editor__art-pan [data-edit-canvas] {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .pixel-editor__sel-box {

@@ -37,25 +37,6 @@ interface Selection {
   pixels: Pixel[][];
 }
 
-function isCellEmpty(p: Pixel): boolean {
-  return p === null || p === undefined;
-}
-
-function pixelAlpha(p: Pixel): number {
-  if (isCellEmpty(p)) return 0;
-  const s = p as string;
-  const rgba = s.match(/rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/i);
-  if (rgba) return Number(rgba[1]);
-  let hex = s.replace('#', '');
-  if (hex.length === 8) return parseInt(hex.slice(6, 8), 16) / 255;
-  return 1;
-}
-
-/** 无像素或几乎全透明：可显示辅助网格线 */
-function showGridAtCell(p: Pixel): boolean {
-  return isCellEmpty(p) || pixelAlpha(p) < 0.08;
-}
-
 function normalizeGrid(g: PixelGrid, cols: number, rows: number): PixelGrid {
   const out: PixelGrid = [];
   const srcRows = Math.max(1, g.length);
@@ -92,6 +73,13 @@ function resampleGrid(
     out.push(row);
   }
   return out;
+}
+
+/** 格大时每格标号；格中每 5 格；格小每 10 格 */
+function rulerLabelStep(cellPx: number): number {
+  if (cellPx >= 18) return 1;
+  if (cellPx >= 9) return 5;
+  return 10;
 }
 
 function fitGridToViewport(
@@ -225,6 +213,11 @@ export function openPixelEditor(onApplied: () => void): void {
   let viewportW = 200;
   let viewportH = 274;
   let contentH = 274;
+  let gridScrollW = 800;
+  let gridScrollH = 1000;
+  let lockedViewportW = 0;
+  let lockedViewportH = 0;
+  let lastCellZoom = ZOOM_MIN;
 
   const overlay = document.createElement('div');
   overlay.className = 'pixel-editor-overlay';
@@ -244,7 +237,6 @@ export function openPixelEditor(onApplied: () => void): void {
           <div class="pixel-editor__grid-frame" data-preview-frame>
             <div class="pixel-editor__grid-inner" data-preview-inner>
               <canvas data-preview-grid-art></canvas>
-              <canvas data-preview-grid></canvas>
             </div>
           </div>
         </div>
@@ -258,10 +250,12 @@ export function openPixelEditor(onApplied: () => void): void {
             <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
             <div class="pixel-editor__ruler-top" data-ruler-top></div>
             <div class="pixel-editor__ruler-left" data-ruler-left></div>
-            <div class="pixel-editor__canvas-stack" data-canvas-stack>
-              <canvas data-edit-canvas></canvas>
-              <canvas data-grid-canvas></canvas>
-              <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+            <canvas class="pixel-editor__grid-layer" data-grid-layer></canvas>
+            <div class="pixel-editor__art-stage" data-art-stage>
+              <div class="pixel-editor__art-pan" data-art-pan>
+                <canvas data-edit-canvas></canvas>
+                <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+              </div>
             </div>
           </div>
           </div>
@@ -321,11 +315,11 @@ export function openPixelEditor(onApplied: () => void): void {
   const previewInner = panel.querySelector<HTMLElement>('[data-preview-inner]')!;
   const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
   const workspace = panel.querySelector<HTMLElement>('[data-workspace]')!;
-  const canvasStack = panel.querySelector<HTMLElement>('[data-canvas-stack]')!;
+  const artStage = panel.querySelector<HTMLElement>('[data-art-stage]')!;
+  const artPan = panel.querySelector<HTMLElement>('[data-art-pan]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
-  const gridCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-canvas]')!;
+  const gridLayerCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-layer]')!;
   const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
-  const previewGridCanvas = panel.querySelector<HTMLCanvasElement>('[data-preview-grid]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
   const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
@@ -390,8 +384,52 @@ const picker = createColorPicker(
     ].join('\n');
   }
 
+  function artOriginInWorkspace(): { x: number; y: number } {
+    return { x: RULER_PX + panOffset.x, y: RULER_PX + panOffset.y };
+  }
+
+  function clampPan(o: { x: number; y: number }): { x: number; y: number } {
+    const maxX = Math.max(0, gridPixelW - viewportW);
+    const maxY = Math.max(0, gridPixelH - viewportH);
+    return {
+      x: clamp(o.x, 0, maxX),
+      y: clamp(o.y, 0, maxY),
+    };
+  }
+
+  /** 缩小或网格小于视口时居中归位 */
+  function snapPanHome(prevZoom?: number): void {
+    const zoomedOut = prevZoom !== undefined && cellZoom < prevZoom - 0.001;
+    const fits =
+      gridPixelW <= viewportW + 1 && gridPixelH <= viewportH + 1;
+    if (zoomedOut || fits) {
+      panOffset = {
+        x: Math.max(0, Math.floor((viewportW - gridPixelW) / 2)),
+        y: Math.max(0, Math.floor((viewportH - gridPixelH) / 2)),
+      };
+    } else {
+      panOffset = clampPan(panOffset);
+    }
+  }
+
   function applyPanTransform(): void {
-    workspace.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
+    artPan.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
+    drawReferenceGrid();
+    buildRulers();
+  }
+
+  function ensureArtGridDims(): void {
+    if (lockedViewportW === viewportW && lockedViewportH === viewportH) {
+      return;
+    }
+    const fit = fitGridToViewport(viewportW, viewportH, baseCellSize * ZOOM_MIN);
+    if (lockedViewportW > 0 && lockedViewportH > 0) {
+      grid = resampleGrid(grid, gridCols, gridRows, fit.cols, fit.rows);
+    }
+    gridCols = fit.cols;
+    gridRows = fit.rows;
+    lockedViewportW = viewportW;
+    lockedViewportH = viewportH;
   }
 
   function updateZoomModeUi(): void {
@@ -468,139 +506,134 @@ const picker = createColorPicker(
     editScroll.style.width = `${viewportW + RULER_PX}px`;
     editScroll.style.height = `${viewportH + RULER_PX}px`;
 
+    ensureArtGridDims();
     layoutGrid();
   }
 
-  /** 缩放只改格宽与行列数；视口（TCG 外框）不变 */
-  function layoutGrid(): void {
-    const targetCell = baseCellSize * cellZoom;
-    const fit = fitGridToViewport(viewportW, viewportH, targetCell);
-    const nextCols = fit.cols;
-    const nextRows = fit.rows;
-
-    if (nextCols !== gridCols || nextRows !== gridRows) {
-      grid = resampleGrid(grid, gridCols, gridRows, nextCols, nextRows);
-      gridCols = nextCols;
-      gridRows = nextRows;
-      selection = null;
-      selectStart = null;
-    }
-
-    cellSize = fit.cell;
-    gridPixelW = fit.gridW;
-    gridPixelH = fit.gridH;
+  /** 缩放只改格宽；行列固定；参考网格在独立层无限延伸 */
+  function layoutGrid(prevZoom?: number): void {
+    const prev = prevZoom ?? lastCellZoom;
+    cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
+    gridPixelW = gridCols * cellSize;
+    gridPixelH = gridRows * cellSize;
 
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(gridCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
-    setupCanvas(previewGridCanvas, gridPixelW, gridPixelH, dpr);
+    setupCanvas(previewGridArt, viewportW, viewportH, dpr);
 
-    canvasStack.style.width = `${gridPixelW}px`;
-    canvasStack.style.height = `${gridPixelH}px`;
-    previewInner.style.width = `${gridPixelW}px`;
-    previewInner.style.height = `${gridPixelH}px`;
+    artStage.style.width = `${viewportW}px`;
+    artStage.style.height = `${viewportH}px`;
 
-    const workspaceW = RULER_PX + gridPixelW;
-    const workspaceH = RULER_PX + gridPixelH;
-    workspace.style.width = `${workspaceW}px`;
-    workspace.style.height = `${workspaceH}px`;
-    workspace.style.gridTemplateColumns = `${RULER_PX}px ${gridPixelW}px`;
-    workspace.style.gridTemplateRows = `${RULER_PX}px ${gridPixelH}px`;
+    snapPanHome(prev);
+    lastCellZoom = cellZoom;
 
-    editScrollInner.style.minWidth =
-      workspaceW < viewportW + RULER_PX ? `${viewportW + RULER_PX}px` : `${workspaceW}px`;
-    editScrollInner.style.minHeight =
-      workspaceH < viewportH + RULER_PX ? `${viewportH + RULER_PX}px` : `${workspaceH}px`;
+    const extend = 520;
+    gridScrollW = RULER_PX + Math.max(viewportW, gridPixelW) + extend;
+    gridScrollH = RULER_PX + Math.max(viewportH, gridPixelH) + extend;
+    setupCanvas(gridLayerCanvas, gridScrollW, gridScrollH, dpr);
 
-    const padX = Math.max(0, Math.floor((viewportW - gridPixelW) / 2));
-    const padY = Math.max(0, Math.floor((viewportH - gridPixelH) / 2));
-    previewInner.style.marginLeft = `${padX}px`;
-    previewInner.style.marginTop = `${padY}px`;
+    workspace.style.width = `${gridScrollW}px`;
+    workspace.style.height = `${gridScrollH}px`;
+    workspace.style.gridTemplateColumns = `${RULER_PX}px 1fr`;
+    workspace.style.gridTemplateRows = `${RULER_PX}px 1fr`;
+
+    gridLayerCanvas.style.gridColumn = '1 / -1';
+    gridLayerCanvas.style.gridRow = '1 / -1';
+    artStage.style.gridColumn = '2';
+    artStage.style.gridRow = '2';
+
+    editScrollInner.style.minWidth = `${gridScrollW}px`;
+    editScrollInner.style.minHeight = `${gridScrollH}px`;
+
+    previewInner.style.width = `${viewportW}px`;
+    previewInner.style.height = `${viewportH}px`;
+    previewInner.style.marginLeft = '0';
+    previewInner.style.marginTop = '0';
 
     applyPanTransform();
-    buildRulers();
-    drawGridLines();
     refreshAll();
     updateSelectionBox();
     updateEditorDebug();
   }
 
+  function drawReferenceGrid(): void {
+    const ctx = gridLayerCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, gridScrollW, gridScrollH);
+    if (!showGrid) return;
+
+    const { x: ox, y: oy } = artOriginInWorkspace();
+    const step = rulerLabelStep(cellSize);
+
+    const cStart = Math.floor(-ox / cellSize) - 1;
+    const cEnd = Math.ceil((gridScrollW - ox) / cellSize) + 1;
+    for (let c = cStart; c <= cEnd; c++) {
+      const x = ox + c * cellSize + 0.5;
+      const major = c % step === 0;
+      ctx.strokeStyle = major
+        ? 'rgba(255,255,255,0.42)'
+        : 'rgba(255,255,255,0.14)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, gridScrollH);
+      ctx.stroke();
+    }
+
+    const rStart = Math.floor(-oy / cellSize) - 1;
+    const rEnd = Math.ceil((gridScrollH - oy) / cellSize) + 1;
+    for (let r = rStart; r <= rEnd; r++) {
+      const y = oy + r * cellSize + 0.5;
+      const major = r % step === 0;
+      ctx.strokeStyle = major
+        ? 'rgba(255,255,255,0.42)'
+        : 'rgba(255,255,255,0.14)';
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(gridScrollW, y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(201, 162, 39, 0.75)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(ox + 0.5, oy + 0.5, gridPixelW, gridPixelH);
+  }
+
   function buildRulers(): void {
+    const step = rulerLabelStep(cellSize);
+    const { x: ox, y: oy } = artOriginInWorkspace();
+
     rulerTop.innerHTML = '';
     rulerLeft.innerHTML = '';
-    rulerTop.style.width = `${gridPixelW}px`;
-    rulerLeft.style.height = `${gridPixelH}px`;
+    rulerTop.style.width = `${gridScrollW - RULER_PX}px`;
+    rulerLeft.style.height = `${gridScrollH - RULER_PX}px`;
 
-    for (let x = 0; x < gridCols; x++) {
+    const cStart = Math.floor(-ox / cellSize);
+    const cCount = Math.ceil((gridScrollW - RULER_PX) / cellSize) + 2;
+    for (let i = 0; i < cCount; i++) {
+      const c = cStart + i;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.width = `${cellSize}px`;
-      s.textContent = String(x);
+      if (c % step === 0) {
+        s.textContent = String(c);
+        s.classList.add('pixel-editor__ruler-tick--major');
+      }
       rulerTop.append(s);
     }
-    for (let y = 0; y < gridRows; y++) {
+
+    const rStart = Math.floor(-oy / cellSize);
+    const rCount = Math.ceil((gridScrollH - RULER_PX) / cellSize) + 2;
+    for (let i = 0; i < rCount; i++) {
+      const r = rStart + i;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.height = `${cellSize}px`;
-      s.textContent = String(y);
-      rulerLeft.append(s);
-    }
-  }
-
-  function strokeGridOnEmptyCells(ctx: CanvasRenderingContext2D): void {
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 1;
-    for (let y = 0; y < gridRows; y++) {
-      for (let x = 0; x < gridCols; x++) {
-        if (!showGridAtCell(grid[y]?.[x] ?? null)) continue;
-        const x0 = x * cellSize + 0.5;
-        const y0 = y * cellSize + 0.5;
-        const x1 = (x + 1) * cellSize + 0.5;
-        const y1 = (y + 1) * cellSize + 0.5;
-        if (y === 0 || showGridAtCell(grid[y - 1]?.[x] ?? null)) {
-          ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x1, y0);
-          ctx.stroke();
-        }
-        if (x === 0 || showGridAtCell(grid[y]?.[x - 1] ?? null)) {
-          ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x0, y1);
-          ctx.stroke();
-        }
-        if (
-          y === gridRows - 1 ||
-          showGridAtCell(grid[y + 1]?.[x] ?? null)
-        ) {
-          ctx.beginPath();
-          ctx.moveTo(x0, y1);
-          ctx.lineTo(x1, y1);
-          ctx.stroke();
-        }
-        if (
-          x === gridCols - 1 ||
-          showGridAtCell(grid[y]?.[x + 1] ?? null)
-        ) {
-          ctx.beginPath();
-          ctx.moveTo(x1, y0);
-          ctx.lineTo(x1, y1);
-          ctx.stroke();
-        }
+      if (r % step === 0) {
+        s.textContent = String(r);
+        s.classList.add('pixel-editor__ruler-tick--major');
       }
-    }
-  }
-
-  function drawGridLines(): void {
-    const editGrid = gridCanvas.getContext('2d');
-    if (editGrid) {
-      editGrid.clearRect(0, 0, gridPixelW, gridPixelH);
-      if (showGrid) strokeGridOnEmptyCells(editGrid);
-    }
-    const previewGrid = previewGridCanvas.getContext('2d');
-    if (previewGrid) {
-      previewGrid.clearRect(0, 0, gridPixelW, gridPixelH);
+      rulerLeft.append(s);
     }
   }
 
@@ -614,14 +647,15 @@ const picker = createColorPicker(
   function refreshPreview(): void {
     const sq = previewGridArt.getContext('2d');
     if (sq) {
-      sq.clearRect(0, 0, gridPixelW, gridPixelH);
-      drawGridToCanvas(sq, grid, gridPixelW, gridPixelH);
+      sq.clearRect(0, 0, viewportW, viewportH);
+      drawGridToCanvas(sq, grid, viewportW, viewportH);
     }
   }
 
   function refreshAll(): void {
     refreshEditCanvas();
     refreshPreview();
+    drawReferenceGrid();
     updateSelectionBox();
   }
 
@@ -792,12 +826,13 @@ const picker = createColorPicker(
         const pts = [...navPointers.values()];
         const d = pointerDist(pts[0], pts[1]);
         if (navPinchDist0 > 8) {
+          const prev = cellZoom;
           cellZoom = clamp(
             navPinchZoom0 * (d / navPinchDist0),
             ZOOM_MIN,
             ZOOM_MAX
           );
-          layoutGrid();
+          layoutGrid(prev);
         }
       } else if (navPointers.size === 1 && panDrag) {
         panOffset = {
@@ -941,7 +976,7 @@ const picker = createColorPicker(
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
-    drawGridLines();
+    drawReferenceGrid();
     const btn = panel.querySelector('[data-toggle-grid]');
     if (btn) btn.textContent = showGrid ? '网格：开' : '网格';
   });
