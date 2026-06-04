@@ -391,25 +391,33 @@ const picker = createColorPicker(
     return { x: RULER_PX + panOffset.x, y: RULER_PX + panOffset.y };
   }
 
+  /** 画布大于视口时 pan 为负（可拖到右/下缘）；小于视口时为正（居中留白） */
+  function panBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
+    const minX = Math.min(0, viewportW - gridPixelW);
+    const maxX = Math.max(0, viewportW - gridPixelW);
+    const minY = Math.min(0, viewportH - gridPixelH);
+    const maxY = Math.max(0, viewportH - gridPixelH);
+    return { minX, maxX, minY, maxY };
+  }
+
   function clampPan(o: { x: number; y: number }): { x: number; y: number } {
-    const maxX = Math.max(0, gridPixelW - viewportW);
-    const maxY = Math.max(0, gridPixelH - viewportH);
+    const { minX, maxX, minY, maxY } = panBounds();
     return {
-      x: clamp(o.x, 0, maxX),
-      y: clamp(o.y, 0, maxY),
+      x: clamp(o.x, minX, maxX),
+      y: clamp(o.y, minY, maxY),
     };
   }
 
-  /** 缩小或网格小于视口时居中归位 */
+  /** 缩小或网格小于视口时居中；放大中仅夹紧边界，不强制回中 */
   function snapPanHome(prevZoom?: number): void {
     const zoomedOut = prevZoom !== undefined && cellZoom < prevZoom - 0.001;
     const fits =
       gridPixelW <= viewportW + 1 && gridPixelH <= viewportH + 1;
     if (zoomedOut || fits) {
-      panOffset = {
-        x: Math.max(0, Math.floor((viewportW - gridPixelW) / 2)),
-        y: Math.max(0, Math.floor((viewportH - gridPixelH) / 2)),
-      };
+      panOffset = clampPan({
+        x: Math.floor((viewportW - gridPixelW) / 2),
+        y: Math.floor((viewportH - gridPixelH) / 2),
+      });
     } else {
       panOffset = clampPan(panOffset);
     }
@@ -419,6 +427,36 @@ const picker = createColorPicker(
     artPan.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
     drawReferenceGrid();
     buildRulers();
+  }
+
+  /** 捏合过程中只改格宽与平移，不触发 snapPanHome / 整页重排 */
+  function applyPinchZoom(pinchFocal: { stageX: number; stageY: number }): void {
+    const oldCellSize = cellSize;
+    const oldPanX = panOffset.x;
+    const oldPanY = panOffset.y;
+
+    cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
+    gridPixelW = gridCols * cellSize;
+    gridPixelH = gridRows * cellSize;
+
+    const dpr = window.devicePixelRatio || 1;
+    setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
+
+    if (oldCellSize > 0) {
+      const canvasX = pinchFocal.stageX - oldPanX;
+      const canvasY = pinchFocal.stageY - oldPanY;
+      const scale = cellSize / oldCellSize;
+      panOffset = clampPan({
+        x: pinchFocal.stageX - canvasX * scale,
+        y: pinchFocal.stageY - canvasY * scale,
+      });
+    }
+
+    lastCellZoom = cellZoom;
+    applyPanTransform();
+    refreshEditCanvas();
+    updateSelectionBox();
+    updateEditorDebug();
   }
 
   function ensureArtGridDims(): void {
@@ -841,16 +879,16 @@ const picker = createColorPicker(
         const pts = [...navPointers.values()];
         const d = pointerDist(pts[0], pts[1]);
         if (navPinchDist0 > 8) {
-          const prev = cellZoom;
           cellZoom = clamp(
             navPinchZoom0 * (d / navPinchDist0),
             ZOOM_MIN,
             ZOOM_MAX
           );
           const stageRect = artStage.getBoundingClientRect();
-          const focalStageX = (pts[0].x + pts[1].x) / 2 - stageRect.left;
-          const focalStageY = (pts[0].y + pts[1].y) / 2 - stageRect.top;
-          layoutGrid(prev, { stageX: focalStageX, stageY: focalStageY });
+          applyPinchZoom({
+            stageX: (pts[0].x + pts[1].x) / 2 - stageRect.left,
+            stageY: (pts[0].y + pts[1].y) / 2 - stageRect.top,
+          });
         }
       } else if (navPointers.size === 1 && panDrag) {
         panOffset = clampPan({
@@ -868,14 +906,7 @@ const picker = createColorPicker(
     navPointers.delete(e.pointerId);
     if (navPointers.size < 2) {
       if (wasPinching) {
-        const fits =
-          gridPixelW <= viewportW + 1 && gridPixelH <= viewportH + 1;
-        if (fits || cellZoom <= ZOOM_MIN + 0.001) {
-          layoutGrid();
-        } else {
-          panOffset = clampPan(panOffset);
-          applyPanTransform();
-        }
+        layoutGrid();
       }
       navPinchDist0 = 0;
     }
