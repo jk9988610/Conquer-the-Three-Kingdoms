@@ -190,8 +190,8 @@ export function openPixelEditor(onApplied: () => void): void {
   let pointerDrawing = false;
   /** 预览/编辑外框相对弹窗的放大系数 */
   const VIEW_AREA_SCALE = 2;
-  const ZOOM_MIN = 0.5;
-  const ZOOM_MAX = 4;
+  const ZOOM_MIN = 1;
+  const ZOOM_MAX = 8;
   const TOOLS_COL_W = 168;
   const DEBUG_COL_W = 132;
   const COL_GAP = 12;
