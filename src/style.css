@@ -430,7 +430,8 @@ body {
   justify-content: center;
   padding: 8px;
   overscroll-behavior: contain;
-  touch-action: none;
+  pointer-events: auto;
+  touch-action: manipulation;
   -webkit-touch-callout: none;
 }
 
@@ -444,14 +445,18 @@ body {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  touch-action: none;
+  touch-action: manipulation;
   -webkit-touch-callout: none;
 }
 
 .pixel-editor__head {
+  position: relative;
+  z-index: 20;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
+  touch-action: manipulation;
 }
 
 .pixel-editor__head h2 {
@@ -465,6 +470,9 @@ body {
   color: #fff;
   font-size: 1.4rem;
   cursor: pointer;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 1;
 }
 
 .pixel-editor__toolbar {
@@ -626,6 +634,7 @@ body {
   flex: 1 1 auto;
   min-height: min(65dvh, 494px);
   max-height: min(75dvh, 546px);
+  touch-action: none;
 }
 
 .pixel-editor__tools-zoom {
@@ -727,6 +736,7 @@ body {
   min-height: 0;
   overflow-y: auto;
   box-sizing: border-box;
+  touch-action: manipulation;
 }
 
 .pixel-editor__editor-debug {

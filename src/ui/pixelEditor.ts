@@ -172,6 +172,9 @@ function pasteRegion(
   }
 }
 
+let editorOverlay: HTMLElement | null = null;
+let editorTeardown: (() => void) | null = null;
+
 export function openPixelEditor(onApplied: () => void): void {
   closePixelEditor();
 
@@ -1009,16 +1012,35 @@ const picker = createColorPicker(
     }
   });
 
-  panel.querySelector('.pixel-editor__close')?.addEventListener('click', closePixelEditor);
+  const requestClose = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closePixelEditor();
+  };
+  const closeBtn = panel.querySelector('.pixel-editor__close');
+  closeBtn?.addEventListener('click', requestClose);
+  closeBtn?.addEventListener('pointerup', requestClose);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closePixelEditor();
   });
+
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closePixelEditor();
+  };
+  document.addEventListener('keydown', onEscape);
 
   const ro = new ResizeObserver(() => layoutViewport());
   ro.observe(bodyEl);
   ro.observe(panel);
 
   overlay.append(panel);
+  editorOverlay = overlay;
+  editorTeardown = () => {
+    ro.disconnect();
+    document.removeEventListener('keydown', onEscape);
+    navPointers.clear();
+    panDrag = null;
+  };
   getModalOverlayMount().append(overlay);
   updateZoomModeUi();
   requestAnimationFrame(() => {
@@ -1028,5 +1050,9 @@ const picker = createColorPicker(
 }
 
 export function closePixelEditor(): void {
+  editorTeardown?.();
+  editorTeardown = null;
+  editorOverlay?.remove();
+  editorOverlay = null;
   document.querySelector('[data-modal="pixel-editor"]')?.remove();
 }
