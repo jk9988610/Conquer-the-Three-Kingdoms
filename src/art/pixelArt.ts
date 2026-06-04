@@ -72,6 +72,27 @@ const BASE_ART: Record<PixelArtKey, PixelGrid> = {
     [K, K, K, K, K],
     [null, null, K, null, null],
   ],
+  'attack-red': [
+    [null, R, R, R, null],
+    [R, R, W, R, R],
+    [R, W, R, W, R],
+    [null, R, R, R, null],
+    [null, null, K, null, null],
+  ],
+  'attack-orange': [
+    [null, Y, Y, null],
+    [Y, W, Y, Y],
+    [Y, Y, Y, null],
+    [null, K, K, null],
+    [K, null, null, K],
+  ],
+  'attack-purple': [
+    [null, P, P, P, null],
+    [P, W, P, P, null],
+    [P, P, W, P, P],
+    [null, P, P, null],
+    [null, K, K, null],
+  ],
 };
 
 const customOverrides: Partial<Record<PixelArtKey, PixelGrid>> = {};

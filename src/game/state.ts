@@ -93,3 +93,16 @@ export function updatePlayerCharacter(
     zones: { ...state.zones, playerBattlefield: list },
   };
 }
+
+export function updateEnemyCharacter(
+  state: GameState,
+  updated: CardInstance
+): GameState {
+  const list = state.zones.enemyBattlefield.map((c) =>
+    c.instanceId === updated.instanceId ? updated : c
+  );
+  return {
+    ...state,
+    zones: { ...state.zones, enemyBattlefield: list },
+  };
+}

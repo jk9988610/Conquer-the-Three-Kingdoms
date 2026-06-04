@@ -5,6 +5,7 @@ import {
   placeInLoadout,
   removeFromLoadout,
 } from './equipment';
+import { maxAllyAttack } from './catalog';
 import { createCardInstance, updatePlayerCharacter } from './state';
 import type { GameState, SlotKind } from './types';
 
@@ -136,6 +137,69 @@ export function equipFromHand(
       { ...state, zones: { ...state.zones, hand } },
       updated
     ),
+  };
+}
+
+export function attackEnemyFromHand(
+  state: GameState,
+  actionInstanceId: string,
+  enemyInstanceId: string
+): ActionResult {
+  if (state.phase !== 'battle') {
+    return { ok: false, reason: '仅战斗阶段可攻击' };
+  }
+
+  const hi = state.zones.hand.findIndex((c) => c.instanceId === actionInstanceId);
+  if (hi === -1) return { ok: false, reason: '手牌无此攻击牌' };
+
+  const actionCard = state.zones.hand[hi];
+  if (
+    !actionCard.data.tags.includes('action') ||
+    actionCard.data.actionKind !== 'attack'
+  ) {
+    return { ok: false, reason: '非攻击动作牌' };
+  }
+
+  const enemy = state.zones.enemyBattlefield.find(
+    (c) => c.instanceId === enemyInstanceId
+  );
+  if (!enemy?.stats) return { ok: false, reason: '目标不在敌方战场' };
+
+  const damage = maxAllyAttack(state);
+  if (damage <= 0) {
+    return { ok: false, reason: '我方无角色，无法计算攻击力' };
+  }
+
+  const hand = [...state.zones.hand];
+  hand.splice(hi, 1);
+
+  const newHp = enemy.stats.hp - damage;
+  let enemyBattlefield = state.zones.enemyBattlefield;
+
+  if (newHp <= 0) {
+    enemyBattlefield = enemyBattlefield.filter(
+      (c) => c.instanceId !== enemyInstanceId
+    );
+  } else {
+    const updated = {
+      ...enemy,
+      stats: { ...enemy.stats, hp: newHp },
+    };
+    enemyBattlefield = enemyBattlefield.map((c) =>
+      c.instanceId === enemyInstanceId ? updated : c
+    );
+  }
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      zones: {
+        ...state.zones,
+        hand,
+        enemyBattlefield,
+      },
+    },
   };
 }
 
