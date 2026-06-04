@@ -365,36 +365,121 @@ body {
   outline: 1px solid var(--tcg-accent);
 }
 
+
 .pixel-editor__main {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.pixel-editor__edit-wrap {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  grid-template-rows: 20px 1fr;
+  gap: 0;
+  flex: 1;
+  min-width: 200px;
+}
+
+.pixel-editor__ruler-corner {
+  width: 20px;
+  height: 20px;
+  background: #0e1420;
+  border: 1px solid #555;
+}
+
+.pixel-editor__ruler-top {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  height: 20px;
+  background: #1a2438;
+  border: 1px solid #555;
+  border-left: none;
+  font-size: 0.5rem;
+  line-height: 20px;
+  text-align: center;
+  color: #8b9cb3;
+  overflow: hidden;
+}
+
+.pixel-editor__ruler-left {
+  display: grid;
+  grid-template-rows: repeat(16, 1fr);
+  width: 20px;
+  background: #1a2438;
+  border: 1px solid #555;
+  border-top: none;
+  font-size: 0.5rem;
+  color: #8b9cb3;
+  align-items: center;
+  justify-items: center;
+}
+
+.pixel-editor__canvas-box {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 126 / 173;
+  border: 1px solid #555;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+}
+
+.pixel-editor__edit-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.pixel-editor__grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.pixel-editor__grid-overlay--hidden {
+  opacity: 0;
+}
+
+.pixel-editor__sel-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed #ec4;
+  background: rgba(236, 196, 68, 0.15);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.pixel-editor__preview-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.pixel-editor__preview-label {
+  font-size: 0.65rem;
+  color: var(--tcg-muted);
 }
 
 .pixel-editor__preview {
-  flex-shrink: 0;
+  display: block;
   width: 126px;
   height: 173px;
   background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 50% / 12px 12px;
   border: 1px solid #555;
   image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
-.pixel-editor__grid {
-  flex: 1;
-  display: grid;
-  gap: 1px;
-  background: #111;
-  border: 1px solid #555;
-  min-width: 0;
-}
-
-.pixel-editor__cell {
-  aspect-ratio: 1;
-  padding: 0;
-  border: none;
-  cursor: crosshair;
-  min-width: 0;
+.pixel-editor__tool--active {
+  border-color: var(--tcg-accent) !important;
+  color: var(--tcg-accent);
 }
 
 .pixel-editor__export {

@@ -96,32 +96,38 @@ export function gridToExportCode(key: string, grid: PixelGrid): string {
   return `  '${key}': [\n${lines.join('\n')}\n  ],`;
 }
 
-function gridSize(grid: PixelGrid): { cols: number; rows: number } {
-  const rows = grid.length;
+export function gridDimensions(grid: PixelGrid): { cols: number; rows: number } {
+  const rows = Math.max(1, grid.length);
   const cols = Math.max(1, ...grid.map((r) => r.length));
   return { cols, rows };
 }
 
-function fill(
+/**
+ * 将像素网格铺满整个画布（上下左右贴边）。
+ * 格元可非正方形，以填满 width×height。
+ */
+export function drawGridToCanvas(
   ctx: CanvasRenderingContext2D,
   grid: PixelGrid,
-  ox: number,
-  oy: number,
-  cell: number
+  width: number,
+  height: number
 ): void {
+  const { cols, rows } = gridDimensions(grid);
+  const cellW = width / cols;
+  const cellH = height / rows;
+
   for (let y = 0; y < grid.length; y++) {
     const row = grid[y];
     for (let x = 0; x < row.length; x++) {
       const c = row[x];
       if (!c) continue;
       ctx.fillStyle = c;
-      ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
     }
   }
 }
 
 export interface DrawPixelArtOptions {
-  /** true：未上色区域透明（卡牌用） */
   transparent?: boolean;
 }
 
@@ -143,10 +149,5 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  const grid = getArtGrid(key);
-  const { cols, rows } = gridSize(grid);
-  const cell = Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
-  const ox = Math.floor((width - cols * cell) / 2);
-  const oy = Math.floor((height - rows * cell) / 2);
-  fill(ctx, grid, ox, oy, cell);
+  drawGridToCanvas(ctx, getArtGrid(key), width, height);
 }
