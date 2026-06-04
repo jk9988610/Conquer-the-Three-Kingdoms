@@ -202,7 +202,6 @@ export function openPixelEditor(onApplied: () => void): void {
   let pointerDrawing = false;
   /** 预览/编辑外框相对弹窗的放大系数 */
   const VIEW_AREA_SCALE = 2;
-  const ZOOM_STEP = 1.2;
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
   const TOOLS_COL_W = 168;
@@ -211,9 +210,13 @@ export function openPixelEditor(onApplied: () => void): void {
   const COL_HEAD_H = 24;
 
   let cellZoom = ZOOM_MIN;
-  let panMode = false;
+  /** 缩放模式：单指平移画布，双指捏合缩放网格 */
+  let zoomMode = false;
   let panOffset = { x: 0, y: 0 };
   let panDrag: { px: number; py: number; ox: number; oy: number } | null = null;
+  const navPointers = new Map<number, { x: number; y: number }>();
+  let navPinchDist0 = 0;
+  let navPinchZoom0 = 1;
   let brushSize = 1;
   let baseCellSize = 4;
   let cellSize = 4;
@@ -271,9 +274,7 @@ export function openPixelEditor(onApplied: () => void): void {
         <div class="pixel-editor__tools-panel">
           <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
           <div class="pixel-editor__tools-zoom">
-            <button type="button" class="btn" data-zoom-out title="缩小格子">缩小</button>
-            <button type="button" class="btn" data-zoom-in title="放大格子">放大</button>
-            <button type="button" class="btn" data-pan-toggle title="拖动画布视口">拖动</button>
+            <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
           </div>
           <div class="pixel-editor__tools-grid">
             <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
@@ -304,7 +305,6 @@ export function openPixelEditor(onApplied: () => void): void {
         </div>
       </div>
     </div>
-    <textarea class="pixel-editor__export" data-export-area readonly rows="4"></textarea>
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
@@ -329,7 +329,6 @@ export function openPixelEditor(onApplied: () => void): void {
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
   const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
-  const exportArea = panel.querySelector<HTMLTextAreaElement>('[data-export-area]')!;
   const colorPickerMount = panel.querySelector('[data-color-picker]')!;
 
 
@@ -383,7 +382,7 @@ const picker = createColorPicker(
       `工具: ${tool}`,
       `画笔: ${brushSize}`,
       `格宽: ${cellSize}px`,
-      `缩放: ${cellZoom.toFixed(2)}`,
+      `缩放: ${cellZoom.toFixed(2)}${zoomMode ? ' (手势)' : ''}`,
       `网格: ${gridCols}×${gridRows}`,
       `像素: ${gridPixelW}×${gridPixelH}`,
       `视口: ${viewportW}×${viewportH}`,
@@ -395,11 +394,26 @@ const picker = createColorPicker(
     workspace.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
   }
 
-  function updatePanUi(): void {
-    panel.classList.toggle('pixel-editor--pan-mode', panMode);
-    const panBtn = panel.querySelector<HTMLElement>('[data-pan-toggle]');
-    if (panBtn) panBtn.textContent = panMode ? '拖动：开' : '拖动';
-    editCanvas.style.cursor = panMode ? 'grab' : 'crosshair';
+  function updateZoomModeUi(): void {
+    panel.classList.toggle('pixel-editor--zoom-mode', zoomMode);
+    const btn = panel.querySelector<HTMLElement>('[data-zoom-mode-toggle]');
+    if (btn) {
+      btn.textContent = zoomMode ? '缩放：开' : '缩放';
+      btn.classList.toggle('pixel-editor__zoom-mode--active', zoomMode);
+    }
+    editCanvas.style.cursor = zoomMode ? 'grab' : 'crosshair';
+    if (!zoomMode) {
+      navPointers.clear();
+      panDrag = null;
+      navPinchDist0 = 0;
+    }
+  }
+
+  function pointerDist(
+    a: { x: number; y: number },
+    b: { x: number; y: number }
+  ): number {
+    return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
   /** 固定 TCG 内框比例视口；高度 ×1.3 */
@@ -726,51 +740,91 @@ const picker = createColorPicker(
     refreshAll();
   }
 
+  const blockBrowserGesture = (e: Event) => e.preventDefault();
+
+  for (const el of [overlay, panel, editScroll, editCanvas]) {
+    el.addEventListener('contextmenu', blockBrowserGesture);
+  }
+
   panel.addEventListener(
     'touchmove',
     (e) => {
-      if (pointerDrawing) e.preventDefault();
+      if (pointerDrawing || zoomMode) e.preventDefault();
     },
     { passive: false }
   );
 
-  editScroll.addEventListener('pointerdown', (e) => {
-    if (!panMode) return;
-    if (e.target !== editScroll && e.target !== workspace) return;
-    e.preventDefault();
-    panDrag = {
-      px: e.clientX,
-      py: e.clientY,
-      ox: panOffset.x,
-      oy: panOffset.y,
-    };
-    editScroll.setPointerCapture(e.pointerId);
-  });
+  editScroll.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!zoomMode) return;
+      e.preventDefault();
+      navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try {
+        editScroll.setPointerCapture(e.pointerId);
+      } catch {
+        /* noop */
+      }
+      if (navPointers.size === 2) {
+        const pts = [...navPointers.values()];
+        navPinchDist0 = pointerDist(pts[0], pts[1]);
+        navPinchZoom0 = cellZoom;
+        panDrag = null;
+      } else if (navPointers.size === 1) {
+        panDrag = {
+          px: e.clientX,
+          py: e.clientY,
+          ox: panOffset.x,
+          oy: panOffset.y,
+        };
+      }
+    },
+    { passive: false }
+  );
 
-  editScroll.addEventListener('pointermove', (e) => {
-    if (!panDrag || !editScroll.hasPointerCapture(e.pointerId)) return;
-    e.preventDefault();
-    panOffset = {
-      x: panDrag.ox + (e.clientX - panDrag.px),
-      y: panDrag.oy + (e.clientY - panDrag.py),
-    };
-    applyPanTransform();
-  });
+  editScroll.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!zoomMode || !navPointers.has(e.pointerId)) return;
+      navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      e.preventDefault();
+      if (navPointers.size >= 2) {
+        const pts = [...navPointers.values()];
+        const d = pointerDist(pts[0], pts[1]);
+        if (navPinchDist0 > 8) {
+          cellZoom = clamp(
+            navPinchZoom0 * (d / navPinchDist0),
+            ZOOM_MIN,
+            ZOOM_MAX
+          );
+          layoutGrid();
+        }
+      } else if (navPointers.size === 1 && panDrag) {
+        panOffset = {
+          x: panDrag.ox + (e.clientX - panDrag.px),
+          y: panDrag.oy + (e.clientY - panDrag.py),
+        };
+        applyPanTransform();
+      }
+    },
+    { passive: false }
+  );
 
-  const endPanDrag = (e: PointerEvent) => {
-    if (!panDrag) return;
-    panDrag = null;
+  const endNavPointer = (e: PointerEvent) => {
+    navPointers.delete(e.pointerId);
+    if (navPointers.size < 2) navPinchDist0 = 0;
+    if (navPointers.size === 0) panDrag = null;
     try {
       editScroll.releasePointerCapture(e.pointerId);
     } catch {
       /* noop */
     }
   };
-  editScroll.addEventListener('pointerup', endPanDrag);
-  editScroll.addEventListener('pointercancel', endPanDrag);
+  editScroll.addEventListener('pointerup', endNavPointer);
+  editScroll.addEventListener('pointercancel', endNavPointer);
 
   editCanvas.addEventListener('pointerdown', (e) => {
-    if (panMode) return;
+    if (zoomMode) return;
     e.preventDefault();
     pointerDrawing = true;
     editCanvas.setPointerCapture(e.pointerId);
@@ -816,7 +870,7 @@ const picker = createColorPicker(
   });
 
   editCanvas.addEventListener('pointermove', (e) => {
-    if (panMode || !editCanvas.hasPointerCapture(e.pointerId)) return;
+    if (zoomMode || !editCanvas.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
     const { x, y } = cellFromEvent(e);
     if (tool === 'paint') {
@@ -871,19 +925,10 @@ const picker = createColorPicker(
     btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
   });
 
-  panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
-    cellZoom = Math.min(ZOOM_MAX, cellZoom * ZOOM_STEP);
-    layoutGrid();
-  });
-
-  panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
-    cellZoom = Math.max(ZOOM_MIN, cellZoom / ZOOM_STEP);
-    layoutGrid();
-  });
-
-  panel.querySelector('[data-pan-toggle]')?.addEventListener('click', () => {
-    panMode = !panMode;
-    updatePanUi();
+  panel.querySelector('[data-zoom-mode-toggle]')?.addEventListener('click', () => {
+    zoomMode = !zoomMode;
+    updateZoomModeUi();
+    updateEditorDebug();
   });
 
   const brushRange = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
@@ -907,7 +952,6 @@ const picker = createColorPicker(
     selection = null;
     selectStart = null;
     refreshAll();
-    exportArea.value = '';
   });
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
@@ -919,14 +963,12 @@ const picker = createColorPicker(
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
     setCustomArtGrid(currentKey, grid);
     onApplied();
-    exportArea.value = gridToExportCode(currentKey, grid);
   });
 
   panel.querySelector('[data-export]')?.addEventListener('click', () => {
-    exportArea.value = gridToExportCode(currentKey, grid);
-    exportArea.select();
+    const code = gridToExportCode(currentKey, grid);
     try {
-      void navigator.clipboard.writeText(exportArea.value);
+      void navigator.clipboard.writeText(code);
     } catch {
       /* noop */
     }
@@ -943,7 +985,7 @@ const picker = createColorPicker(
 
   overlay.append(panel);
   getModalOverlayMount().append(overlay);
-  updatePanUi();
+  updateZoomModeUi();
   requestAnimationFrame(() => {
     layoutViewport();
     requestAnimationFrame(() => layoutViewport());
