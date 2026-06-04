@@ -194,7 +194,7 @@ export function openPixelEditor(onApplied: () => void): void {
   /** 预览/编辑外框相对弹窗的放大系数 */
   const VIEW_AREA_SCALE = 2;
   const ZOOM_MIN = 4;
-  const ZOOM_MAX = 16;
+  const ZOOM_MAX = 8;
   const TOOLS_COL_W = 168;
   const DEBUG_COL_W = 132;
   const COL_GAP = 12;
@@ -514,8 +514,15 @@ const picker = createColorPicker(
   }
 
   /** 缩放只改格宽；行列固定；参考网格在独立层无限延伸 */
-  function layoutGrid(prevZoom?: number): void {
+  function layoutGrid(
+    prevZoom?: number,
+    pinchFocal?: { stageX: number; stageY: number }
+  ): void {
     const prev = prevZoom ?? lastCellZoom;
+    const oldCellSize = cellSize;
+    const oldPanX = panOffset.x;
+    const oldPanY = panOffset.y;
+
     cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
     gridPixelW = gridCols * cellSize;
     gridPixelH = gridRows * cellSize;
@@ -527,7 +534,17 @@ const picker = createColorPicker(
     artStage.style.width = `${viewportW}px`;
     artStage.style.height = `${viewportH}px`;
 
-    snapPanHome(prev);
+    if (pinchFocal && oldCellSize > 0) {
+      const canvasX = pinchFocal.stageX - oldPanX;
+      const canvasY = pinchFocal.stageY - oldPanY;
+      const scale = cellSize / oldCellSize;
+      panOffset = clampPan({
+        x: pinchFocal.stageX - canvasX * scale,
+        y: pinchFocal.stageY - canvasY * scale,
+      });
+    } else {
+      snapPanHome(prev);
+    }
     lastCellZoom = cellZoom;
 
     const extend = 520;
@@ -830,13 +847,16 @@ const picker = createColorPicker(
             ZOOM_MIN,
             ZOOM_MAX
           );
-          layoutGrid(prev);
+          const stageRect = artStage.getBoundingClientRect();
+          const focalStageX = (pts[0].x + pts[1].x) / 2 - stageRect.left;
+          const focalStageY = (pts[0].y + pts[1].y) / 2 - stageRect.top;
+          layoutGrid(prev, { stageX: focalStageX, stageY: focalStageY });
         }
       } else if (navPointers.size === 1 && panDrag) {
-        panOffset = {
+        panOffset = clampPan({
           x: panDrag.ox + (e.clientX - panDrag.px),
           y: panDrag.oy + (e.clientY - panDrag.py),
-        };
+        });
         applyPanTransform();
       }
     },
@@ -844,8 +864,21 @@ const picker = createColorPicker(
   );
 
   const endNavPointer = (e: PointerEvent) => {
+    const wasPinching = navPinchDist0 > 8;
     navPointers.delete(e.pointerId);
-    if (navPointers.size < 2) navPinchDist0 = 0;
+    if (navPointers.size < 2) {
+      if (wasPinching) {
+        const fits =
+          gridPixelW <= viewportW + 1 && gridPixelH <= viewportH + 1;
+        if (fits || cellZoom <= ZOOM_MIN + 0.001) {
+          layoutGrid();
+        } else {
+          panOffset = clampPan(panOffset);
+          applyPanTransform();
+        }
+      }
+      navPinchDist0 = 0;
+    }
     if (navPointers.size === 0) panDrag = null;
     try {
       editScroll.releasePointerCapture(e.pointerId);
