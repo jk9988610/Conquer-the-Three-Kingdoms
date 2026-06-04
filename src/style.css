@@ -1044,9 +1044,11 @@ body {
   left: 0;
   top: 0;
   will-change: transform;
+  box-sizing: border-box;
 }
 
 .pixel-editor__art-pan [data-edit-canvas] {
+  position: absolute;
   display: block;
   touch-action: none;
   cursor: crosshair;

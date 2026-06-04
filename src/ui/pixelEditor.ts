@@ -14,6 +14,8 @@ import { getModalOverlayMount } from './overlayRoot';
 
 const RULER_PX = 18;
 const MIN_CELL_PX = 3;
+/** 画布四周参考格线外延格数（最小缩放下亦同） */
+const GRID_PAD_CELLS = 4;
 const HEIGHT_SCALE = 1.3;
 
 const PALETTE_PRESETS = [
@@ -220,7 +222,6 @@ export function openPixelEditor(onApplied: () => void): void {
   let gridScrollH = 1000;
   let lockedViewportW = 0;
   let lockedViewportH = 0;
-  let lastCellZoom = ZOOM_MIN;
 
   const overlay = document.createElement('div');
   overlay.className = 'pixel-editor-overlay';
@@ -387,17 +388,30 @@ const picker = createColorPicker(
     ].join('\n');
   }
 
-  function artOriginInWorkspace(): { x: number; y: number } {
-    return { x: RULER_PX + panOffset.x, y: RULER_PX + panOffset.y };
+  const canvasPadPx = () => GRID_PAD_CELLS * cellSize;
+
+  /** 可绘像素区左上角在工作区坐标（含外延 padding） */
+  function artCanvasOriginInWorkspace(): { x: number; y: number } {
+    const pad = canvasPadPx();
+    return { x: RULER_PX + pad + panOffset.x, y: RULER_PX + pad + panOffset.y };
   }
 
-  /** 画布大于视口时 pan 为负（可拖到右/下缘）；小于视口时为正（居中留白） */
+  function panContentSize(): { w: number; h: number } {
+    const pad = canvasPadPx();
+    return { w: gridPixelW + 2 * pad, h: gridPixelH + 2 * pad };
+  }
+
+  /** 平移范围：含画布外延；最小缩放下额外留白便于画到边缘格 */
   function panBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
-    const minX = Math.min(0, viewportW - gridPixelW);
-    const maxX = Math.max(0, viewportW - gridPixelW);
-    const minY = Math.min(0, viewportH - gridPixelH);
-    const maxY = Math.max(0, viewportH - gridPixelH);
-    return { minX, maxX, minY, maxY };
+    const pad = canvasPadPx();
+    const { w: panW, h: panH } = panContentSize();
+    const slack = pad;
+    return {
+      minX: Math.min(0, viewportW - panW) - slack,
+      maxX: Math.max(0, viewportW - panW) + slack,
+      minY: Math.min(0, viewportH - panH) - slack,
+      maxY: Math.max(0, viewportH - panH) + slack,
+    };
   }
 
   function clampPan(o: { x: number; y: number }): { x: number; y: number } {
@@ -408,19 +422,9 @@ const picker = createColorPicker(
     };
   }
 
-  /** 缩小或网格小于视口时居中；放大中仅夹紧边界，不强制回中 */
-  function snapPanHome(prevZoom?: number): void {
-    const zoomedOut = prevZoom !== undefined && cellZoom < prevZoom - 0.001;
-    const fits =
-      gridPixelW <= viewportW + 1 && gridPixelH <= viewportH + 1;
-    if (zoomedOut || fits) {
-      panOffset = clampPan({
-        x: Math.floor((viewportW - gridPixelW) / 2),
-        y: Math.floor((viewportH - gridPixelH) / 2),
-      });
-    } else {
-      panOffset = clampPan(panOffset);
-    }
+  /** 仅夹紧平移，不强制贴边或居中（最小缩放可拖动画边缘） */
+  function snapPanHome(): void {
+    panOffset = clampPan(panOffset);
   }
 
   function applyPanTransform(): void {
@@ -443,16 +447,22 @@ const picker = createColorPicker(
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
 
     if (oldCellSize > 0) {
-      const canvasX = pinchFocal.stageX - oldPanX;
-      const canvasY = pinchFocal.stageY - oldPanY;
+      const oldPad = GRID_PAD_CELLS * oldCellSize;
+      const newPad = canvasPadPx();
+      const canvasX = pinchFocal.stageX - oldPanX - oldPad;
+      const canvasY = pinchFocal.stageY - oldPanY - oldPad;
       const scale = cellSize / oldCellSize;
       panOffset = clampPan({
-        x: pinchFocal.stageX - canvasX * scale,
-        y: pinchFocal.stageY - canvasY * scale,
+        x: pinchFocal.stageX - canvasX * scale - newPad,
+        y: pinchFocal.stageY - canvasY * scale - newPad,
       });
     }
 
-    lastCellZoom = cellZoom;
+    const pad = canvasPadPx();
+    const contentW = gridPixelW + 2 * pad;
+    const contentH = gridPixelH + 2 * pad;
+    artPan.style.width = `${contentW}px`;
+    artPan.style.height = `${contentH}px`;
     applyPanTransform();
     refreshEditCanvas();
     updateSelectionBox();
@@ -551,12 +561,8 @@ const picker = createColorPicker(
     layoutGrid();
   }
 
-  /** 缩放只改格宽；行列固定；参考网格在独立层无限延伸 */
-  function layoutGrid(
-    prevZoom?: number,
-    pinchFocal?: { stageX: number; stageY: number }
-  ): void {
-    const prev = prevZoom ?? lastCellZoom;
+  /** 缩放只改格宽；行列固定；参考格线仅画布外 GRID_PAD_CELLS 格 */
+  function layoutGrid(pinchFocal?: { stageX: number; stageY: number }): void {
     const oldCellSize = cellSize;
     const oldPanX = panOffset.x;
     const oldPanY = panOffset.y;
@@ -564,6 +570,9 @@ const picker = createColorPicker(
     cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
     gridPixelW = gridCols * cellSize;
     gridPixelH = gridRows * cellSize;
+    const pad = canvasPadPx();
+    const contentW = gridPixelW + 2 * pad;
+    const contentH = gridPixelH + 2 * pad;
 
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
@@ -571,23 +580,26 @@ const picker = createColorPicker(
 
     artStage.style.width = `${viewportW}px`;
     artStage.style.height = `${viewportH}px`;
+    artPan.style.width = `${contentW}px`;
+    artPan.style.height = `${contentH}px`;
+    editCanvas.style.left = `${pad}px`;
+    editCanvas.style.top = `${pad}px`;
 
     if (pinchFocal && oldCellSize > 0) {
-      const canvasX = pinchFocal.stageX - oldPanX;
-      const canvasY = pinchFocal.stageY - oldPanY;
+      const oldPad = GRID_PAD_CELLS * oldCellSize;
+      const canvasX = pinchFocal.stageX - oldPanX - oldPad;
+      const canvasY = pinchFocal.stageY - oldPanY - oldPad;
       const scale = cellSize / oldCellSize;
       panOffset = clampPan({
-        x: pinchFocal.stageX - canvasX * scale,
-        y: pinchFocal.stageY - canvasY * scale,
+        x: pinchFocal.stageX - canvasX * scale - pad,
+        y: pinchFocal.stageY - canvasY * scale - pad,
       });
     } else {
-      snapPanHome(prev);
+      snapPanHome();
     }
-    lastCellZoom = cellZoom;
 
-    const extend = 520;
-    gridScrollW = RULER_PX + Math.max(viewportW, gridPixelW) + extend;
-    gridScrollH = RULER_PX + Math.max(viewportH, gridPixelH) + extend;
+    gridScrollW = RULER_PX + Math.max(viewportW, contentW);
+    gridScrollH = RULER_PX + Math.max(viewportH, contentH);
     setupCanvas(gridLayerCanvas, gridScrollW, gridScrollH, dpr);
 
     workspace.style.width = `${gridScrollW}px`;
@@ -620,12 +632,18 @@ const picker = createColorPicker(
     ctx.clearRect(0, 0, gridScrollW, gridScrollH);
     if (!showGrid) return;
 
-    const { x: ox, y: oy } = artOriginInWorkspace();
+    const { x: ox, y: oy } = artCanvasOriginInWorkspace();
     const step = rulerLabelStep(cellSize);
+    const cMin = -GRID_PAD_CELLS;
+    const cMax = gridCols + GRID_PAD_CELLS - 1;
+    const rMin = -GRID_PAD_CELLS;
+    const rMax = gridRows + GRID_PAD_CELLS - 1;
+    const x0 = ox + cMin * cellSize;
+    const x1 = ox + (cMax + 1) * cellSize;
+    const y0 = oy + rMin * cellSize;
+    const y1 = oy + (rMax + 1) * cellSize;
 
-    const cStart = Math.floor(-ox / cellSize) - 1;
-    const cEnd = Math.ceil((gridScrollW - ox) / cellSize) + 1;
-    for (let c = cStart; c <= cEnd; c++) {
+    for (let c = cMin; c <= cMax; c++) {
       const x = ox + c * cellSize + 0.5;
       const major = c % step === 0;
       ctx.strokeStyle = major
@@ -633,22 +651,20 @@ const picker = createColorPicker(
         : 'rgba(255,255,255,0.14)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, gridScrollH);
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y1);
       ctx.stroke();
     }
 
-    const rStart = Math.floor(-oy / cellSize) - 1;
-    const rEnd = Math.ceil((gridScrollH - oy) / cellSize) + 1;
-    for (let r = rStart; r <= rEnd; r++) {
+    for (let r = rMin; r <= rMax; r++) {
       const y = oy + r * cellSize + 0.5;
       const major = r % step === 0;
       ctx.strokeStyle = major
         ? 'rgba(255,255,255,0.42)'
         : 'rgba(255,255,255,0.14)';
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(gridScrollW, y);
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
       ctx.stroke();
     }
 
@@ -659,17 +675,19 @@ const picker = createColorPicker(
 
   function buildRulers(): void {
     const step = rulerLabelStep(cellSize);
-    const { x: ox, y: oy } = artOriginInWorkspace();
+    const pad = canvasPadPx();
+    const tickCols = gridCols + 2 * GRID_PAD_CELLS;
+    const tickRows = gridRows + 2 * GRID_PAD_CELLS;
 
     rulerTop.innerHTML = '';
     rulerLeft.innerHTML = '';
-    rulerTop.style.width = `${gridScrollW - RULER_PX}px`;
-    rulerLeft.style.height = `${gridScrollH - RULER_PX}px`;
+    rulerTop.style.width = `${tickCols * cellSize}px`;
+    rulerLeft.style.height = `${tickRows * cellSize}px`;
+    rulerTop.style.paddingLeft = `${pad + panOffset.x}px`;
+    rulerLeft.style.paddingTop = `${pad + panOffset.y}px`;
 
-    const cStart = Math.floor(-ox / cellSize);
-    const cCount = Math.ceil((gridScrollW - RULER_PX) / cellSize) + 2;
-    for (let i = 0; i < cCount; i++) {
-      const c = cStart + i;
+    for (let i = 0; i < tickCols; i++) {
+      const c = i - GRID_PAD_CELLS;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.width = `${cellSize}px`;
@@ -680,10 +698,8 @@ const picker = createColorPicker(
       rulerTop.append(s);
     }
 
-    const rStart = Math.floor(-oy / cellSize);
-    const rCount = Math.ceil((gridScrollH - RULER_PX) / cellSize) + 2;
-    for (let i = 0; i < rCount; i++) {
-      const r = rStart + i;
+    for (let i = 0; i < tickRows; i++) {
+      const r = i - GRID_PAD_CELLS;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.height = `${cellSize}px`;
@@ -717,11 +733,22 @@ const picker = createColorPicker(
     updateSelectionBox();
   }
 
-  /** 将指针坐标映射到格子：相对 art-stage 视口，再减去平移量（勿用 canvas 的 getBoundingClientRect，裁剪后会错位） */
+  /** 指针 → 格子：优先 offsetX/Y（避免裁剪后 getBoundingClientRect 偏大） */
   function cellFromEvent(e: PointerEvent): { x: number; y: number } {
-    const stageRect = artStage.getBoundingClientRect();
-    const canvasX = e.clientX - stageRect.left - panOffset.x;
-    const canvasY = e.clientY - stageRect.top - panOffset.y;
+    let canvasX: number;
+    let canvasY: number;
+    if (e.target === editCanvas) {
+      const dw = editCanvas.clientWidth || gridPixelW || 1;
+      const dh = editCanvas.clientHeight || gridPixelH || 1;
+      canvasX = (e.offsetX / dw) * gridPixelW;
+      canvasY = (e.offsetY / dh) * gridPixelH;
+    } else {
+      const rect = editCanvas.getBoundingClientRect();
+      const dw = rect.width > 0 ? rect.width : gridPixelW;
+      const dh = rect.height > 0 ? rect.height : gridPixelH;
+      canvasX = ((e.clientX - rect.left) / dw) * gridPixelW;
+      canvasY = ((e.clientY - rect.top) / dh) * gridPixelH;
+    }
     const x = clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1);
     const y = clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1);
     return { x, y };
@@ -737,9 +764,10 @@ const picker = createColorPicker(
       selBox.hidden = true;
       return;
     }
+    const pad = canvasPadPx();
     selBox.hidden = false;
-    selBox.style.left = `${r.x * cellSize}px`;
-    selBox.style.top = `${r.y * cellSize}px`;
+    selBox.style.left = `${pad + r.x * cellSize}px`;
+    selBox.style.top = `${pad + r.y * cellSize}px`;
     selBox.style.width = `${r.w * cellSize}px`;
     selBox.style.height = `${r.h * cellSize}px`;
   }
