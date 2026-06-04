@@ -100,34 +100,31 @@ export function createCardElement(
   return el;
 }
 
-/** 拖拽幽灵：仅透明底像素图，无框 */
+function innerRect(source: HTMLElement): DOMRect {
+  const inner = source.querySelector('.tcg-card__inner');
+  return (inner ?? source).getBoundingClientRect();
+}
+
+/** 拖拽幽灵：仅内框尺寸的透明像素图，无边框 */
 export function createDragGhost(source: HTMLElement): HTMLElement {
-  const rect = source.getBoundingClientRect();
-  const w = Math.round(rect.width);
-  const h = Math.round(rect.height);
+  const ir = innerRect(source);
+  const w = Math.max(1, Math.round(ir.width));
+  const h = Math.max(1, Math.round(ir.height));
+  const artKey = (source.dataset.artKey ?? 'generic') as PixelArtKey;
+  const srcCanvas = source.querySelector('canvas.tcg-card__art');
 
   const ghost = document.createElement('div');
   ghost.className = 'tcg-card-ghost';
-  ghost.style.width = `${w}px`;
-  ghost.style.height = `${h}px`;
-
-  const artKey = (source.dataset.artKey ?? 'generic') as PixelArtKey;
-  const inner = source.querySelector('.tcg-card__inner');
-  const srcCanvas = source.querySelector('canvas.tcg-card__art');
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   canvas.className = 'tcg-card-ghost__art';
   const ctx = canvas.getContext('2d');
-
   if (ctx) {
     ctx.clearRect(0, 0, w, h);
-    if (srcCanvas instanceof HTMLCanvasElement && inner) {
-      const ir = inner.getBoundingClientRect();
-      const dx = ir.left - rect.left;
-      const dy = ir.top - rect.top;
-      ctx.drawImage(srcCanvas, dx, dy, ir.width, ir.height);
+    if (srcCanvas instanceof HTMLCanvasElement) {
+      ctx.drawImage(srcCanvas, 0, 0, w, h);
     } else {
       drawPixelArt(ctx, artKey, w, h, { transparent: true });
     }
@@ -135,4 +132,14 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
 
   ghost.append(canvas);
   return ghost;
+}
+
+/** 拖拽时指针相对内框的偏移 */
+export function dragAnchorOffset(
+  source: HTMLElement,
+  clientX: number,
+  clientY: number
+): { x: number; y: number } {
+  const ir = innerRect(source);
+  return { x: clientX - ir.left, y: clientY - ir.top };
 }

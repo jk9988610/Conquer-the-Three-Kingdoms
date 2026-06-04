@@ -1,12 +1,16 @@
 import type { CardData } from '../game/types';
+import { getOverlayMount } from './overlayRoot';
 
 let layer: HTMLElement | null = null;
 
 function ensureLayer(): HTMLElement {
+  const mount = getOverlayMount();
   if (!layer) {
     layer = document.createElement('div');
     layer.className = 'card-brief-layer';
-    document.body.append(layer);
+  }
+  if (layer.parentElement !== mount) {
+    mount.append(layer);
   }
   return layer;
 }

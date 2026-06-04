@@ -1,3 +1,6 @@
+import { dragAnchorOffset } from './cardElement';
+import { getOverlayMount } from './overlayRoot';
+
 const CLICK_THRESHOLD_PX = 10;
 
 export interface PointerDragOptions {
@@ -5,10 +8,6 @@ export interface PointerDragOptions {
   createGhost: (source: HTMLElement) => HTMLElement;
   onDrop: (clientX: number, clientY: number, isClick: boolean) => void;
   onMove?: (clientX: number, clientY: number) => void;
-}
-
-function dragMountRoot(): HTMLElement {
-  return (document.fullscreenElement as HTMLElement | null) ?? document.body;
 }
 
 export function attachPointerDrag(options: PointerDragOptions): () => void {
@@ -30,7 +29,7 @@ export function attachPointerDrag(options: PointerDragOptions): () => void {
     source.classList.add('tcg-card--dragging');
 
     ghost = createGhost(source);
-    const mount = dragMountRoot();
+    const mount = getOverlayMount();
     mount.append(ghost);
     Object.assign(ghost.style, {
       position: 'fixed',
@@ -39,11 +38,14 @@ export function attachPointerDrag(options: PointerDragOptions): () => void {
       zIndex: '2147483647',
       pointerEvents: 'none',
       margin: '0',
+      border: 'none',
+      background: 'transparent',
+      boxShadow: 'none',
     });
 
-    const rect = source.getBoundingClientRect();
-    offset.x = e.clientX - rect.left;
-    offset.y = e.clientY - rect.top;
+    const off = dragAnchorOffset(source, e.clientX, e.clientY);
+    offset.x = off.x;
+    offset.y = off.y;
     moveGhost(e.clientX, e.clientY);
   };
 

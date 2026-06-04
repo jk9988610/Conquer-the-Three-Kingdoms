@@ -7,6 +7,16 @@ export const TCG_ASPECT_RATIO = TCG_WIDTH / TCG_HEIGHT;
 export const INNER_MARGIN_X_RATIO = 0.03;
 export const INNER_MARGIN_Y_RATIO = 0.04;
 
+/** 内框（图像区）宽高比，与卡面图像画布一致 */
+export const INNER_ASPECT_RATIO =
+  (TCG_WIDTH * (1 - 2 * INNER_MARGIN_X_RATIO)) /
+  (TCG_HEIGHT * (1 - 2 * INNER_MARGIN_Y_RATIO));
+
+/** 像素画编辑器预览画布逻辑宽度 */
+export const ART_PREVIEW_WIDTH = 126;
+
+export const ART_PREVIEW_HEIGHT = Math.round(ART_PREVIEW_WIDTH / INNER_ASPECT_RATIO);
+
 export interface TcgScaledSize {
   cardWidth: number;
   cardHeight: number;

@@ -6,7 +6,12 @@ import {
   type PixelGrid,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
+import {
+  ART_PREVIEW_HEIGHT,
+  ART_PREVIEW_WIDTH,
+} from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
+import { getOverlayMount } from './overlayRoot';
 
 const EDITOR_COLS = 16;
 const EDITOR_ROWS = 16;
@@ -51,7 +56,7 @@ export function openPixelEditor(onApplied: () => void): void {
     </div>
     <div class="pixel-editor__palette" data-palette></div>
     <div class="pixel-editor__main">
-      <canvas class="pixel-editor__preview" width="128" height="128"></canvas>
+      <canvas class="pixel-editor__preview" data-preview></canvas>
       <div class="pixel-editor__grid" data-grid></div>
     </div>
     <textarea class="pixel-editor__export" data-export-area readonly rows="8" placeholder="导出代码"></textarea>
@@ -85,7 +90,9 @@ export function openPixelEditor(onApplied: () => void): void {
   }
 
   const gridEl = panel.querySelector<HTMLElement>('[data-grid]')!;
-  const preview = panel.querySelector<HTMLCanvasElement>('.pixel-editor__preview')!;
+  const preview = panel.querySelector<HTMLCanvasElement>('[data-preview]')!;
+  preview.width = ART_PREVIEW_WIDTH;
+  preview.height = ART_PREVIEW_HEIGHT;
   const exportArea = panel.querySelector<HTMLTextAreaElement>('[data-export-area]')!;
 
   function normalizeGrid(g: PixelGrid): PixelGrid {
@@ -104,10 +111,12 @@ export function openPixelEditor(onApplied: () => void): void {
   function refreshPreview(): void {
     const ctx = preview.getContext('2d');
     if (!ctx) return;
-    ctx.clearRect(0, 0, 128, 128);
-    const cell = Math.floor(Math.min(128 / EDITOR_COLS, 128 / EDITOR_ROWS));
-    const ox = Math.floor((128 - EDITOR_COLS * cell) / 2);
-    const oy = Math.floor((128 - EDITOR_ROWS * cell) / 2);
+    ctx.clearRect(0, 0, ART_PREVIEW_WIDTH, ART_PREVIEW_HEIGHT);
+    const cell = Math.floor(
+      Math.min(ART_PREVIEW_WIDTH / EDITOR_COLS, ART_PREVIEW_HEIGHT / EDITOR_ROWS)
+    );
+    const ox = Math.floor((ART_PREVIEW_WIDTH - EDITOR_COLS * cell) / 2);
+    const oy = Math.floor((ART_PREVIEW_HEIGHT - EDITOR_ROWS * cell) / 2);
     for (let y = 0; y < EDITOR_ROWS; y++) {
       for (let x = 0; x < EDITOR_COLS; x++) {
         const c = grid[y][x];
@@ -126,8 +135,6 @@ export function openPixelEditor(onApplied: () => void): void {
         const cell = document.createElement('button');
         cell.type = 'button';
         cell.className = 'pixel-editor__cell';
-        cell.dataset.x = String(x);
-        cell.dataset.y = String(y);
         const paint = () => {
           grid[y][x] = paintColor;
           cell.style.background = paintColor ?? 'transparent';
@@ -187,7 +194,7 @@ export function openPixelEditor(onApplied: () => void): void {
   buildGridUi();
   refreshPreview();
   overlay.append(panel);
-  document.body.append(overlay);
+  getOverlayMount().append(overlay);
 }
 
 export function closePixelEditor(): void {

@@ -152,6 +152,7 @@ body {
   outline: 2px dashed var(--tcg-accent);
 }
 
+
 .tcg-card {
   position: relative;
   flex-shrink: 0;
@@ -163,25 +164,22 @@ body {
 
 .tcg-card__inner {
   position: absolute;
-  border: 1px solid rgba(201, 162, 39, 0.5);
+  box-sizing: border-box;
+  border: 1px solid rgba(201, 162, 39, 0.55);
   border-radius: 2px;
   overflow: hidden;
-  inset: 0;
-  margin: auto;
 }
 
 .tcg-card__art-layer {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 58%;
+  inset: 0;
+  z-index: 1;
 }
 
 .tcg-card__art {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -191,17 +189,14 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 42%;
-  padding: 2px 4px;
-  background: linear-gradient(
-    to top,
-    rgba(8, 12, 20, 0.95),
-    rgba(8, 12, 20, 0.7)
-  );
+  z-index: 2;
+  max-height: 48%;
+  padding: 3px 5px 4px;
+  background: rgba(255, 255, 255, 0.72);
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  pointer-events: none;
 }
 
 .tcg-card__title {
@@ -209,12 +204,13 @@ body {
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.1;
+  color: #111;
 }
 
 .tcg-card__desc {
   margin: 0;
   font-size: 0.5rem;
-  color: #b0bcc8;
+  color: #333;
   line-height: 1.15;
   overflow: hidden;
   display: -webkit-box;
@@ -225,36 +221,16 @@ body {
 .tcg-card__stats {
   margin: 0;
   font-size: 0.48rem;
-  color: #7ec8a0;
+  color: #2a6040;
 }
 
 .tcg-card__price {
   font-size: 0.5rem;
-  color: #e8c86a;
-}
-
-.tcg-card__tags {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: flex;
-  gap: 2px;
-  pointer-events: none;
-}
-
-.tcg-card__tag {
-  font-size: 0.45rem;
-  padding: 0 2px;
-  border-radius: 2px;
-  background: rgba(0, 0, 0, 0.45);
+  color: #8a6020;
 }
 
 .tcg-card--field-player {
   cursor: pointer;
-}
-
-.tcg-card--dragging {
-  opacity: 0.35;
 }
 
 .tcg-card--snap {
@@ -264,224 +240,46 @@ body {
   transition: transform 0.1s;
 }
 
-.tcg-card__ghost {
-  opacity: 0.9;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
-}
-
-.card-brief-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 8000;
-  pointer-events: none;
-}
-
-.card-brief-layer--open {
-  pointer-events: auto;
-}
-
-.card-brief {
-  position: fixed;
-  z-index: 8001;
-  max-width: 210px;
-  padding: 8px 10px;
-  background: #1a2838;
-  border: 1px solid var(--tcg-accent);
-  border-radius: 8px;
-  font-size: 0.75rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-.card-brief__name {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--tcg-accent);
-}
-
-.card-brief__desc,
-.card-brief__effect {
-  margin: 0 0 4px;
-  color: var(--tcg-muted);
-  line-height: 1.35;
-}
-
-.char-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9000;
-  background: rgba(0, 0, 0, 0.65);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-}
-
-.char-modal {
-  width: min(100%, 420px);
-  max-height: 90dvh;
-  overflow-y: auto;
-  background: #1e2a3c;
-  border: 1px solid var(--tcg-accent);
-  border-radius: 10px;
-  padding: 12px;
-}
-
-.char-modal__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.char-modal__title {
-  margin: 0;
-  font-size: 1.1rem;
-}
-
-.char-modal__close {
-  border: none;
-  background: transparent;
-  color: var(--tcg-text);
-  font-size: 1.4rem;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.char-modal__stats {
-  font-size: 0.85rem;
-  color: #7ec8a0;
-}
-
-.char-modal__slots {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.char-slot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.char-slot__label {
-  font-size: 0.65rem;
-  color: var(--tcg-muted);
-}
-
-.char-slot__box {
-  width: 64px;
-  height: 64px;
-  border: 1px dashed var(--tcg-border);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #141c28;
-}
-
-.char-slot__box--empty {
-  font-size: 0.65rem;
-  color: var(--tcg-muted);
-}
-
-.char-slot__art {
-  width: 56px;
-  height: 56px;
-  cursor: pointer;
-  image-rendering: pixelated;
-}
-
-.char-slot__unequip {
-  padding: 2px 8px;
-  font-size: 0.65rem;
-  border-radius: 4px;
-  border: 1px solid var(--tcg-border);
-  background: #243044;
-  color: var(--tcg-text);
-  cursor: pointer;
-}
-
-.char-slot__unequip:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.game-board__ver {
-  font-size: 0.6rem;
-  font-weight: 400;
-  color: var(--tcg-muted);
-  margin-left: 0.25rem;
-}
-
-/* 拖拽：源卡隐藏边框，幽灵仅显示像素 */
 .tcg-card--dragging {
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+
+.tcg-card--dragging .tcg-card__inner {
+  border: none !important;
   background: transparent !important;
   box-shadow: none !important;
 }
 
-.tcg-card--dragging .tcg-card__inner {
-  border-color: transparent !important;
-  background: transparent !important;
-}
-
-.tcg-card--dragging .tcg-card__text-layer,
-.tcg-card--dragging .tcg-card__price {
-  visibility: hidden;
+.tcg-card--dragging .tcg-card__text-layer {
+  visibility: hidden !important;
 }
 
 .tcg-card--dragging .tcg-card__art-layer {
-  opacity: 0.25;
+  opacity: 0 !important;
 }
 
 .tcg-card-ghost {
+  border: none !important;
+  outline: none !important;
   background: transparent !important;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  box-shadow: none !important;
+  overflow: visible;
 }
 
 .tcg-card-ghost__art {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-}
-
-.tcg-card__art-layer {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tcg-card__art {
-  max-width: 100%;
-  max-height: 100%;
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.tcg-card__text-layer {
-  background: rgba(255, 255, 255, 0.72);
-  color: #111;
-}
-
-.tcg-card__title,
-.tcg-card__desc,
-.tcg-card__stats,
-.tcg-card__price {
-  color: #111;
-}
-
-.tcg-card__desc {
-  color: #333;
 }
 
 .tcg-card__sold-out {
   position: absolute;
   inset: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -490,7 +288,6 @@ body {
   font-size: 1rem;
   font-weight: 800;
   letter-spacing: 0.2em;
-  z-index: 5;
   pointer-events: none;
 }
 
@@ -576,6 +373,8 @@ body {
 
 .pixel-editor__preview {
   flex-shrink: 0;
+  width: 126px;
+  height: 173px;
   background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 50% / 12px 12px;
   border: 1px solid #555;
   image-rendering: pixelated;

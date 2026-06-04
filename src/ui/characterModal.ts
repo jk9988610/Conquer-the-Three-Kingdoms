@@ -1,6 +1,7 @@
 import type { CardData, CardInstance, SlotKind } from '../game/types';
 import { showCardBrief } from './cardBrief';
 import { createPixelArtCanvas } from './cardElement';
+import { getOverlayMount } from './overlayRoot';
 
 export interface CharacterModalHandlers {
   onClose: () => void;
@@ -71,7 +72,7 @@ export function openCharacterModal(
   }
 
   overlay.append(modal);
-  document.body.append(overlay);
+  getOverlayMount().append(overlay);
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) handlers.onClose();
