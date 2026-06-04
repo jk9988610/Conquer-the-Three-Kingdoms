@@ -16,6 +16,7 @@ import {
 import { createCardElement, createDragGhost } from './cardElement';
 import { cardSizeForZone } from './layout';
 import { attachPointerDrag } from './pointerDrag';
+import { APP_VERSION } from '../version';
 
 export interface GameBoardCallbacks {
   onStateChange: (state: GameState) => void;
@@ -47,7 +48,7 @@ export class GameBoard {
     this.root.className = 'game-board';
     this.root.innerHTML = `
       <header class="game-board__header">
-        <h1 class="game-board__title">三国志 TCG</h1>
+        <h1 class="game-board__title">三国志 TCG <span class="game-board__ver" data-version></span></h1>
         <div class="game-board__controls">
           <span class="game-board__gold" data-gold></span>
           <span class="game-board__phase" data-phase-label></span>
@@ -73,6 +74,7 @@ export class GameBoard {
       </main>
     `;
 
+    this.root.querySelector('[data-version]')!.textContent = `v${APP_VERSION}`;
     this.bindControls();
     this.updateLayoutSize();
     window.addEventListener('resize', () => this.updateLayoutSize());

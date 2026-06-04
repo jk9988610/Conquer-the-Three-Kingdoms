@@ -407,3 +407,10 @@ body {
   opacity: 0.35;
   cursor: not-allowed;
 }
+
+.game-board__ver {
+  font-size: 0.6rem;
+  font-weight: 400;
+  color: var(--tcg-muted);
+  margin-left: 0.25rem;
+}
