@@ -256,7 +256,7 @@ export function drawPixelArt(
   drawPackedDisplayToCanvas(ctx, getArtPacked(key), width, height, mode);
 }
 
-/** 编辑器预览：与卡面相同的 100×140 展示网格 */
+/** 编辑器预览：与卡面相同的 75×105 展示网格 */
 export function drawPackedPreview(
   ctx: CanvasRenderingContext2D,
   packed: PackedGrid,

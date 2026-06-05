@@ -378,7 +378,7 @@ body {
 .tcg-card__inner {
   position: absolute;
   box-sizing: border-box;
-  border: 1px solid rgba(201, 162, 39, 0.55);
+  border: none;
   border-radius: 2px;
   overflow: hidden;
 }

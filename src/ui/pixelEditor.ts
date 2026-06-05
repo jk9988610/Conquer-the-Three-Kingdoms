@@ -464,7 +464,7 @@ const picker = createColorPicker(
     previewSurface.style.maxHeight = h;
   }
 
-  /** 预览区：按卡面展示分辨率（100×140）适配面板，与主页卡图一致 */
+  /** 预览区：按卡面展示分辨率（75×105）适配面板，与主页卡图一致 */
   function layoutPreview(): void {
     const avail = availSizeInPane(previewPanel);
     const aspect = gridCols / gridRows;
