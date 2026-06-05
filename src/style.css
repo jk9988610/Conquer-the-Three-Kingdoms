@@ -395,11 +395,10 @@ body {
 
 .tcg-card__art {
   display: block;
-  flex-shrink: 0;
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -561,7 +560,7 @@ body {
   grid-template-columns: 1fr minmax(128px, 148px);
   grid-template-rows: 34px 1fr;
   grid-template-areas:
-    'topbar tools'
+    'topbar topbar'
     'canvas tools';
   box-sizing: border-box;
   touch-action: manipulation;
@@ -793,6 +792,12 @@ body {
   grid-area: tools;
   margin: 4px 4px 4px 0;
   border-radius: 4px;
+  max-height: 100%;
+  align-self: stretch;
+}
+
+.pixel-editor__pane--tools .pixel-editor__pane-fill--tools {
+  max-height: none;
 }
 
 .pixel-editor__pane-label {
@@ -1000,17 +1005,18 @@ body {
 }
 
 .pixel-editor__tools-scroll {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: min(38dvh, 240px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
-  padding: 6px 6px 4px;
+  padding: 4px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
   box-sizing: border-box;
 }
 
@@ -1216,10 +1222,11 @@ body {
 .pixel-editor__tools-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 3px;
+  gap: 2px;
+  flex: 0 0 auto;
   flex-shrink: 0;
   margin-top: 0;
-  padding: 4px;
+  padding: 3px;
   border-top: 1px solid var(--tcg-border);
   background: #172030;
   box-sizing: border-box;

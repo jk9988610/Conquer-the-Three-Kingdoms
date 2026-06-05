@@ -10,6 +10,11 @@ import {
   type PixelGrid,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
+import {
+  getLastEditedArtKey,
+  loadPixelEditorDraft,
+  savePixelEditorDraft,
+} from '../art/pixelArtDraft';
 import { loadImageFromFile } from '../art/imageToGrid';
 import { openImageImportModal } from './imageImportModal';
 import type { PixelArtKey } from '../game/types';
@@ -220,18 +225,30 @@ export function openPixelEditor(onApplied: () => void): void {
     if (redoBtn) redoBtn.disabled = redoStacks[activeLayer].length === 0;
   }
 
-  /** 从美术数据加载到第 1 层，其余层清空 */
-  function reloadArtGrid(key: PixelArtKey): void {
-    const src = getArtGrid(key);
+  function persistDraft(): void {
+    savePixelEditorDraft(currentKey, layers, layerVisible);
+  }
+
+  /** 优先恢复本地草稿，否则从已应用美术加载 */
+  function loadArtForKey(key: PixelArtKey): void {
     gridCols = ART_GRID_COLS;
     gridRows = ART_GRID_ROWS;
-    layers = [
-      src.map((row) => [...row]),
-      makeEmptyGrid(),
-      makeEmptyGrid(),
-    ];
+    const draft = loadPixelEditorDraft(key);
+    if (draft) {
+      layers = draft.layers.map((g) => g.map((row) => [...row]));
+      layerVisible = [...draft.layerVisible];
+    } else {
+      const src = getArtGrid(key);
+      layers = [
+        src.map((row) => [...row]),
+        makeEmptyGrid(),
+        makeEmptyGrid(),
+      ];
+      layerVisible = [true, true, true];
+    }
     activeLayer = 0;
-    layerVisible = [true, true, true];
+    selection = null;
+    selectStart = null;
     resetLayerHistory();
     renderLayerControls();
   }
@@ -247,6 +264,7 @@ export function openPixelEditor(onApplied: () => void): void {
       <h2 class="pixel-editor__title">像素画绘制</h2>
       <div class="pixel-editor__topbar-actions">
         <button type="button" class="btn pixel-editor__topbar-btn" data-open-debug>调试</button>
+        <button type="button" class="btn pixel-editor__topbar-btn" data-fullscreen>全屏</button>
         <button type="button" class="pixel-editor__close" aria-label="关闭">×</button>
       </div>
     </header>
@@ -848,10 +866,9 @@ const picker = createColorPicker(
   });
 
   select.addEventListener('change', () => {
+    persistDraft();
     currentKey = select.value as PixelArtKey;
-    reloadArtGrid(currentKey);
-    selection = null;
-    selectStart = null;
+    loadArtForKey(currentKey);
     layoutGrid();
     refreshAll();
   });
@@ -880,6 +897,7 @@ const picker = createColorPicker(
             selection = null;
             selectStart = null;
             refreshAll();
+            persistDraft();
           },
         });
       } catch (err) {
@@ -899,6 +917,7 @@ const picker = createColorPicker(
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
     const merged = compositePixelGrids(layers);
     setCustomArtGrid(currentKey, merged);
+    persistDraft();
     onApplied();
   });
 
@@ -911,6 +930,23 @@ const picker = createColorPicker(
       /* noop */
     }
   });
+
+  const fullscreenBtn = panel.querySelector<HTMLElement>('[data-fullscreen]')!;
+
+  const updateFullscreenBtn = (): void => {
+    const on = document.fullscreenElement === overlay;
+    fullscreenBtn.textContent = on ? '退出全屏' : '全屏';
+  };
+
+  fullscreenBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!document.fullscreenElement) {
+      void overlay.requestFullscreen?.();
+    } else {
+      void document.exitFullscreen?.();
+    }
+  });
+  document.addEventListener('fullscreenchange', updateFullscreenBtn);
 
   openDebugBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -963,16 +999,25 @@ const picker = createColorPicker(
   ro.observe(previewPanel);
   ro.observe(editPanel);
 
-  reloadArtGrid(currentKey);
+  const lastKey = getLastEditedArtKey();
+  if (lastKey && PIXEL_ART_KEYS.includes(lastKey)) {
+    currentKey = lastKey;
+    select.value = lastKey;
+  }
+  loadArtForKey(currentKey);
+  layoutGrid();
 
   overlay.append(panel);
   editorOverlay = overlay;
   editorTeardown = () => {
+    persistDraft();
     ro.disconnect();
     document.removeEventListener('keydown', onEditorKey);
+    document.removeEventListener('fullscreenchange', updateFullscreenBtn);
   };
   getModalOverlayMount().append(overlay);
   updateDebugUi();
+  updateFullscreenBtn();
   requestAnimationFrame(() => {
     layoutViewport();
     requestAnimationFrame(() => layoutViewport());
