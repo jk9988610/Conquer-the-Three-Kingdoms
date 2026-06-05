@@ -2,10 +2,14 @@ import type { PixelArtKey } from '../game/types';
 import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 import {
   drawPackedToCanvas,
+  gridDrawLayout,
   gridToPacked,
   packedToGrid,
+  type GridDrawMode,
   type PackedGrid,
 } from './packedGrid';
+
+export type { GridDrawMode } from './packedGrid';
 
 export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 
@@ -296,25 +300,46 @@ function parsePixelColor(c: string): { r: number; g: number; b: number; a: numbe
   };
 }
 
-/** 在显示区域内取整格宽，避免缩放时出现色块边缘虚线/缝隙 */
+/**
+ * 画布 CSS 像素尺寸（与展示区域一致，避免再经 CSS 缩放发糊）。
+ */
 export function gridCanvasPixelSize(
   grid: PixelGrid,
   displayWidth: number,
   displayHeight: number,
-  mode: 'fit' | 'cover' = 'fit'
+  mode: GridDrawMode = 'fit'
 ): { width: number; height: number; cell: number } {
   const { cols, rows } = gridDimensions(grid);
-  const cell =
-    mode === 'cover'
-      ? Math.max(
-          1,
-          Math.ceil(Math.max(displayWidth / cols, displayHeight / rows))
-        )
-      : Math.max(
-          1,
-          Math.floor(Math.min(displayWidth / cols, displayHeight / rows))
-        );
-  return { width: cols * cell, height: rows * cell, cell };
+  const width = Math.max(1, Math.floor(displayWidth));
+  const height = Math.max(1, Math.floor(displayHeight));
+  const { cell } = gridDrawLayout(cols, rows, width, height, mode);
+  return { width, height, cell };
+}
+
+/** 配置画布物理像素 = CSS 尺寸 × DPR，绘制坐标系为 CSS 像素 */
+export function prepareSharpCanvas(
+  canvas: HTMLCanvasElement,
+  cssWidth: number,
+  cssHeight: number,
+  dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+): {
+  ctx: CanvasRenderingContext2D;
+  cssWidth: number;
+  cssHeight: number;
+  dpr: number;
+} | null {
+  const w = Math.max(1, Math.floor(cssWidth));
+  const h = Math.max(1, Math.floor(cssHeight));
+  const ratio = Math.max(1, dpr);
+  canvas.width = Math.max(1, Math.round(w * ratio));
+  canvas.height = Math.max(1, Math.round(h * ratio));
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  return { ctx, cssWidth: w, cssHeight: h, dpr: ratio };
 }
 
 /** 将像素网格铺满画布；每格等宽等高整数像素，支持 #rgb / #rrggbb / rgba() */
@@ -322,14 +347,11 @@ export function drawGridToCanvas(
   ctx: CanvasRenderingContext2D,
   grid: PixelGrid,
   width: number,
-  height: number
+  height: number,
+  mode: GridDrawMode = 'fit'
 ): void {
   const { cols, rows } = gridDimensions(grid);
-  const cell = Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
-  const drawW = cols * cell;
-  const drawH = rows * cell;
-  const ox = Math.floor((width - drawW) / 2);
-  const oy = Math.floor((height - drawH) / 2);
+  const { cell, ox, oy } = gridDrawLayout(cols, rows, width, height, mode);
   ctx.imageSmoothingEnabled = false;
 
   for (let y = 0; y < grid.length; y++) {
@@ -346,6 +368,7 @@ export function drawGridToCanvas(
 
 export interface DrawPixelArtOptions {
   transparent?: boolean;
+  mode?: GridDrawMode;
 }
 
 export function drawPixelArt(
@@ -355,7 +378,7 @@ export function drawPixelArt(
   height: number,
   options: DrawPixelArtOptions = {}
 ): void {
-  const { transparent = false } = options;
+  const { transparent = false, mode = 'fit' } = options;
   ctx.clearRect(0, 0, width, height);
 
   if (!transparent) {
@@ -366,5 +389,5 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  drawPackedToCanvas(ctx, getArtPacked(key), width, height);
+  drawPackedToCanvas(ctx, getArtPacked(key), width, height, ART_GRID_COLS, ART_GRID_ROWS, mode);
 }

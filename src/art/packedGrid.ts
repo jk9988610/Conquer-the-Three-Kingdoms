@@ -149,19 +149,39 @@ export function compositePackedGrids(
   return out;
 }
 
+export type GridDrawMode = 'fit' | 'cover';
+
+/** 整数格宽与偏移；cover 时格块可超出画布并由裁剪切边 */
+export function gridDrawLayout(
+  cols: number,
+  rows: number,
+  width: number,
+  height: number,
+  mode: GridDrawMode = 'fit'
+): { cell: number; ox: number; oy: number } {
+  const cell =
+    mode === 'cover'
+      ? Math.max(1, Math.ceil(Math.max(width / cols, height / rows)))
+      : Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
+  const drawW = cols * cell;
+  const drawH = rows * cell;
+  return {
+    cell,
+    ox: Math.floor((width - drawW) / 2),
+    oy: Math.floor((height - drawH) / 2),
+  };
+}
+
 export function drawPackedToCanvas(
   ctx: CanvasRenderingContext2D,
   packed: PackedGrid,
   width: number,
   height: number,
   cols = ART_GRID_COLS,
-  rows = ART_GRID_ROWS
+  rows = ART_GRID_ROWS,
+  mode: GridDrawMode = 'fit'
 ): void {
-  const cell = Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
-  const drawW = cols * cell;
-  const drawH = rows * cell;
-  const ox = Math.floor((width - drawW) / 2);
-  const oy = Math.floor((height - drawH) / 2);
+  const { cell, ox, oy } = gridDrawLayout(cols, rows, width, height, mode);
   ctx.imageSmoothingEnabled = false;
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {

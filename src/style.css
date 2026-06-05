@@ -387,18 +387,11 @@ body {
   position: absolute;
   inset: 0;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
 }
 
 .tcg-card__art {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -505,8 +498,6 @@ body {
 
 .tcg-card-ghost__art {
   display: block;
-  width: 100%;
-  height: 100%;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -1601,8 +1592,6 @@ body {
 
 .char-modal__art {
   display: block;
-  max-width: 100%;
-  height: auto;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   background: transparent;

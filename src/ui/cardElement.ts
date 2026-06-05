@@ -1,4 +1,4 @@
-import { drawPixelArt, getArtGrid, gridCanvasPixelSize } from '../art/pixelArt';
+import { drawPixelArt, prepareSharpCanvas } from '../art/pixelArt';
 import type { CardInstance, PixelArtKey } from '../game/types';
 import type { TcgScaledSize } from '../tcg/dimensions';
 
@@ -15,22 +15,13 @@ export function createPixelArtCanvas(
   width: number,
   height: number
 ): HTMLCanvasElement {
-  const grid = getArtGrid(artKey);
-  const { width: cw, height: ch } = gridCanvasPixelSize(
-    grid,
-    width,
-    height,
-    'cover'
-  );
   const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.imageSmoothingEnabled = false;
-    drawPixelArt(ctx, artKey, cw, ch, { transparent: true });
+  const prep = prepareSharpCanvas(canvas, width, height);
+  if (prep) {
+    drawPixelArt(prep.ctx, artKey, prep.cssWidth, prep.cssHeight, {
+      transparent: true,
+      mode: 'cover',
+    });
   }
   return canvas;
 }
@@ -131,26 +122,20 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
 
   const ghost = document.createElement('div');
   ghost.className = 'tcg-card-ghost';
+  ghost.style.width = `${w}px`;
+  ghost.style.height = `${h}px`;
 
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
   canvas.className = 'tcg-card-ghost__art';
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.imageSmoothingEnabled = false;
+  const prep = prepareSharpCanvas(canvas, w, h);
+  if (prep) {
     if (srcCanvas instanceof HTMLCanvasElement) {
-      canvas.width = srcCanvas.width;
-      canvas.height = srcCanvas.height;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(srcCanvas, 0, 0);
+      prep.ctx.drawImage(srcCanvas, 0, 0, prep.cssWidth, prep.cssHeight);
     } else {
-      const grid = getArtGrid(artKey);
-      const { width: cw, height: ch } = gridCanvasPixelSize(grid, w, h, 'cover');
-      canvas.width = cw;
-      canvas.height = ch;
-      ctx.clearRect(0, 0, cw, ch);
-      drawPixelArt(ctx, artKey, cw, ch, { transparent: true });
+      drawPixelArt(prep.ctx, artKey, prep.cssWidth, prep.cssHeight, {
+        transparent: true,
+        mode: 'cover',
+      });
     }
   }
 
