@@ -221,7 +221,7 @@ export function downsamplePackedGrid(
   return out;
 }
 
-/** 卡面/预览：下采样后按 fit/cover 绘制 */
+/** 卡面/预览：下采样后按 fit/cover 绘制（先 1:1 光栅再整数倍缩放，避免亚像素缝隙网格线） */
 export function drawPackedDisplayToCanvas(
   ctx: CanvasRenderingContext2D,
   packed: PackedGrid,
@@ -234,7 +234,39 @@ export function drawPackedDisplayToCanvas(
   dstRows = ART_DISPLAY_ROWS
 ): void {
   const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
-  drawPackedToCanvas(ctx, display, width, height, dstCols, dstRows, mode);
+  const { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
+  const dw = dstCols * cell;
+  const dh = dstRows * cell;
+
+  const buffer = document.createElement('canvas');
+  buffer.width = dstCols;
+  buffer.height = dstRows;
+  const bctx = buffer.getContext('2d');
+  if (!bctx) return;
+  drawPackedToCanvas(bctx, display, dstCols, dstRows, dstCols, dstRows, 'fit');
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buffer, 0, 0, dstCols, dstRows, ox, oy, dw, dh);
+}
+
+/** 将逻辑网格压平为展示块（每块内颜色一致，与卡面所见一致） */
+export function flattenPackedToDisplayBlocks(
+  packed: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PackedGrid {
+  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const out = createPackedGrid(srcCols, srcRows);
+  for (let y = 0; y < srcRows; y++) {
+    const dy = Math.min(dstRows - 1, Math.floor((y * dstRows) / srcRows));
+    for (let x = 0; x < srcCols; x++) {
+      const dx = Math.min(dstCols - 1, Math.floor((x * dstCols) / srcCols));
+      out[gridIndex(x, y, srcCols)] = display[gridIndex(dx, dy, dstCols)] ?? 0;
+    }
+  }
+  return out;
 }
 
 export function drawPackedToCanvas(
@@ -401,20 +433,23 @@ export function pastePackedRegion(
   }
 }
 
-/** 导出 1 逻辑像素 = 1 像素的透明 PNG 并触发下载 */
+/** 导出当前所见扁平图（75×105 展示格，1 格 = 1 像素，透明 PNG） */
 export function downloadPackedPng(
   packed: PackedGrid,
   filename: string,
-  cols = ART_GRID_COLS,
-  rows = ART_GRID_ROWS
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
 ): void {
+  const flat = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
   const canvas = document.createElement('canvas');
-  canvas.width = cols;
-  canvas.height = rows;
+  canvas.width = dstCols;
+  canvas.height = dstRows;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
-  ctx.clearRect(0, 0, cols, rows);
-  drawPackedToCanvas(ctx, packed, cols, rows, cols, rows, 'fit');
+  ctx.clearRect(0, 0, dstCols, dstRows);
+  drawPackedToCanvas(ctx, flat, dstCols, dstRows, dstCols, dstRows, 'fit');
   canvas.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
