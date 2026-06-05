@@ -219,14 +219,18 @@ export function openPixelEditor(onApplied: () => void): void {
   const panel = document.createElement('div');
   panel.className = 'pixel-editor';
   panel.innerHTML = `
-    <header class="pixel-editor__head">
-      <h2>像素画绘制</h2>
-      <button type="button" class="pixel-editor__close">×</button>
+    <header class="pixel-editor__topbar">
+      <h2 class="pixel-editor__title">像素画绘制</h2>
+      <div class="pixel-editor__topbar-actions">
+        <button type="button" class="btn pixel-editor__topbar-btn" data-open-tools>工具</button>
+        <button type="button" class="btn pixel-editor__topbar-btn" data-open-debug>调试</button>
+        <button type="button" class="pixel-editor__close" aria-label="关闭">×</button>
+      </div>
     </header>
     <div class="pixel-editor__body" data-body>
-      <div class="pixel-editor__module pixel-editor__module--preview" data-col-preview>
-        <div class="pixel-editor__module-title">预览</div>
-        <div class="pixel-editor__module-body" data-preview-panel>
+      <section class="pixel-editor__pane pixel-editor__pane--preview">
+        <div class="pixel-editor__pane-label">预览</div>
+        <div class="pixel-editor__pane-fill" data-preview-panel>
           <div class="pixel-editor__canvas-shell" data-preview-shell>
             <div class="pixel-editor__ruler-corner pixel-editor__ruler-corner--ghost" aria-hidden="true"></div>
             <div class="pixel-editor__ruler-ghost pixel-editor__ruler-ghost--top" aria-hidden="true"></div>
@@ -238,10 +242,10 @@ export function openPixelEditor(onApplied: () => void): void {
             </div>
           </div>
         </div>
-      </div>
-      <div class="pixel-editor__module pixel-editor__module--edit" data-col-edit>
-        <div class="pixel-editor__module-title">绘制</div>
-        <div class="pixel-editor__module-body" data-edit-panel>
+      </section>
+      <section class="pixel-editor__pane pixel-editor__pane--edit">
+        <div class="pixel-editor__pane-label">绘制</div>
+        <div class="pixel-editor__pane-fill" data-edit-panel>
           <div class="pixel-editor__edit-scroll" data-edit-scroll>
           <div class="pixel-editor__edit-scroll-inner" data-edit-scroll-inner>
           <div class="pixel-editor__workspace" data-workspace>
@@ -259,57 +263,64 @@ export function openPixelEditor(onApplied: () => void): void {
           </div>
           </div>
         </div>
-      </div>
-      <div class="pixel-editor__aside" data-col-side>
-        <div class="pixel-editor__module pixel-editor__module--tools">
-          <div class="pixel-editor__module-title">工具</div>
-          <div class="pixel-editor__module-body pixel-editor__module-body--tools">
-            <div class="pixel-editor__tools-scroll" data-tools-scroll>
-              <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
-              <div class="pixel-editor__tools-zoom">
-                <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
-              </div>
-              <div class="pixel-editor__tools-grid">
-                <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
-                <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-                <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
-                <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
-                <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
-                <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
-              </div>
-              <label class="pixel-editor__brush-size">
-                <span>画笔粗细</span>
-                <input type="range" data-brush-size min="1" max="8" value="1" />
-                <span data-brush-size-label>1</span>
-              </label>
-              <div class="pixel-editor__color-block" data-color-picker></div>
-              <div class="pixel-editor__presets" data-presets></div>
-            </div>
-            <div class="pixel-editor__tools-actions">
-              <button type="button" class="btn" data-import-image>导入图片</button>
-              <input type="file" accept="image/*" hidden data-import-file />
-              <button type="button" class="btn" data-toggle-grid>网格：开</button>
-              <button type="button" class="btn" data-clear>清空</button>
-              <button type="button" class="btn" data-apply>应用</button>
-              <button type="button" class="btn" data-export>导出</button>
-            </div>
-          </div>
-        </div>
-        <div class="pixel-editor__module pixel-editor__module--debug">
-          <div class="pixel-editor__module-title">调试</div>
-          <div class="pixel-editor__module-body pixel-editor__debug-body">
-            <pre class="pixel-editor__editor-debug-body" data-pixel-debug></pre>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
+    <div class="pixel-editor__drawer-backdrop" data-drawer-backdrop hidden></div>
+    <aside class="pixel-editor__drawer pixel-editor__drawer--tools" data-tools-drawer hidden aria-label="工具">
+      <header class="pixel-editor__drawer-head">
+        <span>工具</span>
+        <button type="button" class="pixel-editor__drawer-close" data-close-drawer aria-label="关闭">×</button>
+      </header>
+      <div class="pixel-editor__drawer-body pixel-editor__module-body--tools">
+        <div class="pixel-editor__tools-scroll" data-tools-scroll>
+          <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
+          <div class="pixel-editor__tools-zoom">
+            <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
+          </div>
+          <div class="pixel-editor__tools-grid">
+            <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
+            <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
+          </div>
+          <label class="pixel-editor__brush-size">
+            <span>画笔粗细</span>
+            <input type="range" data-brush-size min="1" max="8" value="1" />
+            <span data-brush-size-label>1</span>
+          </label>
+          <div class="pixel-editor__color-block" data-color-picker></div>
+          <div class="pixel-editor__presets" data-presets></div>
+        </div>
+        <div class="pixel-editor__tools-actions">
+          <button type="button" class="btn" data-import-image>导入图片</button>
+          <input type="file" accept="image/*" hidden data-import-file />
+          <button type="button" class="btn" data-toggle-grid>网格：开</button>
+          <button type="button" class="btn" data-clear>清空</button>
+          <button type="button" class="btn" data-apply>应用</button>
+          <button type="button" class="btn" data-export>导出</button>
+        </div>
+      </div>
+    </aside>
+    <aside class="pixel-editor__drawer pixel-editor__drawer--debug" data-debug-drawer hidden aria-label="调试">
+      <header class="pixel-editor__drawer-head">
+        <span>调试</span>
+        <button type="button" class="pixel-editor__drawer-close" data-close-drawer aria-label="关闭">×</button>
+      </header>
+      <div class="pixel-editor__drawer-body pixel-editor__debug-body">
+        <pre class="pixel-editor__editor-debug-body" data-pixel-debug></pre>
+      </div>
+    </aside>
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
   const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
-  const previewModule = panel.querySelector<HTMLElement>('[data-col-preview]')!;
-  const editModule = panel.querySelector<HTMLElement>('[data-col-edit]')!;
-  const asideEl = panel.querySelector<HTMLElement>('[data-col-side]')!;
+  const drawerBackdrop = panel.querySelector<HTMLElement>('[data-drawer-backdrop]')!;
+  const toolsDrawer = panel.querySelector<HTMLElement>('[data-tools-drawer]')!;
+  const debugDrawer = panel.querySelector<HTMLElement>('[data-debug-drawer]')!;
+  const openToolsBtn = panel.querySelector<HTMLElement>('[data-open-tools]')!;
+  const openDebugBtn = panel.querySelector<HTMLElement>('[data-open-debug]')!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
   const previewShell = panel.querySelector<HTMLElement>('[data-preview-shell]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
@@ -517,7 +528,7 @@ const picker = createColorPicker(
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
-  /** 按模块实际可用空间弹性计算 TCG 视口 */
+  /** 按预览/绘制分栏可用区域填充 TCG 比例视口 */
   function layoutViewport(): void {
     const bodyW = bodyEl.clientWidth;
     const bodyH = bodyEl.clientHeight;
@@ -526,29 +537,28 @@ const picker = createColorPicker(
       return;
     }
 
-    const pad = 8;
-    const editInnerW = Math.max(60, editPanel.clientWidth - pad);
-    const editInnerH = Math.max(60, editPanel.clientHeight - pad);
-    const previewInnerW = Math.max(60, previewPanel.clientWidth - pad);
-    const previewInnerH = Math.max(60, previewPanel.clientHeight - pad);
+    const fitInBox = (boxW: number, boxH: number) => {
+      let innerW = Math.max(MIN_CELL_PX * 4, boxW - RULER_PX);
+      let innerH = Math.max(MIN_CELL_PX * 4, boxH - RULER_PX);
+      if (innerW / innerH > INNER_ASPECT_RATIO) {
+        innerW = Math.floor(innerH * INNER_ASPECT_RATIO);
+      } else {
+        innerH = Math.floor(innerW / INNER_ASPECT_RATIO);
+      }
+      return { innerW, innerH };
+    };
 
-    const maxH = Math.min(editInnerH, previewInnerH, bodyH - pad);
-    viewportH = Math.max(MIN_CELL_PX * 4, Math.floor(maxH));
+    const editBox = fitInBox(editPanel.clientWidth, editPanel.clientHeight);
+    const previewBox = fitInBox(previewPanel.clientWidth, previewPanel.clientHeight);
     viewportW = Math.max(
       MIN_CELL_PX * 4,
-      Math.min(
-        Math.round(viewportH * INNER_ASPECT_RATIO),
-        editInnerW - RULER_PX,
-        previewInnerW
-      )
+      Math.min(editBox.innerW, previewBox.innerW)
     );
-    if (viewportW > editInnerW - RULER_PX) {
-      viewportW = Math.max(MIN_CELL_PX * 4, editInnerW - RULER_PX);
-      viewportH = Math.max(
-        MIN_CELL_PX * 4,
-        Math.round(viewportW / INNER_ASPECT_RATIO)
-      );
-    }
+    viewportH = Math.max(
+      MIN_CELL_PX * 4,
+      Math.min(editBox.innerH, previewBox.innerH)
+    );
+
     const fitMin = fitGridToViewport(viewportW, viewportH, MIN_CELL_PX);
     baseCellSize = fitMin.cell;
 
@@ -557,9 +567,6 @@ const picker = createColorPicker(
 
     previewFrame.style.width = `${viewportW}px`;
     previewFrame.style.height = `${viewportH}px`;
-    editScroll.style.width = `${shellW}px`;
-    editScroll.style.height = `${shellH}px`;
-
     if (previewShell) {
       previewShell.style.width = `${shellW}px`;
       previewShell.style.height = `${shellH}px`;
@@ -570,18 +577,27 @@ const picker = createColorPicker(
     panel.style.setProperty('--pe-ruler-px', `${RULER_PX}px`);
 
     layoutGrid();
-    syncModuleChrome(shellW, shellH);
   }
 
-  /** 预览/绘制模块外框贴合画布区（含标尺占位），宽高等同 */
-  function syncModuleChrome(shellW: number, _shellH: number): void {
-    const outerW = shellW + 12;
-    for (const mod of [previewModule, editModule]) {
-      mod.style.width = `${outerW}px`;
-      mod.style.maxWidth = `${outerW}px`;
-      mod.style.flex = '0 0 auto';
-    }
-    asideEl.style.width = `${Math.max(168, outerW)}px`;
+  let openDrawer: 'tools' | 'debug' | null = null;
+
+  function updateDrawerUi(): void {
+    const open = openDrawer !== null;
+    drawerBackdrop.hidden = !open;
+    toolsDrawer.hidden = openDrawer !== 'tools';
+    debugDrawer.hidden = openDrawer !== 'debug';
+    openToolsBtn.classList.toggle('pixel-editor__topbar-btn--active', openDrawer === 'tools');
+    openDebugBtn.classList.toggle('pixel-editor__topbar-btn--active', openDrawer === 'debug');
+  }
+
+  function toggleDrawer(which: 'tools' | 'debug'): void {
+    openDrawer = openDrawer === which ? null : which;
+    updateDrawerUi();
+  }
+
+  function closeDrawers(): void {
+    openDrawer = null;
+    updateDrawerUi();
   }
 
   /** 缩放只改格宽；行列固定；参考格线仅画布外 GRID_PAD_CELLS 格 */
@@ -1190,26 +1206,37 @@ const picker = createColorPicker(
     }
   });
 
+  openToolsBtn.addEventListener('click', () => toggleDrawer('tools'));
+  openDebugBtn.addEventListener('click', () => toggleDrawer('debug'));
+  drawerBackdrop.addEventListener('click', closeDrawers);
+  panel.querySelectorAll('[data-close-drawer]').forEach((btn) => {
+    btn.addEventListener('click', closeDrawers);
+  });
+
   const requestClose = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
+    closeDrawers();
     closePixelEditor();
   };
   const closeBtn = panel.querySelector('.pixel-editor__close');
   closeBtn?.addEventListener('click', requestClose);
   closeBtn?.addEventListener('pointerup', requestClose);
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closePixelEditor();
-  });
 
   const onEscape = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') closePixelEditor();
+    if (e.key !== 'Escape') return;
+    if (openDrawer) {
+      closeDrawers();
+      return;
+    }
+    closePixelEditor();
   };
   document.addEventListener('keydown', onEscape);
 
   const ro = new ResizeObserver(() => layoutViewport());
   ro.observe(bodyEl);
-  ro.observe(panel);
+  ro.observe(previewPanel);
+  ro.observe(editPanel);
 
   reloadArtGrid(currentKey);
 

@@ -424,11 +424,11 @@ body {
   position: fixed;
   inset: 0;
   z-index: 9500;
-  background: rgba(0, 0, 0, 0.7);
+  background: #1a2438;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
   overscroll-behavior: contain;
   pointer-events: auto;
   touch-action: manipulation;
@@ -436,14 +436,15 @@ body {
 }
 
 .pixel-editor {
-  width: min(98vw, 1120px);
-  height: min(94dvh, 900px);
-  max-height: 94dvh;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-height: none;
   overflow: hidden;
   background: #1e2a3c;
-  border: 1px solid var(--tcg-accent);
-  border-radius: 8px;
-  padding: 10px;
+  border: none;
+  border-radius: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -451,19 +452,43 @@ body {
   -webkit-touch-callout: none;
 }
 
-.pixel-editor__head {
+.pixel-editor__topbar {
   position: relative;
-  z-index: 20;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  z-index: 30;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--tcg-border);
+  background: #1a2438;
   touch-action: manipulation;
 }
 
-.pixel-editor__head h2 {
+.pixel-editor__title {
   margin: 0;
+  flex: 1 1 auto;
   font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.pixel-editor__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pixel-editor__topbar-btn {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.pixel-editor__topbar-btn--active {
+  border-color: var(--tcg-accent) !important;
+  color: var(--tcg-accent);
 }
 
 .pixel-editor__close {
@@ -623,39 +648,37 @@ body {
   color: var(--tcg-accent);
 }
 
-/* 绘制器：弹性分栏 + 模块外框 */
+/* 绘制器：全屏双栏 */
 .pixel-editor__body {
   display: flex;
   flex: 1 1 auto;
   flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 12px;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  margin: 16px;
+  overflow: hidden;
   touch-action: manipulation;
   overscroll-behavior: contain;
 }
 
-.pixel-editor__module {
+.pixel-editor__pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
-  min-height: 0;
-  min-width: 0;
   border: 1px solid var(--tcg-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: #172030;
   overflow: hidden;
   box-sizing: border-box;
 }
 
-.pixel-editor__module-title {
+.pixel-editor__pane-label {
   flex-shrink: 0;
-  margin: 0;
-  padding: 5px 10px;
+  padding: 6px 12px;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--tcg-muted);
@@ -665,57 +688,88 @@ body {
   background: #1a2438;
 }
 
-.pixel-editor__module-body {
-  flex: 0 0 auto;
+.pixel-editor__pane-fill {
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: 12px;
   overflow: hidden;
   box-sizing: border-box;
 }
 
-.pixel-editor__module--preview,
-.pixel-editor__module--edit {
-  width: fit-content;
-  max-width: none;
+.pixel-editor__drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.45);
 }
 
-.pixel-editor__module--edit .pixel-editor__module-body {
-  padding: 6px;
-}
-
-.pixel-editor__aside {
-  flex: 0 0 auto;
-  width: min(100%, 220px);
-  min-width: 168px;
+.pixel-editor__drawer {
+  position: absolute;
+  z-index: 50;
+  top: 48px;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  align-self: flex-start;
+  width: min(92vw, 320px);
+  max-width: 100%;
+  background: #172030;
+  border: 1px solid var(--tcg-border);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+  touch-action: manipulation;
 }
 
-.pixel-editor__module--tools {
+.pixel-editor__drawer--tools {
+  right: 0;
+  border-radius: 8px 0 0 0;
+}
+
+.pixel-editor__drawer--debug {
+  right: 0;
+  width: min(92vw, 280px);
+  border-radius: 8px 0 0 0;
+}
+
+.pixel-editor__drawer-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--tcg-muted);
+  border-bottom: 1px solid var(--tcg-border);
+  background: #1a2438;
+}
+
+.pixel-editor__drawer-close {
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.pixel-editor__drawer-body {
   flex: 1 1 auto;
-  min-height: 120px;
-  max-height: calc(var(--pe-shell-h, 200px) + 12px);
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.pixel-editor__module--debug {
-  flex: 0 0 auto;
-  width: 100%;
 }
 
 .pixel-editor__debug-body {
   align-items: stretch;
   justify-content: flex-start;
   padding: 0;
-  overflow: visible;
+  overflow: auto;
 }
 
 .pixel-editor__module-body--tools {
@@ -724,6 +778,7 @@ body {
   align-items: stretch;
   justify-content: flex-start;
   min-height: 0;
+  height: 100%;
   padding: 0;
   overflow: hidden;
 }
@@ -749,6 +804,8 @@ body {
   grid-template-rows: var(--pe-ruler-px, 18px) 1fr;
   gap: 0;
   flex-shrink: 0;
+  max-width: 100%;
+  max-height: 100%;
   box-sizing: border-box;
 }
 
@@ -811,7 +868,10 @@ body {
 
 .pixel-editor__edit-scroll {
   overflow: auto;
-  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   border: 1px solid var(--tcg-border);
   border-radius: 4px;
   background: #0e1420;
@@ -822,6 +882,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 100%;
+  min-height: 100%;
   box-sizing: border-box;
 }
 
@@ -938,20 +1000,23 @@ body {
 }
 
 @media (max-width: 720px) {
-  .pixel-editor__module--preview,
-  .pixel-editor__module--edit {
-    max-width: 100%;
-    width: 100% !important;
-  }
-
-  .pixel-editor__aside {
-    width: 100% !important;
-    max-width: 100%;
+  .pixel-editor__body {
     flex-direction: column;
+    margin: 10px;
+    gap: 10px;
   }
 
-  .pixel-editor__module--tools {
-    max-height: min(50vh, calc(var(--pe-shell-h, 200px) + 12px));
+  .pixel-editor__pane {
+    flex: 1 1 0;
+    min-height: 120px;
+  }
+
+  .pixel-editor__drawer {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 12px 12px 0 0;
+    top: auto;
+    height: min(78dvh, 520px);
   }
 }
 
