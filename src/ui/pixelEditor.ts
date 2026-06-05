@@ -155,6 +155,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
+  let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
   let brushSize = 1;
   let cellSize = 4;
@@ -337,6 +338,8 @@ const picker = createColorPicker(
       el.style.height = sizeH;
       el.style.minWidth = size;
       el.style.minHeight = sizeH;
+      el.style.maxWidth = size;
+      el.style.maxHeight = sizeH;
     }
     panel.style.setProperty('--pe-art-w', size);
     panel.style.setProperty('--pe-art-h', sizeH);
@@ -462,19 +465,6 @@ const picker = createColorPicker(
   }
 
   function cellFromEvent(e: PointerEvent): { x: number; y: number } | null {
-    if (e.target === editCanvas && typeof e.offsetX === 'number') {
-      const dw = editCanvas.clientWidth || gridPixelW || 1;
-      const dh = editCanvas.clientHeight || gridPixelH || 1;
-      const canvasX = (e.offsetX / dw) * gridPixelW;
-      const canvasY = (e.offsetY / dh) * gridPixelH;
-      if (canvasX < 0 || canvasY < 0 || canvasX >= gridPixelW || canvasY >= gridPixelH) {
-        return null;
-      }
-      return {
-        x: clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1),
-        y: clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1),
-      };
-    }
     return cellFromPointer(e.clientX, e.clientY);
   }
 
@@ -503,8 +493,14 @@ const picker = createColorPicker(
         (btn as HTMLElement).dataset.tool === next
       );
     });
-    if (next !== 'move') moveAnchor = null;
+    if (next !== 'move') {
+      moveAnchor = null;
+      lastDragCell = null;
+    }
     if (next !== 'select') selectStart = null;
+    if (next === 'move') updateSelectionBox();
+    editCanvas.style.cursor =
+      next === 'move' ? (selection ? 'grab' : 'not-allowed') : 'crosshair';
     updateEditorDebug();
   }
 
@@ -554,6 +550,9 @@ const picker = createColorPicker(
     selection = { ...rect, pixels: copyRegion(grid, rect as Selection) };
     updateSelectionBox(rect);
     selectStart = null;
+    if (tool === 'move') {
+      editCanvas.style.cursor = 'grab';
+    }
   }
 
   function commitMove(targetX: number, targetY: number): void {
@@ -607,12 +606,12 @@ const picker = createColorPicker(
     { passive: false }
   );
 
-  editCanvas.addEventListener('pointerdown', (e) => {
+  const onEditPointerDown = (e: PointerEvent) => {
     e.preventDefault();
     const cell = cellFromEvent(e);
     if (!cell) return;
     pointerDrawing = true;
-    editCanvas.setPointerCapture(e.pointerId);
+    editSurface.setPointerCapture(e.pointerId);
     const { x, y } = cell;
     if (tool === 'paint') {
       lastPaintCell = null;
@@ -639,23 +638,19 @@ const picker = createColorPicker(
       updateSelectionBox({ x, y, w: 1, h: 1 });
       return;
     }
-    if (tool === 'move' && selection) {
-      const inside =
-        x >= selection.x &&
-        x < selection.x + selection.w &&
-        y >= selection.y &&
-        y < selection.y + selection.h;
-      if (inside) {
-        moveAnchor = { x, y };
-        moveOffset = { x: x - selection.x, y: y - selection.y };
-      } else {
-        commitMove(x - moveOffset.x, y - moveOffset.y);
-      }
+    if (tool === 'move') {
+      if (!selection) return;
+      moveAnchor = { x, y };
+      moveOffset = { x: x - selection.x, y: y - selection.y };
+      lastDragCell = { x, y };
+      return;
     }
-  });
+  };
 
-  editCanvas.addEventListener('pointermove', (e) => {
-    if (!editCanvas.hasPointerCapture(e.pointerId)) return;
+  editSurface.addEventListener('pointerdown', onEditPointerDown);
+
+  const onEditPointerMove = (e: PointerEvent) => {
+    if (!editSurface.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
     const cell = cellFromEvent(e);
     if (!cell) return;
@@ -673,6 +668,7 @@ const picker = createColorPicker(
       return;
     }
     if (tool === 'move' && moveAnchor && selection) {
+      lastDragCell = { x, y };
       updateSelectionBox({
         x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
         y: clamp(y - moveOffset.y, 0, gridRows - selection.h),
@@ -680,15 +676,21 @@ const picker = createColorPicker(
         h: selection.h,
       });
     }
-  });
+  };
 
-  editCanvas.addEventListener('pointerup', (e) => {
-    const cell = cellFromEvent(e);
+  editSurface.addEventListener('pointermove', onEditPointerMove);
+
+  const onEditPointerUp = (e: PointerEvent) => {
+    const cell = cellFromEvent(e) ?? lastDragCell;
     if (!cell) {
+      if (tool === 'move' && moveAnchor) {
+        moveAnchor = null;
+        lastDragCell = null;
+      }
       lastPaintCell = null;
       pointerDrawing = false;
       try {
-        editCanvas.releasePointerCapture(e.pointerId);
+        editSurface.releasePointerCapture(e.pointerId);
       } catch {
         /* noop */
       }
@@ -699,21 +701,27 @@ const picker = createColorPicker(
     if (tool === 'move' && moveAnchor && selection) {
       commitMove(x - moveOffset.x, y - moveOffset.y);
       moveAnchor = null;
+      lastDragCell = null;
+      editCanvas.style.cursor = 'grab';
     }
     lastPaintCell = null;
     pointerDrawing = false;
     try {
-      editCanvas.releasePointerCapture(e.pointerId);
+      editSurface.releasePointerCapture(e.pointerId);
     } catch {
       /* noop */
     }
-  });
+  };
 
-  editCanvas.addEventListener('pointercancel', (e) => {
+  editSurface.addEventListener('pointerup', onEditPointerUp);
+
+  editSurface.addEventListener('pointercancel', (e) => {
     lastPaintCell = null;
+    moveAnchor = null;
+    lastDragCell = null;
     pointerDrawing = false;
     try {
-      editCanvas.releasePointerCapture(e.pointerId);
+      editSurface.releasePointerCapture(e.pointerId);
     } catch {
       /* noop */
     }
