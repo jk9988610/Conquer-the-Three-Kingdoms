@@ -1,8 +1,9 @@
 import {
+  ART_GRID_COLS,
+  ART_GRID_ROWS,
   compositePixelGrids,
   drawGridToCanvas,
   getArtGrid,
-  gridDimensions,
   gridToExportCode,
   setCustomArtGrid,
   type Pixel,
@@ -15,10 +16,10 @@ import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getModalOverlayMount } from './overlayRoot';
 
-const MIN_CELL_PX = 3;
-const PANE_INSET_PX = 12;
+const MIN_CELL_PX = 2;
+const PANE_INSET_PX = 4;
 const LAYER_COUNT = 3;
-const MAX_UNDO = 48;
+const MAX_UNDO = 5;
 
 function cloneLayerGrid(grid: PixelGrid): PixelGrid {
   return grid.map((row) => [...row]);
@@ -135,8 +136,8 @@ export function openPixelEditor(onApplied: () => void): void {
   closePixelEditor();
 
   let currentKey: PixelArtKey = 'heal-potion';
-  let gridCols = 16;
-  let gridRows = 22;
+  let gridCols = ART_GRID_COLS;
+  let gridRows = ART_GRID_ROWS;
   let layers: PixelGrid[] = [];
   let activeLayer = 0;
   let layerVisible = [true, true, true];
@@ -222,9 +223,8 @@ export function openPixelEditor(onApplied: () => void): void {
   /** 从美术数据加载到第 1 层，其余层清空 */
   function reloadArtGrid(key: PixelArtKey): void {
     const src = getArtGrid(key);
-    const dim = gridDimensions(src);
-    gridCols = dim.cols;
-    gridRows = dim.rows;
+    gridCols = ART_GRID_COLS;
+    gridRows = ART_GRID_ROWS;
     layers = [
       src.map((row) => [...row]),
       makeEmptyGrid(),
@@ -250,7 +250,7 @@ export function openPixelEditor(onApplied: () => void): void {
         <button type="button" class="pixel-editor__close" aria-label="关闭">×</button>
       </div>
     </header>
-    <div class="pixel-editor__body pixel-editor__body--thirds" data-body>
+    <div class="pixel-editor__canvas-row" data-canvas-row>
       <section class="pixel-editor__pane pixel-editor__pane--preview">
         <div class="pixel-editor__pane-label">预览</div>
         <div class="pixel-editor__pane-fill" data-preview-panel>
@@ -269,9 +269,10 @@ export function openPixelEditor(onApplied: () => void): void {
           </div>
         </div>
       </section>
-      <section class="pixel-editor__pane pixel-editor__pane--tools">
-        <div class="pixel-editor__pane-label">工具</div>
-        <div class="pixel-editor__pane-fill pixel-editor__pane-fill--tools" data-tools-panel>
+    </div>
+    <section class="pixel-editor__pane pixel-editor__pane--tools">
+      <div class="pixel-editor__pane-label">工具</div>
+      <div class="pixel-editor__pane-fill pixel-editor__pane-fill--tools" data-tools-panel>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
             <div class="pixel-editor__tools-grid">
@@ -285,7 +286,7 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
             <div class="pixel-editor__layers">
-              <div class="pixel-editor__layers-title">图层（撤销/重做仅当前层）</div>
+              <div class="pixel-editor__layers-title">图层（撤销≤5步/层）</div>
               <div class="pixel-editor__layer-list" data-layer-list></div>
             </div>
             <div class="pixel-editor__color-block" data-color-picker></div>
@@ -300,8 +301,7 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-export>导出</button>
           </div>
         </div>
-      </section>
-    </div>
+    </section>
     <div class="pixel-editor__drawer-backdrop" data-debug-backdrop aria-hidden="true"></div>
     <aside class="pixel-editor__drawer pixel-editor__drawer--debug" data-debug-drawer aria-hidden="true" aria-label="调试">
       <header class="pixel-editor__drawer-head">
@@ -315,7 +315,7 @@ export function openPixelEditor(onApplied: () => void): void {
   `;
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
-  const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
+  const canvasRow = panel.querySelector<HTMLElement>('[data-canvas-row]')!;
   const debugBackdrop = panel.querySelector<HTMLElement>('[data-debug-backdrop]')!;
   const debugDrawer = panel.querySelector<HTMLElement>('[data-debug-drawer]')!;
   const openDebugBtn = panel.querySelector<HTMLElement>('[data-open-debug]')!;
@@ -323,7 +323,6 @@ export function openPixelEditor(onApplied: () => void): void {
   const previewSurface = panel.querySelector<HTMLElement>('[data-preview-surface]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
   const editSurface = panel.querySelector<HTMLElement>('[data-edit-surface]')!;
-  const toolsPanel = panel.querySelector<HTMLElement>('[data-tools-panel]')!;
   const toolsScroll = panel.querySelector<HTMLElement>('[data-tools-scroll]')!;
   const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
@@ -456,16 +455,15 @@ const picker = createColorPicker(
 
   /** 按三栏可用空间计算格宽，预览与绘制画布像素尺寸一致 */
   function layoutViewport(): void {
-    if (bodyEl.clientWidth < 24 || bodyEl.clientHeight < 24) {
+    if (canvasRow.clientWidth < 24 || canvasRow.clientHeight < 24) {
       requestAnimationFrame(layoutViewport);
       return;
     }
 
     const previewAvail = availSizeInPane(previewPanel);
     const editAvail = availSizeInPane(editPanel);
-    const toolsAvail = availSizeInPane(toolsPanel);
-    const availW = Math.min(previewAvail.w, editAvail.w, toolsAvail.w);
-    const availH = Math.min(previewAvail.h, editAvail.h, toolsAvail.h);
+    const availW = Math.min(previewAvail.w, editAvail.w);
+    const availH = Math.min(previewAvail.h, editAvail.h);
 
     cellSize = Math.max(
       MIN_CELL_PX,
@@ -961,10 +959,9 @@ const picker = createColorPicker(
   document.addEventListener('keydown', onEditorKey);
 
   const ro = new ResizeObserver(() => layoutViewport());
-  ro.observe(bodyEl);
+  ro.observe(canvasRow);
   ro.observe(previewPanel);
   ro.observe(editPanel);
-  ro.observe(toolsPanel);
 
   reloadArtGrid(currentKey);
 

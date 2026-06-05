@@ -1,32 +1,48 @@
 import type { PixelArtKey } from '../game/types';
+import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+
+export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 
 export type Pixel = string | null;
 export type PixelGrid = Pixel[][];
 
-/** 全卡牌统一像素图：16×22，中心 4×4 蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
+/** 全卡牌统一像素图：25×35，中心 4×4 蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
 const UNIFIED_CARD_ART: PixelGrid = [
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
-    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
-    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
-    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
-    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
   ];
 
 function cloneGrid(grid: PixelGrid): PixelGrid {
@@ -50,14 +66,35 @@ const customOverrides: Partial<Record<PixelArtKey, PixelGrid>> = {};
 
 export const PIXEL_ART_KEYS = Object.keys(BASE_ART) as PixelArtKey[];
 
+/** 将任意尺寸网格最近邻缩放到标准 25×35 */
+export function upscaleGridToArtSize(grid: PixelGrid): PixelGrid {
+  const { cols, rows } = gridDimensions(grid);
+  if (cols === ART_GRID_COLS && rows === ART_GRID_ROWS) {
+    return grid.map((row) => [...row]);
+  }
+  const out: PixelGrid = [];
+  for (let y = 0; y < ART_GRID_ROWS; y++) {
+    const row: Pixel[] = [];
+    for (let x = 0; x < ART_GRID_COLS; x++) {
+      const sx = Math.min(cols - 1, Math.floor(((x + 0.5) * cols) / ART_GRID_COLS));
+      const sy = Math.min(rows - 1, Math.floor(((y + 0.5) * rows) / ART_GRID_ROWS));
+      row.push(grid[sy]?.[sx] ?? null);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
 export function getArtGrid(key: PixelArtKey): PixelGrid {
   const custom = customOverrides[key];
-  if (custom) return custom.map((row) => [...row]);
-  return BASE_ART[key] ?? BASE_ART.generic;
+  const raw = custom
+    ? custom.map((row) => [...row])
+    : (BASE_ART[key] ?? BASE_ART.generic).map((row) => [...row]);
+  return upscaleGridToArtSize(raw);
 }
 
 export function setCustomArtGrid(key: PixelArtKey, grid: PixelGrid): void {
-  customOverrides[key] = grid.map((row) => [...row]);
+  customOverrides[key] = upscaleGridToArtSize(grid.map((row) => [...row]));
 }
 
 export function gridToExportCode(key: string, grid: PixelGrid): string {
