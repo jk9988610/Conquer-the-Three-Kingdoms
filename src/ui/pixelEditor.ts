@@ -1,5 +1,11 @@
 import { formatArtMemoryReport } from '../art/artMemoryStats';
-import { ART_GRID_COLS, ART_GRID_MAJOR_STEP, ART_GRID_ROWS } from '../art/gridConfig';
+import {
+  ART_DISPLAY_COLS,
+  ART_DISPLAY_ROWS,
+  ART_GRID_COLS,
+  ART_GRID_MAJOR_STEP,
+  ART_GRID_ROWS,
+} from '../art/gridConfig';
 import {
   drawPackedPreview,
   getArtPacked,
@@ -14,7 +20,6 @@ import {
   copyPackedRegion,
   createPackedGrid,
   downloadPackedPng,
-  drawPackedGridCells,
   floodFillPacked,
   getPackedPixel,
   gridIndex,
@@ -407,18 +412,31 @@ const picker = createColorPicker(
       `卡牌: ${currentKey}`,
       `工具: ${tool} · 笔粗: ${brushSize}`,
       `视图缩放: ${(viewZoom * 100).toFixed(0)}%`,
-      `格宽: ${cellSize}px · 网格: ${gridCols}×${gridRows}`,
+      `展示格: ${cellSize}px · 逻辑: ${gridCols}×${gridRows} · 显示: ${ART_DISPLAY_COLS}×${ART_DISPLAY_ROWS}`,
       `画布: ${gridPixelW}×${gridPixelH} · 撤销≤${MAX_UNDO}`,
       '',
       formatArtMemoryReport(),
     ].join('\n');
   }
 
-  function availSizeInPane(panelEl: HTMLElement): { w: number; h: number } {
+  function availSizeInPane(
+    panelEl: HTMLElement,
+    minCols = ART_DISPLAY_COLS,
+    minRows = ART_DISPLAY_ROWS
+  ): { w: number; h: number } {
     const inset = PANE_INSET_PX * 2;
     return {
-      w: Math.max(MIN_CELL_PX * gridCols, panelEl.clientWidth - inset),
-      h: Math.max(MIN_CELL_PX * gridRows, panelEl.clientHeight - inset),
+      w: Math.max(MIN_CELL_PX * minCols, panelEl.clientWidth - inset),
+      h: Math.max(MIN_CELL_PX * minRows, panelEl.clientHeight - inset),
+    };
+  }
+
+  function logicalRectToCanvasPx(rect: { x: number; y: number; w: number; h: number }) {
+    return {
+      left: (rect.x / gridCols) * gridPixelW,
+      top: (rect.y / gridRows) * gridPixelH,
+      width: (rect.w / gridCols) * gridPixelW,
+      height: (rect.h / gridRows) * gridPixelH,
     };
   }
 
@@ -474,10 +492,12 @@ const picker = createColorPicker(
     const editAvail = availSizeInPane(editPanel);
     cellSize = Math.max(
       MIN_CELL_PX,
-      Math.floor(Math.min(editAvail.w / gridCols, editAvail.h / gridRows))
+      Math.floor(
+        Math.min(editAvail.w / ART_DISPLAY_COLS, editAvail.h / ART_DISPLAY_ROWS)
+      )
     );
-    gridPixelW = gridCols * cellSize;
-    gridPixelH = gridRows * cellSize;
+    gridPixelW = ART_DISPLAY_COLS * cellSize;
+    gridPixelH = ART_DISPLAY_ROWS * cellSize;
     syncEditSurfaceSize();
     layoutGrid();
     layoutPreview();
@@ -520,35 +540,38 @@ const picker = createColorPicker(
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
     if (!showGrid) return;
 
-    const step = ART_GRID_MAJOR_STEP;
+    const displayStep = Math.max(
+      1,
+      Math.round((ART_GRID_MAJOR_STEP * ART_DISPLAY_COLS) / gridCols)
+    );
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.lineWidth = 1;
 
     const drawV = (c: number, strong: boolean) => {
-      if (c < 0 || c > gridCols) return;
+      if (c < 0 || c > ART_DISPLAY_COLS) return;
       ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const x = c * cellSize + 0.5;
+      const x = (c / ART_DISPLAY_COLS) * gridPixelW + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, gridPixelH);
       ctx.stroke();
     };
     const drawH = (r: number, strong: boolean) => {
-      if (r < 0 || r > gridRows) return;
+      if (r < 0 || r > ART_DISPLAY_ROWS) return;
       ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const y = r * cellSize + 0.5;
+      const y = (r / ART_DISPLAY_ROWS) * gridPixelH + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(gridPixelW, y);
       ctx.stroke();
     };
 
-    for (let c = 0; c <= gridCols; c += step) drawV(c, true);
-    for (let r = 0; r <= gridRows; r += step) drawH(r, true);
+    for (let c = 0; c <= ART_DISPLAY_COLS; c += displayStep) drawV(c, true);
+    for (let r = 0; r <= ART_DISPLAY_ROWS; r += displayStep) drawH(r, true);
     drawV(0, true);
-    drawV(gridCols, true);
+    drawV(ART_DISPLAY_COLS, true);
     drawH(0, true);
-    drawH(gridRows, true);
+    drawH(ART_DISPLAY_ROWS, true);
     ctx.globalAlpha = 1;
   }
 
@@ -556,7 +579,7 @@ const picker = createColorPicker(
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    drawPackedGridCells(ctx, grid, cellSize, gridCols, gridRows);
+    drawPackedPreview(ctx, grid, gridPixelW, gridPixelH, gridCols, gridRows);
   }
 
   function refreshPreview(): void {
@@ -584,8 +607,8 @@ const picker = createColorPicker(
       return null;
     }
     return {
-      x: clamp(Math.floor(canvasX / cellSize), 0, gridCols - 1),
-      y: clamp(Math.floor(canvasY / cellSize), 0, gridRows - 1),
+      x: clamp(Math.floor((canvasX / gridPixelW) * gridCols), 0, gridCols - 1),
+      y: clamp(Math.floor((canvasY / gridPixelH) * gridRows), 0, gridRows - 1),
     };
   }
 
@@ -604,10 +627,11 @@ const picker = createColorPicker(
       return;
     }
     selBox.hidden = false;
-    selBox.style.left = `${r.x * cellSize}px`;
-    selBox.style.top = `${r.y * cellSize}px`;
-    selBox.style.width = `${r.w * cellSize}px`;
-    selBox.style.height = `${r.h * cellSize}px`;
+    const px = logicalRectToCanvasPx(r);
+    selBox.style.left = `${px.left}px`;
+    selBox.style.top = `${px.top}px`;
+    selBox.style.width = `${px.width}px`;
+    selBox.style.height = `${px.height}px`;
   }
 
   function setTool(next: Tool): void {
