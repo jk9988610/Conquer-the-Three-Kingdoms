@@ -8,6 +8,7 @@ import {
   type PixelGrid,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
+import { loadImageFromFile, sampleImageToGrid } from '../art/imageToGrid';
 import { INNER_ASPECT_RATIO } from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
@@ -287,6 +288,8 @@ export function openPixelEditor(onApplied: () => void): void {
           <div class="pixel-editor__color-block" data-color-picker></div>
           <div class="pixel-editor__presets" data-presets></div>
           <div class="pixel-editor__tools-actions">
+            <button type="button" class="btn" data-import-image>导入图片</button>
+            <input type="file" accept="image/*" hidden data-import-file />
             <button type="button" class="btn" data-toggle-grid>网格：开</button>
             <button type="button" class="btn" data-clear>清空</button>
             <button type="button" class="btn" data-apply>应用</button>
@@ -1112,6 +1115,31 @@ const picker = createColorPicker(
     selectStart = null;
     layoutGrid();
     refreshAll();
+  });
+
+  const importFileInput = panel.querySelector<HTMLInputElement>('[data-import-file]')!;
+
+  panel.querySelector('[data-import-image]')?.addEventListener('click', () => {
+    importFileInput.click();
+  });
+
+  importFileInput.addEventListener('change', () => {
+    const file = importFileInput.files?.[0];
+    importFileInput.value = '';
+    if (!file) return;
+
+    void (async () => {
+      try {
+        const img = await loadImageFromFile(file);
+        grid = sampleImageToGrid(img, gridCols, gridRows);
+        selection = null;
+        selectStart = null;
+        refreshAll();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '导入失败';
+        window.alert(msg);
+      }
+    })();
   });
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
