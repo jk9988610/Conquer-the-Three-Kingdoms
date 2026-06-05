@@ -548,7 +548,7 @@ body {
   border-radius: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: 1fr minmax(128px, 148px);
+  grid-template-columns: 1fr minmax(172px, 208px);
   grid-template-rows: 34px 1fr;
   grid-template-areas:
     'topbar topbar'
@@ -757,7 +757,7 @@ body {
 .pixel-editor__canvas-row {
   grid-area: canvas;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(72px, 0.2fr) minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
   min-height: 0;
@@ -765,6 +765,10 @@ body {
   overflow: hidden;
   touch-action: manipulation;
   overscroll-behavior: contain;
+}
+
+.pixel-editor__pane--preview {
+  max-width: 168px;
 }
 
 .pixel-editor__pane {
