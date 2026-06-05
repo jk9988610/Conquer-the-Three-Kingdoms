@@ -336,6 +336,31 @@ export function pastePackedRegion(
   }
 }
 
+/** 导出 1 逻辑像素 = 1 像素的透明 PNG 并触发下载 */
+export function downloadPackedPng(
+  packed: PackedGrid,
+  filename: string,
+  cols = ART_GRID_COLS,
+  rows = ART_GRID_ROWS
+): void {
+  const canvas = document.createElement('canvas');
+  canvas.width = cols;
+  canvas.height = rows;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, cols, rows);
+  drawPackedToCanvas(ctx, packed, cols, rows, cols, rows, 'fit');
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
 export function collectPackedDiff(
   before: PackedGrid,
   after: PackedGrid

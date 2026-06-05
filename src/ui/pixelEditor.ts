@@ -2,7 +2,6 @@ import {
   ART_GRID_COLS,
   ART_GRID_ROWS,
   getArtPacked,
-  gridToExportCode,
   setCustomArtGrid,
   type Pixel,
   PIXEL_ART_KEYS,
@@ -14,6 +13,7 @@ import {
   compositePackedGrids,
   copyPackedRegion,
   createPackedGrid,
+  downloadPackedPng,
   drawPackedGridCells,
   floodFillPacked,
   getPackedPixel,
@@ -307,7 +307,7 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-toggle-grid>网格：开</button>
             <button type="button" class="btn" data-clear>清空当前层</button>
             <button type="button" class="btn" data-apply>应用</button>
-            <button type="button" class="btn" data-export>导出</button>
+            <button type="button" class="btn" data-export>导出 PNG</button>
           </div>
         </div>
     </section>
@@ -947,13 +947,8 @@ const picker = createColorPicker(
   });
 
   panel.querySelector('[data-export]')?.addEventListener('click', () => {
-    const merged = packedToGrid(compositeForDisplay());
-    const code = gridToExportCode(currentKey, merged);
-    try {
-      void navigator.clipboard.writeText(code);
-    } catch {
-      /* noop */
-    }
+    const merged = compositePackedGrids(layers);
+    downloadPackedPng(merged, `${currentKey}.png`);
   });
 
   const fullscreenBtn = panel.querySelector<HTMLElement>('[data-fullscreen]')!;
