@@ -1,5 +1,5 @@
 /**
- * 将所有 BASE_ART 卡牌像素图设为同一套 50×70 网格（中心蓝色方块）。
+ * 将所有 BASE_ART 卡牌像素图设为同一套 100×140 网格（中心蓝色方块）。
  * 运行: node scripts/set-unified-card-art.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -10,8 +10,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = path.join(ROOT, 'src/art/pixelArt.ts');
 
 const BLUE = 'rgba(0,78,255,1.00)';
-const ROWS = 70;
-const COLS = 50;
+const ROWS = 140;
+const COLS = 100;
 
 const KEYS = [
   'generic',
@@ -69,7 +69,7 @@ export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 export type Pixel = string | null;
 export type PixelGrid = Pixel[][];
 
-/** 全卡牌统一像素图：50×70，中心蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
+/** 全卡牌统一像素图：100×140，中心蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
 const UNIFIED_CARD_ART: PixelGrid = ${gridTs};
 
 function cloneGrid(grid: PixelGrid): PixelGrid {
