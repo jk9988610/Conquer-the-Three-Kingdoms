@@ -74,6 +74,32 @@ export function gridDimensions(grid: PixelGrid): { cols: number; rows: number } 
   return { cols, rows };
 }
 
+/** 自下而上合成多层；上层 null 表示透明，不遮挡下层色块 */
+export function compositePixelGrids(
+  layers: PixelGrid[],
+  visible?: boolean[]
+): PixelGrid {
+  if (layers.length === 0) return [];
+  const { cols, rows } = gridDimensions(layers[0]);
+  const out: PixelGrid = [];
+  for (let y = 0; y < rows; y++) {
+    const row: Pixel[] = [];
+    for (let x = 0; x < cols; x++) row.push(null);
+    out.push(row);
+  }
+  for (let i = 0; i < layers.length; i++) {
+    if (visible && visible[i] === false) continue;
+    const layer = layers[i];
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const p = layer[y]?.[x] ?? null;
+        if (p != null) out[y][x] = p;
+      }
+    }
+  }
+  return out;
+}
+
 function parsePixelColor(c: string): { r: number; g: number; b: number; a: number } {
   const rgba = c.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/i);
   if (rgba) {
