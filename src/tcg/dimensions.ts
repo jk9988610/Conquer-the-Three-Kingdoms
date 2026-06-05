@@ -12,10 +12,10 @@ export const INNER_ASPECT_RATIO =
   (TCG_WIDTH * (1 - 2 * INNER_MARGIN_X_RATIO)) /
   (TCG_HEIGHT * (1 - 2 * INNER_MARGIN_Y_RATIO));
 
-/** 像素画编辑器预览参考宽度（200×280 格） */
+/** 像素画编辑器预览参考宽度（500×700 格，5∶7） */
 export const ART_PREVIEW_WIDTH = 250;
 
-export const ART_PREVIEW_HEIGHT = Math.round((ART_PREVIEW_WIDTH * 280) / 200);
+export const ART_PREVIEW_HEIGHT = Math.round((ART_PREVIEW_WIDTH * 700) / 500);
 
 export interface TcgScaledSize {
   cardWidth: number;

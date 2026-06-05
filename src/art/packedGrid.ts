@@ -12,6 +12,27 @@ export function createPackedGrid(cols = ART_GRID_COLS, rows = ART_GRID_ROWS): Pa
   return new Uint32Array(cols * rows);
 }
 
+/** 默认卡图：透明底 + 中心蓝色块（比例与 scripts/set-unified-card-art.mjs 一致） */
+export function createDefaultCardArtPacked(
+  cols = ART_GRID_COLS,
+  rows = ART_GRID_ROWS
+): PackedGrid {
+  const grid = createPackedGrid(cols, rows);
+  const blue = pixelToArgb('rgba(0,78,255,1.00)');
+  const x0 = Math.floor((7 * cols) / 16);
+  const y0 = Math.floor((7 * rows) / 22);
+  const bw = Math.max(1, Math.round((4 * cols) / 16));
+  const bh = Math.max(1, Math.round((4 * rows) / 22));
+  for (let y = 0; y < bh; y++) {
+    for (let x = 0; x < bw; x++) {
+      const gy = y0 + y;
+      const gx = x0 + x;
+      if (gy < rows && gx < cols) setPackedPixel(grid, gx, gy, blue, cols);
+    }
+  }
+  return grid;
+}
+
 export function clonePackedGrid(src: PackedGrid): PackedGrid {
   return new Uint32Array(src);
 }
