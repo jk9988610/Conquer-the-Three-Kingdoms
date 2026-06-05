@@ -20,6 +20,7 @@ import {
   copyPackedRegion,
   createPackedGrid,
   downloadPackedPng,
+  flattenPackedToDisplayBlocks,
   floodFillPacked,
   getPackedPixel,
   gridIndex,
@@ -105,7 +106,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let paintArgb = pixelToArgb(paintColor);
   let brushSize = 1;
   let tool: Tool = 'hand';
-  let showGrid = true;
+  let showGrid = false;
   let viewPanX = 0;
   let viewPanY = 0;
   let viewZoom = 1;
@@ -220,7 +221,12 @@ export function openPixelEditor(onApplied: () => void): void {
     if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
+  function flattenEditorGrid(): void {
+    grid = flattenPackedToDisplayBlocks(grid, gridCols, gridRows);
+  }
+
   function persistDraft(): void {
+    flattenEditorGrid();
     savePixelEditorDraft(currentKey, grid);
   }
 
@@ -311,7 +317,7 @@ export function openPixelEditor(onApplied: () => void): void {
           <div class="pixel-editor__tools-actions">
             <button type="button" class="btn" data-import-image>导入图片</button>
             <input type="file" accept="image/*" hidden data-import-file />
-            <button type="button" class="btn" data-toggle-grid>参考线：开</button>
+            <button type="button" class="btn" data-toggle-grid>参考线：关</button>
             <button type="button" class="btn" data-clear>清空画布</button>
             <button type="button" class="btn" data-apply>应用</button>
             <button type="button" class="btn" data-export>导出 PNG</button>
@@ -660,29 +666,51 @@ const picker = createColorPicker(
     updateEditorDebug();
   }
 
-  function stampBrush(cx: number, cy: number, colorArgb: number): void {
-    const r = brushSize - 1;
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (brushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
-        const x = cx + dx;
-        const y = cy + dy;
-        if (x < 0 || y < 0 || x >= gridCols || y >= gridRows) continue;
+  function logicBlockForDisplayCell(dx: number, dy: number) {
+    return {
+      x0: Math.floor((dx * gridCols) / ART_DISPLAY_COLS),
+      y0: Math.floor((dy * gridRows) / ART_DISPLAY_ROWS),
+      x1: Math.floor(((dx + 1) * gridCols) / ART_DISPLAY_COLS),
+      y1: Math.floor(((dy + 1) * gridRows) / ART_DISPLAY_ROWS),
+    };
+  }
+
+  function fillDisplayCell(dx: number, dy: number, colorArgb: number): void {
+    if (dx < 0 || dy < 0 || dx >= ART_DISPLAY_COLS || dy >= ART_DISPLAY_ROWS) return;
+    const { x0, y0, x1, y1 } = logicBlockForDisplayCell(dx, dy);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
         recordCellChange(gridIndex(x, y, gridCols), colorArgb);
       }
     }
   }
 
+  function logicToDisplayCell(x: number, y: number) {
+    return {
+      dx: clamp(Math.floor((x * ART_DISPLAY_COLS) / gridCols), 0, ART_DISPLAY_COLS - 1),
+      dy: clamp(Math.floor((y * ART_DISPLAY_ROWS) / gridRows), 0, ART_DISPLAY_ROWS - 1),
+    };
+  }
+
+  /** 笔刷粗细按展示像素（75×105）计，与卡面所见块一致 */
+  function stampBrush(cx: number, cy: number, colorArgb: number): void {
+    const { dx: centerDx, dy: centerDy } = logicToDisplayCell(cx, cy);
+    const r = brushSize - 1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (brushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
+        fillDisplayCell(centerDx + dx, centerDy + dy, colorArgb);
+      }
+    }
+  }
+
   function paintAt(x: number, y: number, colorArgb: number = paintArgb): void {
-    if (
-      lastPaintCell?.x === x &&
-      lastPaintCell?.y === y &&
-      brushSize === 1
-    ) {
+    const { dx, dy } = logicToDisplayCell(x, y);
+    if (lastPaintCell?.x === dx && lastPaintCell?.y === dy && brushSize === 1) {
       return;
     }
     stampBrush(x, y, colorArgb);
-    lastPaintCell = { x, y };
+    lastPaintCell = { x: dx, y: dy };
     refreshAll();
   }
 
@@ -1035,7 +1063,7 @@ const picker = createColorPicker(
     showGrid = !showGrid;
     drawReferenceGrid();
     const btn = panel.querySelector('[data-toggle-grid]');
-    if (btn) btn.textContent = showGrid ? '参考线：开' : '参考线';
+    if (btn) btn.textContent = showGrid ? '参考线：开' : '参考线：关';
   });
 
   select.addEventListener('change', () => {
@@ -1086,12 +1114,15 @@ const picker = createColorPicker(
   });
 
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
+    flattenEditorGrid();
     setCustomArtGrid(currentKey, packedToGrid(grid));
-    persistDraft();
+    savePixelEditorDraft(currentKey, grid);
     onApplied();
   });
 
   panel.querySelector('[data-export]')?.addEventListener('click', () => {
+    flattenEditorGrid();
+    refreshAll();
     downloadPackedPng(grid, `${currentKey}.png`);
   });
 
