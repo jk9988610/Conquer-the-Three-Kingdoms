@@ -9,15 +9,12 @@ import {
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
 import { loadImageFromFile, sampleImageToGrid } from '../art/imageToGrid';
-import { INNER_ASPECT_RATIO } from '../tcg/dimensions';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getModalOverlayMount } from './overlayRoot';
 
-const RULER_PX = 18;
 const MIN_CELL_PX = 3;
-/** 画布四周最小外延格数（实际随视口扩展至边框） */
-const MIN_PAD_CELLS = 2;
+const PANE_INSET_PX = 12;
 const PALETTE_PRESETS = [
   '#c44',
   '#422',
@@ -54,27 +51,6 @@ function normalizeGrid(g: PixelGrid, cols: number, rows: number): PixelGrid {
     out.push(row);
   }
   return out;
-}
-
-/** 格大时每格标号；格中每 5 格；格小每 10 格 */
-function rulerLabelStep(cellPx: number): number {
-  if (cellPx >= 18) return 1;
-  if (cellPx >= 9) return 5;
-  return 10;
-}
-
-function fitGridToViewport(
-  vw: number,
-  vh: number,
-  targetCell: number
-): { cols: number; rows: number; cell: number; gridW: number; gridH: number } {
-  let cell = Math.max(MIN_CELL_PX, Math.floor(targetCell));
-  let cols = Math.max(4, Math.floor(vw / cell));
-  let rows = Math.max(4, Math.floor(vh / cell));
-  cell = Math.max(MIN_CELL_PX, Math.floor(Math.min(vw / cols, vh / rows)));
-  cols = Math.max(4, Math.floor(vw / cell));
-  rows = Math.max(4, Math.floor(vh / cell));
-  return { cols, rows, cell, gridW: cols * cell, gridH: rows * cell };
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -180,28 +156,10 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveOffset = { x: 0, y: 0 };
   let lastPaintCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  const ZOOM_MIN = 4;
-  const ZOOM_MAX = 8;
-
-  let cellZoom = ZOOM_MIN;
-  /** 缩放模式：单指平移画布，双指捏合缩放网格 */
-  let zoomMode = false;
-  let panOffset = { x: 0, y: 0 };
-  let panDrag: { px: number; py: number; ox: number; oy: number } | null = null;
-  const navPointers = new Map<number, { x: number; y: number }>();
-  let navPinchDist0 = 0;
-  let navPinchZoom0 = 1;
-  let pinchRaf = 0;
-  let pendingPinchFocal: { stageX: number; stageY: number } | null = null;
   let brushSize = 1;
-  let baseCellSize = 4;
   let cellSize = 4;
   let gridPixelW = gridCols * cellSize;
   let gridPixelH = gridRows * cellSize;
-  let viewportW = 200;
-  let viewportH = 274;
-  let padCellsX = MIN_PAD_CELLS;
-  let padCellsY = MIN_PAD_CELLS;
 
   /** 从美术数据原样加载，行列与 grid[][] 一致（避免 normalize 拉伸导致与参考网格错位） */
   function reloadArtGrid(key: PixelArtKey): void {
@@ -230,32 +188,18 @@ export function openPixelEditor(onApplied: () => void): void {
       <section class="pixel-editor__pane pixel-editor__pane--preview">
         <div class="pixel-editor__pane-label">预览</div>
         <div class="pixel-editor__pane-fill" data-preview-panel>
-          <div class="pixel-editor__canvas-shell" data-preview-shell>
-            <div class="pixel-editor__ruler-corner pixel-editor__ruler-corner--ghost" aria-hidden="true"></div>
-            <div class="pixel-editor__ruler-ghost pixel-editor__ruler-ghost--top" aria-hidden="true"></div>
-            <div class="pixel-editor__ruler-ghost pixel-editor__ruler-ghost--left" aria-hidden="true"></div>
-            <div class="pixel-editor__grid-frame" data-preview-frame>
-              <div class="pixel-editor__grid-inner" data-preview-inner>
-                <canvas data-preview-grid-art></canvas>
-              </div>
-            </div>
+          <div class="pixel-editor__art-surface" data-preview-surface>
+            <canvas data-preview-grid-art></canvas>
           </div>
         </div>
       </section>
       <section class="pixel-editor__pane pixel-editor__pane--edit">
         <div class="pixel-editor__pane-label">绘制</div>
         <div class="pixel-editor__pane-fill" data-edit-panel>
-          <div class="pixel-editor__edit-frame" data-edit-frame>
-            <div class="pixel-editor__ruler-corner" data-ruler-corner></div>
-            <div class="pixel-editor__ruler-top" data-ruler-top></div>
-            <div class="pixel-editor__ruler-left" data-ruler-left></div>
-            <div class="pixel-editor__edit-stage" data-art-stage>
-              <canvas class="pixel-editor__grid-layer" data-grid-layer></canvas>
-              <div class="pixel-editor__art-pan" data-art-pan>
-                <canvas data-edit-canvas></canvas>
-                <div class="pixel-editor__sel-box" data-sel-box hidden></div>
-              </div>
-            </div>
+          <div class="pixel-editor__art-surface" data-edit-surface>
+            <canvas data-edit-canvas></canvas>
+            <canvas class="pixel-editor__grid-overlay" data-grid-layer></canvas>
+            <div class="pixel-editor__sel-box" data-sel-box hidden></div>
           </div>
         </div>
       </section>
@@ -264,9 +208,6 @@ export function openPixelEditor(onApplied: () => void): void {
         <div class="pixel-editor__pane-fill pixel-editor__pane-fill--tools" data-tools-panel>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
-            <div class="pixel-editor__tools-zoom">
-              <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
-            </div>
             <div class="pixel-editor__tools-grid">
               <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
@@ -312,22 +253,16 @@ export function openPixelEditor(onApplied: () => void): void {
   const debugDrawer = panel.querySelector<HTMLElement>('[data-debug-drawer]')!;
   const openDebugBtn = panel.querySelector<HTMLElement>('[data-open-debug]')!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
-  const previewShell = panel.querySelector<HTMLElement>('[data-preview-shell]')!;
+  const previewSurface = panel.querySelector<HTMLElement>('[data-preview-surface]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
-  const editFrame = panel.querySelector<HTMLElement>('[data-edit-frame]')!;
+  const editSurface = panel.querySelector<HTMLElement>('[data-edit-surface]')!;
   const toolsPanel = panel.querySelector<HTMLElement>('[data-tools-panel]')!;
   const toolsScroll = panel.querySelector<HTMLElement>('[data-tools-scroll]')!;
-  const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
-  const previewInner = panel.querySelector<HTMLElement>('[data-preview-inner]')!;
   const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
-  const artStage = panel.querySelector<HTMLElement>('[data-art-stage]')!;
-  const artPan = panel.querySelector<HTMLElement>('[data-art-pan]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
   const gridLayerCanvas = panel.querySelector<HTMLCanvasElement>('[data-grid-layer]')!;
   const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
-  const rulerTop = panel.querySelector<HTMLElement>('[data-ruler-top]')!;
-  const rulerLeft = panel.querySelector<HTMLElement>('[data-ruler-left]')!;
   const colorPickerMount = panel.querySelector('[data-color-picker]')!;
 
 
@@ -381,199 +316,52 @@ const picker = createColorPicker(
       `工具: ${tool}`,
       `画笔: ${brushSize}`,
       `格宽: ${cellSize}px`,
-      `缩放: ${cellZoom.toFixed(2)}${zoomMode ? ' (手势)' : ''}`,
       `网格: ${gridCols}×${gridRows}`,
-      `像素: ${gridPixelW}×${gridPixelH}`,
-      `视口: ${viewportW}×${viewportH}`,
-      `填充: ${Math.round((gridPixelW / viewportW) * 100)}%×${Math.round((gridPixelH / viewportH) * 100)}%`,
+      `画布: ${gridPixelW}×${gridPixelH}`,
     ].join('\n');
   }
 
-  function recomputePadCells(): void {
-    if (cellSize < 1) return;
-    padCellsX = Math.max(
-      MIN_PAD_CELLS,
-      Math.ceil((viewportW - gridPixelW) / (2 * cellSize))
-    );
-    padCellsY = Math.max(
-      MIN_PAD_CELLS,
-      Math.ceil((viewportH - gridPixelH) / (2 * cellSize))
-    );
-  }
-
-  const padPxX = () => padCellsX * cellSize;
-  const padPxY = () => padCellsY * cellSize;
-
-  /** 可绘区左上角在舞台坐标（仅平移层移动，标尺固定） */
-  function artOriginInStage(): { x: number; y: number } {
-    return { x: padPxX() + panOffset.x, y: padPxY() + panOffset.y };
-  }
-
-  function panContentSize(): { w: number; h: number } {
-    return { w: gridPixelW + 2 * padPxX(), h: gridPixelH + 2 * padPxY() };
-  }
-
-  function panBounds(): { minX: number; maxX: number; minY: number; maxY: number } {
-    const { w: panW, h: panH } = panContentSize();
-    const slackX = padPxX();
-    const slackY = padPxY();
+  function availSizeInPane(panelEl: HTMLElement): { w: number; h: number } {
+    const inset = PANE_INSET_PX * 2;
     return {
-      minX: Math.min(0, viewportW - panW) - slackX,
-      maxX: Math.max(0, viewportW - panW) + slackX,
-      minY: Math.min(0, viewportH - panH) - slackY,
-      maxY: Math.max(0, viewportH - panH) + slackY,
+      w: Math.max(MIN_CELL_PX * gridCols, panelEl.clientWidth - inset),
+      h: Math.max(MIN_CELL_PX * gridRows, panelEl.clientHeight - inset),
     };
   }
 
-  function clampPan(o: { x: number; y: number }): { x: number; y: number } {
-    const { minX, maxX, minY, maxY } = panBounds();
-    return {
-      x: clamp(o.x, minX, maxX),
-      y: clamp(o.y, minY, maxY),
-    };
-  }
-
-  /** 仅夹紧平移，不强制贴边或居中（最小缩放可拖动画边缘） */
-  function snapPanHome(): void {
-    panOffset = clampPan(panOffset);
-  }
-
-  function applyPanTransform(): void {
-    artPan.style.transform = `translate(${panOffset.x}px, ${panOffset.y}px)`;
-    drawReferenceGrid();
-  }
-
-  function syncStageLayout(): void {
-    const dpr = window.devicePixelRatio || 1;
-    setupCanvas(gridLayerCanvas, viewportW, viewportH, dpr);
-    gridLayerCanvas.style.width = `${viewportW}px`;
-    gridLayerCanvas.style.height = `${viewportH}px`;
-  }
-
-  /** 捏合过程中实时改格宽、平移、参考层（松手不再整页跳变） */
-  function applyPinchZoom(pinchFocal: { stageX: number; stageY: number }): void {
-    const oldCellSize = cellSize;
-    const oldPanX = panOffset.x;
-    const oldPanY = panOffset.y;
-
-    cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
-    gridPixelW = gridCols * cellSize;
-    gridPixelH = gridRows * cellSize;
-
-    const dpr = window.devicePixelRatio || 1;
-    setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
-
-    if (oldCellSize > 0) {
-      const oldPadX = padCellsX * oldCellSize;
-      const oldPadY = padCellsY * oldCellSize;
-      recomputePadCells();
-      const canvasX = pinchFocal.stageX - oldPanX - oldPadX;
-      const canvasY = pinchFocal.stageY - oldPanY - oldPadY;
-      const scale = cellSize / oldCellSize;
-      panOffset = clampPan({
-        x: pinchFocal.stageX - canvasX * scale - padPxX(),
-        y: pinchFocal.stageY - canvasY * scale - padPxY(),
-      });
-    } else {
-      recomputePadCells();
+  function syncArtSurfaceSize(): void {
+    const size = `${gridPixelW}px`;
+    const sizeH = `${gridPixelH}px`;
+    for (const el of [previewSurface, editSurface]) {
+      el.style.width = size;
+      el.style.height = sizeH;
+      el.style.minWidth = size;
+      el.style.minHeight = sizeH;
     }
-
-    artPan.style.width = `${gridPixelW + 2 * padPxX()}px`;
-    artPan.style.height = `${gridPixelH + 2 * padPxY()}px`;
-    editCanvas.style.left = `${padPxX()}px`;
-    editCanvas.style.top = `${padPxY()}px`;
-    syncStageLayout();
-    applyPanTransform();
-    refreshEditCanvas();
-    updateSelectionBox();
-    updateEditorDebug();
+    panel.style.setProperty('--pe-art-w', size);
+    panel.style.setProperty('--pe-art-h', sizeH);
   }
 
-  function schedulePinchZoom(focal: { stageX: number; stageY: number }): void {
-    pendingPinchFocal = focal;
-    if (pinchRaf) return;
-    pinchRaf = requestAnimationFrame(() => {
-      pinchRaf = 0;
-      if (pendingPinchFocal) applyPinchZoom(pendingPinchFocal);
-      pendingPinchFocal = null;
-    });
-  }
-
-  function updateZoomModeUi(): void {
-    panel.classList.toggle('pixel-editor--zoom-mode', zoomMode);
-    const btn = panel.querySelector<HTMLElement>('[data-zoom-mode-toggle]');
-    if (btn) {
-      btn.textContent = zoomMode ? '缩放：开' : '缩放';
-      btn.classList.toggle('pixel-editor__zoom-mode--active', zoomMode);
-    }
-    editCanvas.style.cursor = zoomMode ? 'grab' : 'crosshair';
-    if (!zoomMode) {
-      navPointers.clear();
-      panDrag = null;
-      navPinchDist0 = 0;
-    }
-  }
-
-  function pointerDist(
-    a: { x: number; y: number },
-    b: { x: number; y: number }
-  ): number {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  }
-
-  /** 按预览/绘制分栏可用区域填充 TCG 比例视口 */
+  /** 按三栏可用空间计算格宽，预览与绘制画布像素尺寸一致 */
   function layoutViewport(): void {
-    const bodyW = bodyEl.clientWidth;
-    const bodyH = bodyEl.clientHeight;
-    if (bodyW < 24 || bodyH < 24) {
+    if (bodyEl.clientWidth < 24 || bodyEl.clientHeight < 24) {
       requestAnimationFrame(layoutViewport);
       return;
     }
 
-    const fitInBox = (boxW: number, boxH: number) => {
-      let innerW = Math.max(MIN_CELL_PX * 4, boxW - RULER_PX);
-      let innerH = Math.max(MIN_CELL_PX * 4, boxH - RULER_PX);
-      if (innerW / innerH > INNER_ASPECT_RATIO) {
-        innerW = Math.floor(innerH * INNER_ASPECT_RATIO);
-      } else {
-        innerH = Math.floor(innerW / INNER_ASPECT_RATIO);
-      }
-      return { innerW, innerH };
-    };
+    const previewAvail = availSizeInPane(previewPanel);
+    const editAvail = availSizeInPane(editPanel);
+    const toolsAvail = availSizeInPane(toolsPanel);
+    const availW = Math.min(previewAvail.w, editAvail.w, toolsAvail.w);
+    const availH = Math.min(previewAvail.h, editAvail.h, toolsAvail.h);
 
-    const editBox = fitInBox(editPanel.clientWidth, editPanel.clientHeight);
-    const previewBox = fitInBox(previewPanel.clientWidth, previewPanel.clientHeight);
-    const toolsBox = fitInBox(toolsPanel.clientWidth, toolsPanel.clientHeight);
-    viewportW = Math.max(
-      MIN_CELL_PX * 4,
-      Math.min(editBox.innerW, previewBox.innerW, toolsBox.innerW)
+    cellSize = Math.max(
+      MIN_CELL_PX,
+      Math.floor(Math.min(availW / gridCols, availH / gridRows))
     );
-    viewportH = Math.max(
-      MIN_CELL_PX * 4,
-      Math.min(editBox.innerH, previewBox.innerH, toolsBox.innerH)
-    );
-
-    const fitMin = fitGridToViewport(viewportW, viewportH, MIN_CELL_PX);
-    baseCellSize = fitMin.cell;
-
-    const shellW = viewportW + RULER_PX;
-    const shellH = viewportH + RULER_PX;
-
-    previewFrame.style.width = `${viewportW}px`;
-    previewFrame.style.height = `${viewportH}px`;
-    if (previewShell) {
-      previewShell.style.width = `${shellW}px`;
-      previewShell.style.height = `${shellH}px`;
-    }
-    if (editFrame) {
-      editFrame.style.width = `${shellW}px`;
-      editFrame.style.height = `${shellH}px`;
-    }
-
-    panel.style.setProperty('--pe-shell-w', `${shellW}px`);
-    panel.style.setProperty('--pe-shell-h', `${shellH}px`);
-    panel.style.setProperty('--pe-ruler-px', `${RULER_PX}px`);
-
+    gridPixelW = gridCols * cellSize;
+    gridPixelH = gridRows * cellSize;
+    syncArtSurfaceSize();
     layoutGrid();
   }
 
@@ -597,131 +385,41 @@ const picker = createColorPicker(
     updateDebugUi();
   }
 
-  function layoutGrid(pinchFocal?: { stageX: number; stageY: number }): void {
-    const oldCellSize = cellSize;
-    const oldPanX = panOffset.x;
-    const oldPanY = panOffset.y;
-
-    cellSize = Math.max(MIN_CELL_PX, Math.round(baseCellSize * cellZoom));
-    gridPixelW = gridCols * cellSize;
-    gridPixelH = gridRows * cellSize;
-    recomputePadCells();
-
+  function layoutGrid(): void {
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(previewGridArt, viewportW, viewportH, dpr);
-
-    artStage.style.width = `${viewportW}px`;
-    artStage.style.height = `${viewportH}px`;
-    artPan.style.width = `${gridPixelW + 2 * padPxX()}px`;
-    artPan.style.height = `${gridPixelH + 2 * padPxY()}px`;
-    editCanvas.style.left = `${padPxX()}px`;
-    editCanvas.style.top = `${padPxY()}px`;
-
-    if (pinchFocal && oldCellSize > 0) {
-      const oldPadX = padCellsX * oldCellSize;
-      const oldPadY = padCellsY * oldCellSize;
-      const canvasX = pinchFocal.stageX - oldPanX - oldPadX;
-      const canvasY = pinchFocal.stageY - oldPanY - oldPadY;
-      const scale = cellSize / oldCellSize;
-      panOffset = clampPan({
-        x: pinchFocal.stageX - canvasX * scale - padPxX(),
-        y: pinchFocal.stageY - canvasY * scale - padPxY(),
-      });
-    } else {
-      snapPanHome();
-    }
-
-    syncStageLayout();
-
-    previewInner.style.width = `${viewportW}px`;
-    previewInner.style.height = `${viewportH}px`;
-    previewInner.style.marginLeft = '0';
-    previewInner.style.marginTop = '0';
-
-    buildRulers();
-    applyPanTransform();
+    setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
+    setupCanvas(gridLayerCanvas, gridPixelW, gridPixelH, dpr);
+    syncArtSurfaceSize();
     refreshAll();
     updateSelectionBox();
     updateEditorDebug();
   }
 
-  /** 网格延伸至舞台边框；金色框标示可绘区 */
+  /** 编辑区叠加网格（仅绘制区，不写入像素数据） */
   function drawReferenceGrid(): void {
     const ctx = gridLayerCanvas.getContext('2d');
     if (!ctx) return;
-    ctx.clearRect(0, 0, viewportW, viewportH);
+    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
     if (!showGrid) return;
 
-    const { x: ox, y: oy } = artOriginInStage();
-    const cStart = Math.floor((0 - ox) / cellSize);
-    const cEnd = Math.ceil((viewportW - ox) / cellSize);
-    const rStart = Math.floor((0 - oy) / cellSize);
-    const rEnd = Math.ceil((viewportH - oy) / cellSize);
-
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1;
 
-    for (let c = cStart; c <= cEnd; c++) {
-      const x = ox + c * cellSize + 0.5;
-      if (x < -0.5 || x > viewportW + 0.5) continue;
+    for (let c = 0; c <= gridCols; c++) {
+      const x = c * cellSize + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
-      ctx.lineTo(x, viewportH);
+      ctx.lineTo(x, gridPixelH);
       ctx.stroke();
     }
 
-    for (let r = rStart; r <= rEnd; r++) {
-      const y = oy + r * cellSize + 0.5;
-      if (y < -0.5 || y > viewportH + 0.5) continue;
+    for (let r = 0; r <= gridRows; r++) {
+      const y = r * cellSize + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(viewportW, y);
+      ctx.lineTo(gridPixelW, y);
       ctx.stroke();
-    }
-
-    ctx.strokeStyle = 'rgba(201, 162, 39, 0.85)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(ox + 0.5, oy + 0.5, gridPixelW, gridPixelH);
-  }
-
-  /** 标尺固定在框图，0,0 对齐可绘区（不随平移偏移） */
-  function buildRulers(): void {
-    const step = rulerLabelStep(cellSize);
-    const padX = padPxX();
-    const padY = padPxY();
-
-    rulerTop.innerHTML = '';
-    rulerLeft.innerHTML = '';
-    rulerTop.style.paddingLeft = `${padX}px`;
-    rulerTop.style.paddingTop = '0';
-    rulerLeft.style.paddingTop = `${padY}px`;
-    rulerLeft.style.paddingLeft = '0';
-    rulerTop.style.width = `${gridPixelW}px`;
-    rulerTop.style.minWidth = `${gridPixelW}px`;
-    rulerLeft.style.height = `${gridPixelH}px`;
-    rulerLeft.style.minHeight = `${gridPixelH}px`;
-
-    for (let c = 0; c < gridCols; c++) {
-      const s = document.createElement('span');
-      s.className = 'pixel-editor__ruler-tick';
-      s.style.width = `${cellSize}px`;
-      if (c % step === 0) {
-        s.textContent = String(c);
-        s.classList.add('pixel-editor__ruler-tick--labeled');
-      }
-      rulerTop.append(s);
-    }
-
-    for (let r = 0; r < gridRows; r++) {
-      const s = document.createElement('span');
-      s.className = 'pixel-editor__ruler-tick';
-      s.style.height = `${cellSize}px`;
-      if (r % step === 0) {
-        s.textContent = String(r);
-        s.classList.add('pixel-editor__ruler-tick--labeled');
-      }
-      rulerLeft.append(s);
     }
   }
 
@@ -735,8 +433,8 @@ const picker = createColorPicker(
   function refreshPreview(): void {
     const sq = previewGridArt.getContext('2d');
     if (sq) {
-      sq.clearRect(0, 0, viewportW, viewportH);
-      drawGridToCanvas(sq, grid, viewportW, viewportH);
+      sq.clearRect(0, 0, gridPixelW, gridPixelH);
+      drawGridToCanvas(sq, grid, gridPixelW, gridPixelH);
     }
   }
 
@@ -791,8 +489,8 @@ const picker = createColorPicker(
       return;
     }
     selBox.hidden = false;
-    selBox.style.left = `${padPxX() + r.x * cellSize}px`;
-    selBox.style.top = `${padPxY() + r.y * cellSize}px`;
+    selBox.style.left = `${r.x * cellSize}px`;
+    selBox.style.top = `${r.y * cellSize}px`;
     selBox.style.width = `${r.w * cellSize}px`;
     selBox.style.height = `${r.h * cellSize}px`;
   }
@@ -882,7 +580,7 @@ const picker = createColorPicker(
 
   const blockBrowserGesture = (e: Event) => e.preventDefault();
 
-  for (const el of [overlay, panel, artStage, editCanvas]) {
+  for (const el of [overlay, panel, editSurface, editCanvas]) {
     el.addEventListener('contextmenu', blockBrowserGesture);
   }
 
@@ -904,101 +602,12 @@ const picker = createColorPicker(
     (e) => {
       const t = e.target as Node;
       if (toolsScroll?.contains(t)) return;
-      if (pointerDrawing || zoomMode) e.preventDefault();
+      if (pointerDrawing) e.preventDefault();
     },
     { passive: false }
   );
-
-  artStage.addEventListener(
-    'pointerdown',
-    (e) => {
-      if (!zoomMode) return;
-      if (e.target !== artStage && e.target !== gridLayerCanvas) return;
-      e.preventDefault();
-      navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      try {
-        artStage.setPointerCapture(e.pointerId);
-      } catch {
-        /* noop */
-      }
-      if (navPointers.size === 2) {
-        const pts = [...navPointers.values()];
-        navPinchDist0 = pointerDist(pts[0], pts[1]);
-        navPinchZoom0 = cellZoom;
-        panDrag = null;
-      } else if (navPointers.size === 1) {
-        panDrag = {
-          px: e.clientX,
-          py: e.clientY,
-          ox: panOffset.x,
-          oy: panOffset.y,
-        };
-      }
-    },
-    { passive: false }
-  );
-
-  artStage.addEventListener(
-    'pointermove',
-    (e) => {
-      if (!zoomMode || !navPointers.has(e.pointerId)) return;
-      navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      e.preventDefault();
-      if (navPointers.size >= 2) {
-        const pts = [...navPointers.values()];
-        const d = pointerDist(pts[0], pts[1]);
-        if (navPinchDist0 > 8) {
-          cellZoom = clamp(
-            navPinchZoom0 * (d / navPinchDist0),
-            ZOOM_MIN,
-            ZOOM_MAX
-          );
-          const stageRect = artStage.getBoundingClientRect();
-          schedulePinchZoom({
-            stageX: (pts[0].x + pts[1].x) / 2 - stageRect.left,
-            stageY: (pts[0].y + pts[1].y) / 2 - stageRect.top,
-          });
-        }
-      } else if (navPointers.size === 1 && panDrag) {
-        panOffset = clampPan({
-          x: panDrag.ox + (e.clientX - panDrag.px),
-          y: panDrag.oy + (e.clientY - panDrag.py),
-        });
-        applyPanTransform();
-      }
-    },
-    { passive: false }
-  );
-
-  const endNavPointer = (e: PointerEvent) => {
-    const wasPinching = navPinchDist0 > 8;
-    navPointers.delete(e.pointerId);
-    if (navPointers.size < 2) {
-      if (wasPinching) {
-        if (pinchRaf) {
-          cancelAnimationFrame(pinchRaf);
-          pinchRaf = 0;
-        }
-        if (pendingPinchFocal) {
-          applyPinchZoom(pendingPinchFocal);
-          pendingPinchFocal = null;
-        }
-        refreshPreview();
-      }
-      navPinchDist0 = 0;
-    }
-    if (navPointers.size === 0) panDrag = null;
-    try {
-      artStage.releasePointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-  };
-  artStage.addEventListener('pointerup', endNavPointer);
-  artStage.addEventListener('pointercancel', endNavPointer);
 
   editCanvas.addEventListener('pointerdown', (e) => {
-    if (zoomMode) return;
     e.preventDefault();
     const cell = cellFromEvent(e);
     if (!cell) return;
@@ -1046,7 +655,7 @@ const picker = createColorPicker(
   });
 
   editCanvas.addEventListener('pointermove', (e) => {
-    if (zoomMode || !editCanvas.hasPointerCapture(e.pointerId)) return;
+    if (!editCanvas.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
     const cell = cellFromEvent(e);
     if (!cell) return;
@@ -1112,12 +721,6 @@ const picker = createColorPicker(
 
   panel.querySelectorAll('[data-tool]').forEach((btn) => {
     btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
-  });
-
-  panel.querySelector('[data-zoom-mode-toggle]')?.addEventListener('click', () => {
-    zoomMode = !zoomMode;
-    updateZoomModeUi();
-    updateEditorDebug();
   });
 
   const brushRange = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
@@ -1236,15 +839,9 @@ const picker = createColorPicker(
   editorTeardown = () => {
     ro.disconnect();
     document.removeEventListener('keydown', onEscape);
-    if (pinchRaf) cancelAnimationFrame(pinchRaf);
-    pinchRaf = 0;
-    pendingPinchFocal = null;
-    navPointers.clear();
-    panDrag = null;
   };
   getModalOverlayMount().append(overlay);
   updateDebugUi();
-  updateZoomModeUi();
   requestAnimationFrame(() => {
     layoutViewport();
     requestAnimationFrame(() => layoutViewport());
