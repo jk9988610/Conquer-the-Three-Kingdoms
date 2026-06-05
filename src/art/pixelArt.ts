@@ -1,5 +1,11 @@
 import type { PixelArtKey } from '../game/types';
 import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+import {
+  drawPackedToCanvas,
+  gridToPacked,
+  packedToGrid,
+  type PackedGrid,
+} from './packedGrid';
 
 export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 
@@ -167,7 +173,25 @@ const BASE_ART: Record<PixelArtKey, PixelGrid> = {
   'attack-purple': cloneGrid(UNIFIED_CARD_ART),
 };
 
-const customOverrides: Partial<Record<PixelArtKey, PixelGrid>> = {};
+const customOverrides: Partial<Record<PixelArtKey, PackedGrid>> = {};
+const packedArtCache = new Map<PixelArtKey, PackedGrid>();
+
+function getBaseArtPacked(key: PixelArtKey): PackedGrid {
+  let cached = packedArtCache.get(key);
+  if (!cached) {
+    const raw = BASE_ART[key] ?? BASE_ART.generic;
+    cached = gridToPacked(upscaleGridToArtSize(raw.map((row) => [...row])));
+    packedArtCache.set(key, cached);
+  }
+  return cached;
+}
+
+/** 运行时紧凑网格（4 字节/格） */
+export function getArtPacked(key: PixelArtKey): PackedGrid {
+  const custom = customOverrides[key];
+  if (custom) return custom;
+  return getBaseArtPacked(key);
+}
 
 export const PIXEL_ART_KEYS = Object.keys(BASE_ART) as PixelArtKey[];
 
@@ -191,15 +215,12 @@ export function upscaleGridToArtSize(grid: PixelGrid): PixelGrid {
 }
 
 export function getArtGrid(key: PixelArtKey): PixelGrid {
-  const custom = customOverrides[key];
-  const raw = custom
-    ? custom.map((row) => [...row])
-    : (BASE_ART[key] ?? BASE_ART.generic).map((row) => [...row]);
-  return upscaleGridToArtSize(raw);
+  return packedToGrid(getArtPacked(key));
 }
 
 export function setCustomArtGrid(key: PixelArtKey, grid: PixelGrid): void {
-  customOverrides[key] = upscaleGridToArtSize(grid.map((row) => [...row]));
+  customOverrides[key] = gridToPacked(upscaleGridToArtSize(grid.map((row) => [...row])));
+  packedArtCache.delete(key);
 }
 
 export function gridToExportCode(key: string, grid: PixelGrid): string {
@@ -345,5 +366,5 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  drawGridToCanvas(ctx, getArtGrid(key), width, height);
+  drawPackedToCanvas(ctx, getArtPacked(key), width, height);
 }
