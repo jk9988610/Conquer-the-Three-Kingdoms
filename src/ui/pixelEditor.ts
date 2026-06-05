@@ -1,6 +1,7 @@
 import {
   drawGridToCanvas,
   getArtGrid,
+  gridDimensions,
   gridToExportCode,
   setCustomArtGrid,
   type Pixel,
@@ -50,27 +51,6 @@ function normalizeGrid(g: PixelGrid, cols: number, rows: number): PixelGrid {
     for (let x = 0; x < cols; x++) {
       const sx = Math.min(srcCols - 1, Math.floor((x / cols) * srcCols));
       row.push(src[sx] ?? null);
-    }
-    out.push(row);
-  }
-  return out;
-}
-
-function resampleGrid(
-  g: PixelGrid,
-  oldCols: number,
-  oldRows: number,
-  newCols: number,
-  newRows: number
-): PixelGrid {
-  if (oldCols === newCols && oldRows === newRows) return normalizeGrid(g, newCols, newRows);
-  const out: PixelGrid = [];
-  for (let y = 0; y < newRows; y++) {
-    const row: Pixel[] = [];
-    for (let x = 0; x < newCols; x++) {
-      const sx = Math.min(oldCols - 1, Math.floor((x / newCols) * oldCols));
-      const sy = Math.min(oldRows - 1, Math.floor((y / newRows) * oldRows));
-      row.push(g[sy]?.[sx] ?? null);
     }
     out.push(row);
   }
@@ -191,7 +171,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let currentKey: PixelArtKey = 'heal-potion';
   let gridCols = 16;
   let gridRows = 22;
-  let grid = normalizeGrid(getArtGrid(currentKey), gridCols, gridRows);
+  let grid: PixelGrid = [];
   let paintColor: Pixel = 'rgba(255,255,255,1)';
   let tool: Tool = 'paint';
   let showGrid = true;
@@ -230,8 +210,15 @@ export function openPixelEditor(onApplied: () => void): void {
   let contentH = 274;
   let gridScrollW = 800;
   let gridScrollH = 1000;
-  let lockedViewportW = 0;
-  let lockedViewportH = 0;
+
+  /** 从美术数据原样加载，行列与 grid[][] 一致（避免 normalize 拉伸导致与参考网格错位） */
+  function reloadArtGrid(key: PixelArtKey): void {
+    const src = getArtGrid(key);
+    const dim = gridDimensions(src);
+    gridCols = dim.cols;
+    gridRows = dim.rows;
+    grid = src.map((row) => [...row]);
+  }
 
   const overlay = document.createElement('div');
   overlay.className = 'pixel-editor-overlay';
@@ -504,20 +491,6 @@ const picker = createColorPicker(
     });
   }
 
-  function ensureArtGridDims(): void {
-    if (lockedViewportW === viewportW && lockedViewportH === viewportH) {
-      return;
-    }
-    const fit = fitGridToViewport(viewportW, viewportH, baseCellSize * ZOOM_MIN);
-    if (lockedViewportW > 0 && lockedViewportH > 0) {
-      grid = resampleGrid(grid, gridCols, gridRows, fit.cols, fit.rows);
-    }
-    gridCols = fit.cols;
-    gridRows = fit.rows;
-    lockedViewportW = viewportW;
-    lockedViewportH = viewportH;
-  }
-
   function updateZoomModeUi(): void {
     panel.classList.toggle('pixel-editor--zoom-mode', zoomMode);
     const btn = panel.querySelector<HTMLElement>('[data-zoom-mode-toggle]');
@@ -592,7 +565,6 @@ const picker = createColorPicker(
     editScroll.style.width = `${viewportW + RULER_PX}px`;
     editScroll.style.height = `${viewportH + RULER_PX}px`;
 
-    ensureArtGridDims();
     layoutGrid();
   }
 
@@ -1135,9 +1107,10 @@ const picker = createColorPicker(
 
   select.addEventListener('change', () => {
     currentKey = select.value as PixelArtKey;
-    grid = normalizeGrid(getArtGrid(currentKey), gridCols, gridRows);
+    reloadArtGrid(currentKey);
     selection = null;
     selectStart = null;
+    layoutGrid();
     refreshAll();
   });
 
@@ -1181,6 +1154,8 @@ const picker = createColorPicker(
   const ro = new ResizeObserver(() => layoutViewport());
   ro.observe(bodyEl);
   ro.observe(panel);
+
+  reloadArtGrid(currentKey);
 
   overlay.append(panel);
   editorOverlay = overlay;
