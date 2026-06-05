@@ -43,6 +43,8 @@ export class GameBoard {
   private modalCharacterId: string | null = null;
   private activeDrag: DragSource | null = null;
   private hoverLiftId: string | null = null;
+  private statusOpen = false;
+  private debugOpen = false;
 
   constructor(
     container: HTMLElement,
@@ -56,7 +58,17 @@ export class GameBoard {
     this.root.innerHTML = `
       <div class="game-board__shell">
         <section class="game-board__canvas" data-canvas>
-          <h1 class="game-board__title">三国志 TCG <span class="game-board__ver" data-version></span></h1>
+          <header class="game-board__topbar">
+            <h1 class="game-board__title">征战三国 <span class="game-board__ver" data-version></span></h1>
+            <div class="game-board__topbar-actions">
+              <button type="button" class="btn game-board__topbar-btn" data-action="toggle-status">状态</button>
+              <button type="button" class="btn game-board__topbar-btn" data-action="toggle-debug">调试</button>
+              <button type="button" class="btn" data-action="toggle-phase">阶段</button>
+              <button type="button" class="btn" data-action="toggle-music">音乐</button>
+              <button type="button" class="btn" data-action="pixel-editor">绘制</button>
+              <button type="button" class="btn" data-action="fullscreen">全屏</button>
+            </div>
+          </header>
           <main class="game-board__zones">
             <section class="zone" data-zone-id="top">
               <h2 class="zone__label" data-top-label></h2>
@@ -72,34 +84,34 @@ export class GameBoard {
             </section>
           </main>
         </section>
-        <aside class="game-board__sidebar" data-sidebar>
-          <div class="game-board__module game-board__module--status">
-            <h3 class="game-board__module-title">状态</h3>
-            <div class="game-board__module-body">
-              <p class="game-board__stat-line"><span class="game-board__stat-k">金币</span> <span data-gold></span></p>
-              <p class="game-board__stat-line"><span class="game-board__stat-k">阶段</span> <span data-phase-label></span></p>
-              <p class="game-board__stat-line game-board__stat-line--hint" data-hint title=""></p>
-            </div>
-          </div>
-          <div class="game-board__module game-board__module--tools">
-            <h3 class="game-board__module-title">设置</h3>
-            <div class="game-board__module-body game-board__module-body--tools-row">
-              <div class="game-board__tool-buttons">
-                <button type="button" class="btn" data-action="toggle-phase">阶段</button>
-                <button type="button" class="btn" data-action="toggle-music">音乐</button>
-                <button type="button" class="btn" data-action="pixel-editor">绘制</button>
-                <button type="button" class="btn" data-action="fullscreen">全屏</button>
-              </div>
-              <pre class="game-board__debug" data-debug aria-label="调试信息"></pre>
-            </div>
-          </div>
-        </aside>
       </div>
+      <div class="game-board__drawer-backdrop" data-board-backdrop aria-hidden="true"></div>
+      <aside class="game-board__drawer game-board__drawer--status" data-status-drawer aria-hidden="true">
+        <header class="game-board__drawer-head">
+          <span>状态</span>
+          <button type="button" class="game-board__drawer-close" data-close-board-drawer aria-label="关闭">×</button>
+        </header>
+        <div class="game-board__drawer-body">
+          <p class="game-board__stat-line"><span class="game-board__stat-k">金币</span> <span data-gold></span></p>
+          <p class="game-board__stat-line"><span class="game-board__stat-k">阶段</span> <span data-phase-label></span></p>
+          <p class="game-board__stat-line game-board__stat-line--hint" data-hint title=""></p>
+        </div>
+      </aside>
+      <aside class="game-board__drawer game-board__drawer--debug" data-debug-drawer aria-hidden="true">
+        <header class="game-board__drawer-head">
+          <span>调试</span>
+          <button type="button" class="game-board__drawer-close" data-close-board-drawer aria-label="关闭">×</button>
+        </header>
+        <div class="game-board__drawer-body">
+          <pre class="game-board__debug" data-debug aria-label="调试信息"></pre>
+        </div>
+      </aside>
     `;
 
     this.root.querySelector('[data-version]')!.textContent = `v${APP_VERSION}`;
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
     this.bindControls();
+    this.updateBoardDrawerUi();
     this.updateLayoutSize();
     window.addEventListener('resize', () => this.updateLayoutSize());
     this.render();
@@ -110,7 +122,59 @@ export class GameBoard {
     this.render();
   }
 
+  private updateBoardDrawerUi(): void {
+    const backdrop = this.root.querySelector<HTMLElement>('[data-board-backdrop]')!;
+    const statusDrawer = this.root.querySelector<HTMLElement>('[data-status-drawer]')!;
+    const debugDrawer = this.root.querySelector<HTMLElement>('[data-debug-drawer]')!;
+    const statusBtn = this.root.querySelector<HTMLElement>('[data-action="toggle-status"]')!;
+    const debugBtn = this.root.querySelector<HTMLElement>('[data-action="toggle-debug"]')!;
+
+    backdrop.classList.toggle('game-board__drawer-backdrop--open', this.statusOpen || this.debugOpen);
+    statusDrawer.classList.toggle('game-board__drawer--open', this.statusOpen);
+    debugDrawer.classList.toggle('game-board__drawer--open', this.debugOpen);
+    backdrop.setAttribute('aria-hidden', this.statusOpen || this.debugOpen ? 'false' : 'true');
+    statusDrawer.setAttribute('aria-hidden', this.statusOpen ? 'false' : 'true');
+    debugDrawer.setAttribute('aria-hidden', this.debugOpen ? 'false' : 'true');
+    statusBtn.classList.toggle('game-board__topbar-btn--active', this.statusOpen);
+    debugBtn.classList.toggle('game-board__topbar-btn--active', this.debugOpen);
+  }
+
+  private closeBoardDrawers(): void {
+    this.statusOpen = false;
+    this.debugOpen = false;
+    this.updateBoardDrawerUi();
+  }
+
   private bindControls(): void {
+    this.root
+      .querySelector('[data-action="toggle-status"]')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.statusOpen = !this.statusOpen;
+        if (this.statusOpen) this.debugOpen = false;
+        this.updateBoardDrawerUi();
+      });
+
+    this.root
+      .querySelector('[data-action="toggle-debug"]')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.debugOpen = !this.debugOpen;
+        if (this.debugOpen) this.statusOpen = false;
+        this.updateBoardDrawerUi();
+      });
+
+    this.root
+      .querySelector('[data-board-backdrop]')
+      ?.addEventListener('click', () => this.closeBoardDrawers());
+
+    this.root.querySelectorAll('[data-close-board-drawer]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeBoardDrawers();
+      });
+    });
+
     this.root
       .querySelector('[data-action="toggle-phase"]')
       ?.addEventListener('click', () => {

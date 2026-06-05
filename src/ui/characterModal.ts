@@ -38,32 +38,37 @@ export function openCharacterModal(
   modal.className = 'char-modal';
   modal.innerHTML = `
     <button type="button" class="char-modal__close" aria-label="关闭">×</button>
-    <div class="char-modal__layout">
-      <div class="char-modal__info">
-        <div class="char-modal__info-block">
+    <div class="char-modal__layout char-modal__layout--thirds">
+      <section class="char-modal__col">
+        <h3 class="char-modal__col-title">角色介绍</h3>
+        <div class="char-modal__col-body char-modal__col-body--intro">
           <h2 class="char-modal__title"></h2>
-        </div>
-        <div class="char-modal__info-block char-modal__info-block--stats">
           <p class="char-modal__stats"></p>
-        </div>
-        <div class="char-modal__info-block char-modal__info-block--desc">
           <p class="char-modal__desc"></p>
         </div>
-      </div>
-      <div class="char-modal__portrait" data-portrait></div>
-      <aside class="char-modal__equip-panel">
-        <h3 class="char-modal__equip-title">装备</h3>
-        <div class="char-modal__equip" data-equip></div>
-      </aside>
+      </section>
+      <section class="char-modal__col">
+        <h3 class="char-modal__col-title">角色样貌</h3>
+        <div class="char-modal__col-body char-modal__col-body--portrait" data-portrait></div>
+      </section>
+      <section class="char-modal__col">
+        <h3 class="char-modal__col-title">角色装备</h3>
+        <div class="char-modal__col-body char-modal__col-body--equip" data-equip></div>
+      </section>
     </div>
   `;
 
-  const artKey = character.data.artKey ?? 'generic';
-  const portraitW = 140;
+  const portraitCol = modal.querySelector<HTMLElement>('[data-portrait]')!;
+  const colW = Math.min(220, Math.floor((window.innerWidth * 0.92 - 80) / 3));
+  const portraitW = Math.max(100, colW - 24);
   const portraitH = Math.round(portraitW / INNER_ASPECT_RATIO);
-  const portrait = createPixelArtCanvas(artKey, portraitW, portraitH);
+  const portrait = createPixelArtCanvas(
+    character.data.artKey ?? 'generic',
+    portraitW,
+    portraitH
+  );
   portrait.className = 'char-modal__art';
-  modal.querySelector('[data-portrait]')!.append(portrait);
+  portraitCol.append(portrait);
 
   modal.querySelector('.char-modal__title')!.textContent = character.data.name;
   modal.querySelector('.char-modal__desc')!.textContent =

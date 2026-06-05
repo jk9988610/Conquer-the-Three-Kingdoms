@@ -53,8 +53,7 @@ body {
 .game-board__shell {
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  max-width: min(100%, 920px);
+  max-width: 100%;
   width: 100%;
   height: min(100%, calc(100dvh - 16px));
   max-height: calc(100dvh - 16px);
@@ -72,15 +71,121 @@ body {
   overflow: hidden;
 }
 
+.game-board__topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--header-h);
+  padding: 0 10px;
+  border-bottom: 1px solid var(--tcg-border);
+  background: var(--tcg-surface);
+  touch-action: manipulation;
+}
+
 .game-board__title {
-  flex: 0 0 auto;
   margin: 0;
-  padding: 6px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
   font-size: 0.9rem;
   font-weight: 600;
   white-space: nowrap;
-  border-bottom: 1px solid var(--tcg-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-board__topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.game-board__topbar-btn--active {
+  border-color: var(--tcg-accent) !important;
+  color: var(--tcg-accent);
+}
+
+.game-board__drawer-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.game-board__drawer-backdrop--open {
+  display: block;
+}
+
+.game-board__drawer {
+  display: none;
+  position: fixed;
+  z-index: 210;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+  width: min(92vw, 300px);
+  max-width: 100%;
   background: var(--tcg-surface);
+  border-left: 1px solid var(--tcg-border);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+  touch-action: manipulation;
+}
+
+.game-board__drawer--open {
+  display: flex;
+}
+
+.game-board__drawer-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--tcg-border);
+}
+
+.game-board__drawer-close {
+  border: none;
+  background: transparent;
+  color: var(--tcg-text);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.game-board__drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.game-board__drawer-body [data-gold] {
+  color: #e8c86a;
+  font-weight: 600;
+}
+
+.game-board__drawer-body [data-phase-label] {
+  color: var(--tcg-accent);
+  font-weight: 600;
+}
+
+.game-board__drawer-body .game-board__debug {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: none;
 }
 
 .game-board__ver {
@@ -720,7 +825,7 @@ body {
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  justify-content: flex-start;
+  justify-content: center;
   padding: 12px;
   overflow: auto;
   box-sizing: border-box;
@@ -1333,7 +1438,7 @@ body {
   pointer-events: none;
 }
 
-/* 角色详情弹窗：左信息 / 中立绘 / 右装备 */
+/* 角色详情弹窗：三等分 — 角色介绍 | 角色样貌 | 角色装备 */
 .char-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1347,9 +1452,12 @@ body {
 
 .char-modal {
   position: relative;
-  width: min(94vw, 720px);
-  max-height: 90dvh;
-  overflow: auto;
+  width: min(96vw, 1020px);
+  min-height: min(82dvh, 520px);
+  max-height: 92dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--tcg-surface);
   border: 1px solid var(--tcg-accent);
   border-radius: 10px;
@@ -1370,38 +1478,61 @@ body {
   z-index: 2;
 }
 
-.char-modal__layout {
+.char-modal__layout--thirds {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
 }
 
-.char-modal__equip-panel {
+.char-modal__col {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   min-width: 0;
+  min-height: 0;
 }
 
-.char-modal__equip-title {
+.char-modal__col:not(:last-child) {
+  border-right: 1px solid var(--tcg-border);
+}
+
+.char-modal__col-title {
   margin: 0;
-  font-size: 0.72rem;
-  color: var(--tcg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--tcg-accent);
+  letter-spacing: 0.1em;
+  text-align: center;
+  border-bottom: 1px solid var(--tcg-border);
+  background: rgba(0, 0, 0, 0.12);
 }
 
-.char-modal__equip {
+.char-modal__col-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.char-modal__col-body--intro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.char-modal__col-body--portrait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.char-modal__col-body--equip {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--tcg-border);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.15);
-  max-height: 320px;
-  overflow-y: auto;
 }
 
 .char-modal__equip-row {
@@ -1422,50 +1553,18 @@ body {
   color: var(--tcg-muted);
 }
 
-.char-modal__portrait {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 8px 8px 0;
-  background: transparent;
-  border: 1px solid var(--tcg-border);
-  border-radius: 6px;
-  align-self: start;
-}
-
 .char-modal__art {
   display: block;
+  max-width: 100%;
+  height: auto;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   background: transparent;
-  vertical-align: top;
-}
-
-.char-modal__info {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.char-modal__info-block {
-  padding: 8px 10px;
-  border: 1px solid var(--tcg-border);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.12);
-}
-
-.char-modal__info-block--stats {
-  border-color: rgba(143, 212, 168, 0.35);
-}
-
-.char-modal__info-block--desc {
-  flex: 1 1 auto;
 }
 
 .char-modal__title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   color: var(--tcg-accent);
 }
 
