@@ -1,8 +1,5 @@
 import type { Pixel, PixelGrid } from './pixelArt';
-
-/** 与卡牌美术统一的逻辑网格尺寸 */
-export const ART_GRID_COLS = 16;
-export const ART_GRID_ROWS = 22;
+export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 
 const DEFAULT_ALPHA_THRESHOLD = 128;
 

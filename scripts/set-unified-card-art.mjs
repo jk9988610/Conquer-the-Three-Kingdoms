@@ -1,5 +1,5 @@
 /**
- * 将所有 BASE_ART 卡牌像素图设为同一套 16×22 网格（中心蓝色方块）。
+ * 将所有 BASE_ART 卡牌像素图设为同一套 25×35 网格（中心蓝色方块）。
  * 运行: node scripts/set-unified-card-art.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -10,8 +10,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = path.join(ROOT, 'src/art/pixelArt.ts');
 
 const BLUE = 'rgba(0,78,255,1.00)';
-const ROWS = 22;
-const COLS = 16;
+const ROWS = 35;
+const COLS = 25;
 
 const KEYS = [
   'generic',
@@ -28,9 +28,13 @@ const KEYS = [
 
 function buildGrid() {
   const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
-  for (let y = 7; y <= 10; y++) {
-    for (let x = 7; x <= 10; x++) {
-      grid[y][x] = BLUE;
+  const x0 = Math.floor((7 * COLS) / 16);
+  const y0 = Math.floor((7 * ROWS) / 22);
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const gy = y0 + y;
+      const gx = x0 + x;
+      if (gy < ROWS && gx < COLS) grid[gy][gx] = BLUE;
     }
   }
   return grid;
@@ -56,11 +60,14 @@ if (!tail) {
 }
 
 const head = `import type { PixelArtKey } from '../game/types';
+import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+
+export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 
 export type Pixel = string | null;
 export type PixelGrid = Pixel[][];
 
-/** 全卡牌统一像素图：16×22，中心 4×4 蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
+/** 全卡牌统一像素图：25×35，中心 4×4 蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
 const UNIFIED_CARD_ART: PixelGrid = ${gridTs};
 
 function cloneGrid(grid: PixelGrid): PixelGrid {
