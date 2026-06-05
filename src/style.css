@@ -1176,6 +1176,59 @@ body {
   padding: 0.25rem 0.2rem;
 }
 
+.pixel-editor__tools-grid [data-undo],
+.pixel-editor__tools-grid [data-redo] {
+  grid-column: span 1;
+}
+
+.pixel-editor__layers {
+  border-top: 1px solid var(--tcg-border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.pixel-editor__layers-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--tcg-muted);
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.pixel-editor__layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pixel-editor__layer-row {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.pixel-editor__layer-pick {
+  flex: 1 1 auto;
+  font-size: 0.65rem;
+  padding: 0.28rem 0.35rem;
+}
+
+.pixel-editor__layer-pick--active {
+  border-color: var(--tcg-accent) !important;
+  color: var(--tcg-accent);
+}
+
+.pixel-editor__layer-vis {
+  flex: 0 0 2.2rem;
+  font-size: 0.62rem;
+  padding: 0.28rem 0.2rem;
+}
+
+.pixel-editor__layer-vis--off {
+  opacity: 0.55;
+  color: var(--tcg-muted);
+}
+
 .pixel-editor__color-block {
   border-top: 1px solid var(--tcg-border);
   padding-top: 6px;
