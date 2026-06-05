@@ -1,6 +1,6 @@
+import { formatArtMemoryReport } from '../art/artMemoryStats';
+import { ART_GRID_COLS, ART_GRID_MAJOR_STEP, ART_GRID_ROWS } from '../art/gridConfig';
 import {
-  ART_GRID_COLS,
-  ART_GRID_ROWS,
   getArtPacked,
   setCustomArtGrid,
   type Pixel,
@@ -10,7 +10,6 @@ import {
   argbToPixel,
   clonePackedGrid,
   collectPackedDiff,
-  compositePackedGrids,
   copyPackedRegion,
   createPackedGrid,
   downloadPackedPng,
@@ -38,8 +37,10 @@ import { getModalOverlayMount } from './overlayRoot';
 
 const MIN_CELL_PX = 1;
 const PANE_INSET_PX = 4;
-const LAYER_COUNT = 3;
 const MAX_UNDO = 5;
+const MAX_BRUSH = 12;
+const MIN_VIEW_ZOOM = 0.15;
+const MAX_VIEW_ZOOM = 12;
 
 interface CellPatch {
   i: number;
@@ -59,7 +60,7 @@ const PALETTE_PRESETS = [
   '#e8589a',
 ];
 
-type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'select' | 'move';
+type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'select' | 'move' | 'hand';
 
 interface Selection {
   x: number;
@@ -88,17 +89,22 @@ export function openPixelEditor(onApplied: () => void): void {
   let currentKey: PixelArtKey = 'heal-potion';
   let gridCols = ART_GRID_COLS;
   let gridRows = ART_GRID_ROWS;
-  let layers: PackedGrid[] = [];
-  let activeLayer = 0;
-  let layerVisible = [true, true, true];
-  const undoStacks: UndoEntry[][] = Array.from({ length: LAYER_COUNT }, () => []);
-  const redoStacks: UndoEntry[][] = Array.from({ length: LAYER_COUNT }, () => []);
+  let grid: PackedGrid = createPackedGrid();
+  const undoStack: UndoEntry[] = [];
+  const redoStack: UndoEntry[] = [];
   let patchBatch: Map<number, { prev: number; next: number }> | null = null;
   let strokeUndoPushed = false;
   let paintColor: Pixel = 'rgba(255,255,255,1)';
   let paintArgb = pixelToArgb(paintColor);
+  let brushSize = 1;
   let tool: Tool = 'paint';
   let showGrid = true;
+  let viewPanX = 0;
+  let viewPanY = 0;
+  let viewZoom = 1;
+  let navPanStart: { x: number; y: number; panX: number; panY: number } | null = null;
+  const navPointers = new Map<number, { x: number; y: number }>();
+  let lastPinchDist = 0;
   let selection: Selection | null = null;
   let selectStart: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
@@ -110,20 +116,11 @@ export function openPixelEditor(onApplied: () => void): void {
   let gridPixelW = gridCols * cellSize;
   let gridPixelH = gridRows * cellSize;
 
-  function makeEmptyLayer(): PackedGrid {
+  function makeEmptyGrid(): PackedGrid {
     return createPackedGrid(gridCols, gridRows);
   }
 
-  function activeLayerGrid(): PackedGrid {
-    return layers[activeLayer];
-  }
-
-  function compositeForDisplay(): PackedGrid {
-    return compositePackedGrids(layers, layerVisible);
-  }
-
   function recordCellChange(index: number, next: number): void {
-    const grid = activeLayerGrid();
     const prev = grid[index] ?? 0;
     const nextVal = next >>> 0;
     if (prev === nextVal) return;
@@ -150,51 +147,45 @@ export function openPixelEditor(onApplied: () => void): void {
     for (const [i, { prev, next }] of patchBatch) {
       entry.push({ i, prev, next });
     }
-    const stack = undoStacks[activeLayer];
-    stack.push(entry);
-    if (stack.length > MAX_UNDO) stack.shift();
-    redoStacks[activeLayer].length = 0;
+    undoStack.push(entry);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
     patchBatch = null;
     updateUndoRedoButtons();
   }
 
-  function pushLayerPatches(patches: UndoEntry): void {
+  function pushPatches(patches: UndoEntry): void {
     if (patches.length === 0) return;
-    const stack = undoStacks[activeLayer];
-    stack.push(patches);
-    if (stack.length > MAX_UNDO) stack.shift();
-    redoStacks[activeLayer].length = 0;
+    undoStack.push(patches);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
     updateUndoRedoButtons();
   }
 
   function applyUndoEntry(entry: UndoEntry, useNext: boolean): void {
-    const grid = activeLayerGrid();
     for (const p of entry) {
       grid[p.i] = (useNext ? p.next : p.prev) >>> 0;
     }
   }
 
-  function replaceActiveLayer(next: PackedGrid): void {
-    const before = clonePackedGrid(activeLayerGrid());
-    layers[activeLayer] = clonePackedGrid(next);
-    pushLayerPatches(collectPackedDiff(before, layers[activeLayer]));
+  function replaceGrid(next: PackedGrid): void {
+    const before = clonePackedGrid(grid);
+    grid = clonePackedGrid(next);
+    pushPatches(collectPackedDiff(before, grid));
   }
 
-  function resetLayerHistory(): void {
-    for (let i = 0; i < LAYER_COUNT; i++) {
-      undoStacks[i].length = 0;
-      redoStacks[i].length = 0;
-    }
+  function resetHistory(): void {
+    undoStack.length = 0;
+    redoStack.length = 0;
     strokeUndoPushed = false;
     patchBatch = null;
     updateUndoRedoButtons();
   }
 
-  function undoLayer(): void {
-    const u = undoStacks[activeLayer];
-    if (u.length === 0) return;
-    const entry = u.pop()!;
-    redoStacks[activeLayer].push(entry);
+  function undo(): void {
+    if (undoStack.length === 0) return;
+    const entry = undoStack.pop()!;
+    redoStack.push(entry);
     applyUndoEntry(entry, false);
     selection = null;
     selectStart = null;
@@ -202,11 +193,10 @@ export function openPixelEditor(onApplied: () => void): void {
     updateUndoRedoButtons();
   }
 
-  function redoLayer(): void {
-    const r = redoStacks[activeLayer];
-    if (r.length === 0) return;
-    const entry = r.pop()!;
-    undoStacks[activeLayer].push(entry);
+  function redo(): void {
+    if (redoStack.length === 0) return;
+    const entry = redoStack.pop()!;
+    undoStack.push(entry);
     applyUndoEntry(entry, true);
     selection = null;
     selectStart = null;
@@ -217,12 +207,12 @@ export function openPixelEditor(onApplied: () => void): void {
   function updateUndoRedoButtons(): void {
     const undoBtn = panel.querySelector<HTMLButtonElement>('[data-undo]');
     const redoBtn = panel.querySelector<HTMLButtonElement>('[data-redo]');
-    if (undoBtn) undoBtn.disabled = undoStacks[activeLayer].length === 0;
-    if (redoBtn) redoBtn.disabled = redoStacks[activeLayer].length === 0;
+    if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
   function persistDraft(): void {
-    savePixelEditorDraft(currentKey, layers, layerVisible);
+    savePixelEditorDraft(currentKey, grid);
   }
 
   /** 优先恢复本地草稿，否则从已应用美术加载 */
@@ -230,18 +220,14 @@ export function openPixelEditor(onApplied: () => void): void {
     gridCols = ART_GRID_COLS;
     gridRows = ART_GRID_ROWS;
     const draft = loadPixelEditorDraft(key);
-    if (draft) {
-      layers = draft.layers.map((g) => clonePackedGrid(g));
-      layerVisible = [...draft.layerVisible];
-    } else {
-      layers = [clonePackedGrid(getArtPacked(key)), makeEmptyLayer(), makeEmptyLayer()];
-      layerVisible = [true, true, true];
-    }
-    activeLayer = 0;
+    grid = draft ? clonePackedGrid(draft.grid) : clonePackedGrid(getArtPacked(key));
     selection = null;
     selectStart = null;
-    resetLayerHistory();
-    renderLayerControls();
+    viewPanX = 0;
+    viewPanY = 0;
+    viewZoom = 1;
+    resetHistory();
+    applyEditViewTransform();
   }
 
   const overlay = document.createElement('div');
@@ -270,11 +256,15 @@ export function openPixelEditor(onApplied: () => void): void {
       </section>
       <section class="pixel-editor__pane pixel-editor__pane--edit">
         <div class="pixel-editor__pane-label">绘制</div>
-        <div class="pixel-editor__pane-fill" data-edit-panel>
-          <div class="pixel-editor__art-surface" data-edit-surface>
-            <canvas data-edit-canvas></canvas>
-            <canvas class="pixel-editor__grid-overlay" data-grid-layer></canvas>
-            <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+        <div class="pixel-editor__pane-fill pixel-editor__edit-viewport-wrap" data-edit-panel>
+          <div class="pixel-editor__edit-viewport" data-edit-viewport>
+            <div class="pixel-editor__edit-stage" data-edit-stage>
+              <div class="pixel-editor__art-surface" data-edit-surface>
+                <canvas data-edit-canvas></canvas>
+                <canvas class="pixel-editor__grid-overlay" data-grid-layer></canvas>
+                <div class="pixel-editor__sel-box" data-sel-box hidden></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -294,18 +284,26 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-undo disabled>撤销</button>
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
-            <div class="pixel-editor__layers">
-              <div class="pixel-editor__layers-title">图层（撤销≤5步/层）</div>
-              <div class="pixel-editor__layer-list" data-layer-list></div>
+            <label class="pixel-editor__brush-row">
+              画笔粗细
+              <input type="range" min="1" max="12" value="1" data-brush-size />
+              <span data-brush-size-label>1</span>
+            </label>
+            <div class="pixel-editor__tools-zoom">
+              <button type="button" class="btn pixel-editor__tool" data-tool="hand" title="单指拖动平移">拖动</button>
+              <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
+              <button type="button" class="btn" data-zoom-in title="放大">放大</button>
+              <button type="button" class="btn" data-zoom-reset title="复位视图">复位</button>
             </div>
+            <p class="pixel-editor__view-hint">绘制区：双指缩放 · 拖动工具下单指平移</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
           </div>
           <div class="pixel-editor__tools-actions">
             <button type="button" class="btn" data-import-image>导入图片</button>
             <input type="file" accept="image/*" hidden data-import-file />
-            <button type="button" class="btn" data-toggle-grid>网格：开</button>
-            <button type="button" class="btn" data-clear>清空当前层</button>
+            <button type="button" class="btn" data-toggle-grid>参考线：开</button>
+            <button type="button" class="btn" data-clear>清空画布</button>
             <button type="button" class="btn" data-apply>应用</button>
             <button type="button" class="btn" data-export>导出 PNG</button>
           </div>
@@ -331,7 +329,11 @@ export function openPixelEditor(onApplied: () => void): void {
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
   const previewSurface = panel.querySelector<HTMLElement>('[data-preview-surface]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
+  const editViewport = panel.querySelector<HTMLElement>('[data-edit-viewport]')!;
+  const editStage = panel.querySelector<HTMLElement>('[data-edit-stage]')!;
   const editSurface = panel.querySelector<HTMLElement>('[data-edit-surface]')!;
+  const brushSizeInput = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
+  const brushSizeLabel = panel.querySelector<HTMLElement>('[data-brush-size-label]')!;
   const toolsScroll = panel.querySelector<HTMLElement>('[data-tools-scroll]')!;
   const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
@@ -386,58 +388,21 @@ const picker = createColorPicker(
     return ctx;
   }
 
-  function renderLayerControls(): void {
-    const list = panel.querySelector<HTMLElement>('[data-layer-list]');
-    if (!list) return;
-    list.replaceChildren();
-    for (let i = 0; i < LAYER_COUNT; i++) {
-      const row = document.createElement('div');
-      row.className = 'pixel-editor__layer-row';
-
-      const pick = document.createElement('button');
-      pick.type = 'button';
-      pick.className = 'btn pixel-editor__layer-pick';
-      pick.textContent = `层 ${i + 1}`;
-      pick.classList.toggle('pixel-editor__layer-pick--active', i === activeLayer);
-      pick.addEventListener('click', () => {
-        if (activeLayer === i) return;
-        activeLayer = i;
-        selection = null;
-        selectStart = null;
-        strokeUndoPushed = false;
-        selBox.hidden = true;
-        renderLayerControls();
-        refreshAll();
-        updateUndoRedoButtons();
-        updateEditorDebug();
-      });
-
-      const vis = document.createElement('button');
-      vis.type = 'button';
-      vis.className = 'btn pixel-editor__layer-vis';
-      vis.textContent = layerVisible[i] ? '显' : '隐';
-      vis.classList.toggle('pixel-editor__layer-vis--off', !layerVisible[i]);
-      vis.title = layerVisible[i] ? '隐藏该层' : '显示该层';
-      vis.addEventListener('click', () => {
-        layerVisible[i] = !layerVisible[i];
-        renderLayerControls();
-        refreshAll();
-      });
-
-      row.append(pick, vis);
-      list.append(row);
-    }
+  function applyEditViewTransform(): void {
+    editStage.style.transform = `translate(${viewPanX}px, ${viewPanY}px) scale(${viewZoom})`;
+    panel.classList.toggle('pixel-editor--pan-mode', tool === 'hand');
   }
 
   function updateEditorDebug(): void {
     if (!debugEl) return;
     debugEl.textContent = [
       `卡牌: ${currentKey}`,
-      `工具: ${tool}`,
-      `图层: ${activeLayer + 1}/${LAYER_COUNT}（撤销仅本层）`,
-      `格宽: ${cellSize}px`,
-      `网格: ${gridCols}×${gridRows}`,
-      `画布: ${gridPixelW}×${gridPixelH}`,
+      `工具: ${tool} · 笔粗: ${brushSize}`,
+      `视图缩放: ${(viewZoom * 100).toFixed(0)}%`,
+      `格宽: ${cellSize}px · 网格: ${gridCols}×${gridRows}`,
+      `画布: ${gridPixelW}×${gridPixelH} · 撤销≤${MAX_UNDO}`,
+      '',
+      formatArtMemoryReport(),
     ].join('\n');
   }
 
@@ -452,7 +417,7 @@ const picker = createColorPicker(
   function syncArtSurfaceSize(): void {
     const size = `${gridPixelW}px`;
     const sizeH = `${gridPixelH}px`;
-    for (const el of [previewSurface, editSurface]) {
+    for (const el of [previewSurface, editStage]) {
       el.style.width = size;
       el.style.height = sizeH;
       el.style.minWidth = size;
@@ -524,38 +489,50 @@ const picker = createColorPicker(
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
     if (!showGrid) return;
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
+    const step = ART_GRID_MAJOR_STEP;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.lineWidth = 1;
 
-    for (let c = 0; c <= gridCols; c++) {
+    const drawV = (c: number, strong: boolean) => {
+      if (c < 0 || c > gridCols) return;
+      ctx.globalAlpha = strong ? 0.55 : 0.22;
       const x = c * cellSize + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, gridPixelH);
       ctx.stroke();
-    }
-
-    for (let r = 0; r <= gridRows; r++) {
+    };
+    const drawH = (r: number, strong: boolean) => {
+      if (r < 0 || r > gridRows) return;
+      ctx.globalAlpha = strong ? 0.55 : 0.22;
       const y = r * cellSize + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(gridPixelW, y);
       ctx.stroke();
-    }
+    };
+
+    for (let c = 0; c <= gridCols; c += step) drawV(c, true);
+    for (let r = 0; r <= gridRows; r += step) drawH(r, true);
+    drawV(0, true);
+    drawV(gridCols, true);
+    drawH(0, true);
+    drawH(gridRows, true);
+    ctx.globalAlpha = 1;
   }
 
   function refreshEditCanvas(): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    drawPackedGridCells(ctx, compositeForDisplay(), cellSize, gridCols, gridRows);
+    drawPackedGridCells(ctx, grid, cellSize, gridCols, gridRows);
   }
 
   function refreshPreview(): void {
     const sq = previewGridArt.getContext('2d');
     if (sq) {
       sq.clearRect(0, 0, gridPixelW, gridPixelH);
-      drawPackedGridCells(sq, compositeForDisplay(), cellSize, gridCols, gridRows);
+      drawPackedGridCells(sq, grid, cellSize, gridCols, gridRows);
     }
   }
 
@@ -618,19 +595,45 @@ const picker = createColorPicker(
     if (next !== 'select') selectStart = null;
     if (next === 'move') updateSelectionBox();
     editCanvas.style.cursor =
-      next === 'move' ? (selection ? 'grab' : 'not-allowed') : 'crosshair';
+      next === 'hand'
+        ? 'grab'
+        : next === 'move'
+          ? selection
+            ? 'grab'
+            : 'not-allowed'
+          : 'crosshair';
+    applyEditViewTransform();
     updateEditorDebug();
   }
 
+  function stampBrush(cx: number, cy: number, colorArgb: number): void {
+    const r = brushSize - 1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (brushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || y < 0 || x >= gridCols || y >= gridRows) continue;
+        recordCellChange(gridIndex(x, y, gridCols), colorArgb);
+      }
+    }
+  }
+
   function paintAt(x: number, y: number, colorArgb: number = paintArgb): void {
-    if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
-    recordCellChange(gridIndex(x, y, gridCols), colorArgb);
+    if (
+      lastPaintCell?.x === x &&
+      lastPaintCell?.y === y &&
+      brushSize === 1
+    ) {
+      return;
+    }
+    stampBrush(x, y, colorArgb);
     lastPaintCell = { x, y };
     refreshAll();
   }
 
   function sampleColor(x: number, y: number): void {
-    const v = getPackedPixel(compositeForDisplay(), x, y, gridCols);
+    const v = getPackedPixel(grid, x, y, gridCols);
     const c = argbToPixel(v);
     if (c) {
       paintColor = c;
@@ -653,14 +656,7 @@ const picker = createColorPicker(
     }
     selection = {
       ...rect,
-      pixels: copyPackedRegion(
-        activeLayerGrid(),
-        rect.x,
-        rect.y,
-        rect.w,
-        rect.h,
-        gridCols
-      ),
+      pixels: copyPackedRegion(grid, rect.x, rect.y, rect.w, rect.h, gridCols),
     };
     updateSelectionBox(rect);
     selectStart = null;
@@ -671,12 +667,11 @@ const picker = createColorPicker(
 
   function commitMove(targetX: number, targetY: number): void {
     if (!selection) return;
-    const layer = activeLayerGrid();
     const tx = clamp(targetX, 0, gridCols - selection.w);
     const ty = clamp(targetY, 0, gridRows - selection.h);
-    clearPackedRegion(layer, selection.x, selection.y, selection.w, selection.h, gridCols, recordCellChange);
+    clearPackedRegion(grid, selection.x, selection.y, selection.w, selection.h, gridCols, recordCellChange);
     pastePackedRegion(
-      layer,
+      grid,
       gridCols,
       gridRows,
       tx,
@@ -691,7 +686,7 @@ const picker = createColorPicker(
       y: ty,
       w: selection.w,
       h: selection.h,
-      pixels: copyPackedRegion(layer, tx, ty, selection.w, selection.h, gridCols),
+      pixels: copyPackedRegion(grid, tx, ty, selection.w, selection.h, gridCols),
     };
     refreshAll();
   }
@@ -726,6 +721,7 @@ const picker = createColorPicker(
   );
 
   const onEditPointerDown = (e: PointerEvent) => {
+    if (tool === 'hand' || navPointers.size >= 2) return;
     e.preventDefault();
     const cell = cellFromEvent(e);
     if (!cell) return;
@@ -744,7 +740,7 @@ const picker = createColorPicker(
     if (tool === 'fill') {
       beginUndoBatch();
       floodFillPacked(
-        activeLayerGrid(),
+        grid,
         gridCols,
         gridRows,
         x,
@@ -882,14 +878,106 @@ const picker = createColorPicker(
     btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
   });
 
-  panel.querySelector('[data-undo]')?.addEventListener('click', () => undoLayer());
-  panel.querySelector('[data-redo]')?.addEventListener('click', () => redoLayer());
+  panel.querySelector('[data-undo]')?.addEventListener('click', () => undo());
+  panel.querySelector('[data-redo]')?.addEventListener('click', () => redo());
+
+  brushSizeInput.addEventListener('input', () => {
+    brushSize = clamp(Number(brushSizeInput.value) || 1, 1, MAX_BRUSH);
+    brushSizeLabel.textContent = String(brushSize);
+    updateEditorDebug();
+  });
+
+  panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
+    viewZoom = clamp(viewZoom * 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
+    applyEditViewTransform();
+    updateEditorDebug();
+  });
+  panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
+    viewZoom = clamp(viewZoom / 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
+    applyEditViewTransform();
+    updateEditorDebug();
+  });
+  panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
+    viewPanX = 0;
+    viewPanY = 0;
+    viewZoom = 1;
+    applyEditViewTransform();
+    updateEditorDebug();
+  });
+
+  editViewport.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      viewZoom = clamp(viewZoom * factor, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
+      applyEditViewTransform();
+      updateEditorDebug();
+    },
+    { passive: false }
+  );
+
+  editViewport.addEventListener('pointerdown', (e) => {
+    navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (navPointers.size === 2) {
+      const pts = [...navPointers.values()];
+      lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      return;
+    }
+    if (tool === 'hand') {
+      e.preventDefault();
+      editViewport.setPointerCapture(e.pointerId);
+      navPanStart = { x: e.clientX, y: e.clientY, panX: viewPanX, panY: viewPanY };
+    }
+  });
+
+  editViewport.addEventListener('pointermove', (e) => {
+    if (!navPointers.has(e.pointerId)) return;
+    navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (navPointers.size === 2) {
+      e.preventDefault();
+      const pts = [...navPointers.values()];
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      if (lastPinchDist > 0) {
+        viewZoom = clamp(
+          viewZoom * (dist / lastPinchDist),
+          MIN_VIEW_ZOOM,
+          MAX_VIEW_ZOOM
+        );
+        applyEditViewTransform();
+        updateEditorDebug();
+      }
+      lastPinchDist = dist;
+      return;
+    }
+
+    if (tool === 'hand' && navPanStart && editViewport.hasPointerCapture(e.pointerId)) {
+      e.preventDefault();
+      viewPanX = navPanStart.panX + (e.clientX - navPanStart.x);
+      viewPanY = navPanStart.panY + (e.clientY - navPanStart.y);
+      applyEditViewTransform();
+    }
+  });
+
+  const onNavPointerEnd = (e: PointerEvent) => {
+    navPointers.delete(e.pointerId);
+    if (navPointers.size < 2) lastPinchDist = 0;
+    navPanStart = null;
+    try {
+      editViewport.releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+  editViewport.addEventListener('pointerup', onNavPointerEnd);
+  editViewport.addEventListener('pointercancel', onNavPointerEnd);
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
     drawReferenceGrid();
     const btn = panel.querySelector('[data-toggle-grid]');
-    if (btn) btn.textContent = showGrid ? '网格：开' : '网格';
+    if (btn) btn.textContent = showGrid ? '参考线：开' : '参考线';
   });
 
   select.addEventListener('change', () => {
@@ -919,7 +1007,7 @@ const picker = createColorPicker(
           cols: gridCols,
           rows: gridRows,
           onConfirm: (grid) => {
-            replaceActiveLayer(gridToPacked(grid));
+            replaceGrid(gridToPacked(grid));
             selection = null;
             selectStart = null;
             refreshAll();
@@ -934,21 +1022,19 @@ const picker = createColorPicker(
   });
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
-    replaceActiveLayer(makeEmptyLayer());
+    replaceGrid(makeEmptyGrid());
     selection = null;
     refreshAll();
   });
 
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
-    const merged = packedToGrid(compositeForDisplay());
-    setCustomArtGrid(currentKey, merged);
+    setCustomArtGrid(currentKey, packedToGrid(grid));
     persistDraft();
     onApplied();
   });
 
   panel.querySelector('[data-export]')?.addEventListener('click', () => {
-    const merged = compositePackedGrids(layers);
-    downloadPackedPng(merged, `${currentKey}.png`);
+    downloadPackedPng(grid, `${currentKey}.png`);
   });
 
   const fullscreenBtn = panel.querySelector<HTMLElement>('[data-fullscreen]')!;
@@ -996,13 +1082,13 @@ const picker = createColorPicker(
     const mod = e.ctrlKey || e.metaKey;
     if (mod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
-      if (e.shiftKey) redoLayer();
-      else undoLayer();
+      if (e.shiftKey) redo();
+      else undo();
       return;
     }
     if (mod && (e.key === 'y' || e.key === 'Y')) {
       e.preventDefault();
-      redoLayer();
+      redo();
       return;
     }
     if (e.key !== 'Escape') return;

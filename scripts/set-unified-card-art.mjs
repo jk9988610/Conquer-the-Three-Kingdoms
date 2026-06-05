@@ -1,5 +1,5 @@
 /**
- * 将所有 BASE_ART 卡牌像素图设为同一套 100×140 网格（中心蓝色方块）。
+ * 将所有 BASE_ART 卡牌像素图设为同一套网格（中心蓝色方块）。
  * 运行: node scripts/set-unified-card-art.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -8,10 +8,15 @@ import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = path.join(ROOT, 'src/art/pixelArt.ts');
+const GRID_CONFIG = path.join(ROOT, 'src/art/gridConfig.ts');
 
 const BLUE = 'rgba(0,78,255,1.00)';
-const ROWS = 140;
-const COLS = 100;
+
+const configSrc = readFileSync(GRID_CONFIG, 'utf8');
+const colsMatch = configSrc.match(/ART_GRID_COLS\s*=\s*(\d+)/);
+const rowsMatch = configSrc.match(/ART_GRID_ROWS\s*=\s*(\d+)/);
+const COLS = colsMatch ? Number(colsMatch[1]) : 200;
+const ROWS = rowsMatch ? Number(rowsMatch[1]) : 280;
 
 const KEYS = [
   'generic',
@@ -50,37 +55,16 @@ function gridToTs(grid) {
   return `[\n${lines.join('\n')}\n  ]`;
 }
 
-const grid = buildGrid();
-const gridTs = gridToTs(grid);
-const baseEntries = KEYS.map((k) => `  '${k}': cloneGrid(UNIFIED_CARD_ART),`).join('\n');
+const gridTs = gridToTs(buildGrid());
+let content = readFileSync(TARGET, 'utf8');
+content = content.replace(
+  /\/\*\* 全卡牌统一像素图：[\s\S]*?\*\/\nconst UNIFIED_CARD_ART: PixelGrid = \[[\s\S]*?\n  \];/,
+  `/** 全卡牌统一像素图：${COLS}×${ROWS}，中心蓝色块（由 scripts/set-unified-card-art.mjs 生成） */\nconst UNIFIED_CARD_ART: PixelGrid = ${gridTs};`
+);
+content = content.replace(
+  /将任意尺寸网格最近邻缩放到标准 \d+×\d+/,
+  `将任意尺寸网格最近邻缩放到标准 ${COLS}×${ROWS}`
+);
 
-const tail = readFileSync(TARGET, 'utf8').match(
-  /const customOverrides[\s\S]*$/
-)?.[0];
-if (!tail) {
-  throw new Error('Could not find tail section in pixelArt.ts');
-}
-
-const head = `import type { PixelArtKey } from '../game/types';
-import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
-
-export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
-
-export type Pixel = string | null;
-export type PixelGrid = Pixel[][];
-
-/** 全卡牌统一像素图：100×140，中心蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
-const UNIFIED_CARD_ART: PixelGrid = ${gridTs};
-
-function cloneGrid(grid: PixelGrid): PixelGrid {
-  return grid.map((row) => [...row]);
-}
-
-const BASE_ART: Record<PixelArtKey, PixelGrid> = {
-${baseEntries}
-};
-
-`;
-
-writeFileSync(TARGET, head + tail);
-console.log(`Updated ${TARGET} — ${KEYS.length} cards use unified ${COLS}×${ROWS} art.`);
+writeFileSync(TARGET, content);
+console.log(`Updated ${TARGET} — unified ${COLS}×${ROWS} art.`);
