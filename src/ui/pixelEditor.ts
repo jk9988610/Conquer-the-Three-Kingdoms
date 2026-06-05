@@ -9,7 +9,8 @@ import {
   type PixelGrid,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
-import { loadImageFromFile, sampleImageToGrid } from '../art/imageToGrid';
+import { loadImageFromFile } from '../art/imageToGrid';
+import { openImageImportModal } from './imageImportModal';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getModalOverlayMount } from './overlayRoot';
@@ -871,11 +872,18 @@ const picker = createColorPicker(
     void (async () => {
       try {
         const img = await loadImageFromFile(file);
-        pushLayerUndo();
-        layers[activeLayer] = sampleImageToGrid(img, gridCols, gridRows);
-        selection = null;
-        selectStart = null;
-        refreshAll();
+        openImageImportModal({
+          image: img,
+          cols: gridCols,
+          rows: gridRows,
+          onConfirm: (grid) => {
+            pushLayerUndo();
+            layers[activeLayer] = grid;
+            selection = null;
+            selectStart = null;
+            refreshAll();
+          },
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : '导入失败';
         window.alert(msg);

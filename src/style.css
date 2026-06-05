@@ -1716,6 +1716,100 @@ body {
   pointer-events: auto;
 }
 
+/* 导入图片裁剪弹窗 */
+.img-import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.72);
+  touch-action: manipulation;
+}
+
+.img-import-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(96vw, 520px);
+  max-height: min(92dvh, 640px);
+  background: var(--tcg-surface);
+  border: 1px solid var(--tcg-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.img-import-modal__head {
+  flex-shrink: 0;
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--tcg-border);
+}
+
+.img-import-modal__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.img-import-modal__hint {
+  margin: 6px 0 0;
+  font-size: 0.68rem;
+  color: var(--tcg-muted);
+  line-height: 1.35;
+}
+
+.img-import-modal__viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: min(52dvh, 360px);
+  overflow: hidden;
+  touch-action: none;
+  background: #0c1018;
+}
+
+.img-import-modal__stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.img-import-modal__img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.img-import-modal__frame {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px dashed rgba(236, 196, 68, 0.95);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.58);
+  pointer-events: none;
+}
+
+.img-import-modal__actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--tcg-border);
+  background: #172030;
+}
+
+.img-import-modal__actions [data-confirm] {
+  border-color: var(--tcg-accent);
+  color: var(--tcg-accent);
+}
+
 .card-brief__name {
   display: block;
   margin-bottom: 4px;
