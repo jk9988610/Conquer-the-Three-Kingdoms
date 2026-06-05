@@ -3,96 +3,47 @@ import type { PixelArtKey } from '../game/types';
 export type Pixel = string | null;
 export type PixelGrid = Pixel[][];
 
-const R = '#c44';
-const D = '#422';
-const G = '#6a8';
-const B = '#48c';
-const Y = '#ec4';
-const W = '#fff';
-const K = '#222';
-const P = '#e8589a';
-const H = '#8b5';
-const GL = '#5ecf7a';
-const DK = '#3a2518';
+/** 全卡牌统一像素图：16×22，中心 4×4 蓝色块（由 scripts/set-unified-card-art.mjs 生成） */
+const UNIFIED_CARD_ART: PixelGrid = [
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
+    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
+    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
+    [null, null, null, null, null, null, null, "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", "rgba(0,78,255,1.00)", null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+    [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+  ];
+
+function cloneGrid(grid: PixelGrid): PixelGrid {
+  return grid.map((row) => [...row]);
+}
 
 const BASE_ART: Record<PixelArtKey, PixelGrid> = {
-  generic: [
-    [null, null, G, G, G, G, null, null],
-    [null, G, G, G, G, G, G, null],
-    [G, G, W, G, G, W, G, G],
-    [G, G, G, G, G, G, G, G],
-    [null, G, G, G, G, G, G],
-    [null, null, G, G, G, null],
-  ],
-  lvbu: [
-    [null, null, Y, Y, Y, null, null, null],
-    [null, Y, R, R, R, Y, null, null],
-    [null, R, W, K, W, R, null, null],
-    [null, R, R, R, R, R, null, null],
-    [D, R, R, R, R, R, D, null],
-    [D, D, R, R, R, D, D, null],
-    [null, K, K, null, K, K, null, null],
-    [null, K, K, null, K, K, null, null],
-  ],
-  liu: [
-    [null, G, G, G, G, null],
-    [G, W, G, G, W, G],
-    [G, G, G, G, G, G],
-    [null, G, H, H, G, null],
-    [null, G, G, G, null],
-  ],
-  guan: [
-    [null, G, G, G, null],
-    [G, G, W, G, G],
-    [G, R, G, R, G],
-    [null, G, G, G, null],
-    [null, G, B, G, null],
-  ],
-  zhang: [
-    [null, K, K, K, null],
-    [K, W, K, W, K],
-    [K, K, R, K, K],
-    [null, K, K, K, null],
-    [K, K, null, K, K],
-  ],
-  'heal-potion': [
-    [null, null, P, P, P, null, null],
-    [null, P, W, W, W, P, null],
-    [null, P, B, B, B, P, null],
-    [null, P, B, B, B, P, null],
-    [null, P, P, P, P, P, null],
-    [null, null, GL, GL, GL, null, null],
-    [null, null, DK, DK, DK, null, null],
-  ],
-  fangtian: [
-    [null, null, Y, null, null],
-    [null, Y, Y, Y, null],
-    [null, null, K, null, null],
-    [null, null, K, null, null],
-    [K, K, K, K, K],
-    [null, null, K, null, null],
-  ],
-  'attack-red': [
-    [null, R, R, R, null],
-    [R, R, W, R, R],
-    [R, W, R, W, R],
-    [null, R, R, R, null],
-    [null, null, K, null, null],
-  ],
-  'attack-orange': [
-    [null, Y, Y, null],
-    [Y, W, Y, Y],
-    [Y, Y, Y, null],
-    [null, K, K, null],
-    [K, null, null, K],
-  ],
-  'attack-purple': [
-    [null, P, P, P, null],
-    [P, W, P, P, null],
-    [P, P, W, P, P],
-    [null, P, P, null],
-    [null, K, K, null],
-  ],
+  'generic': cloneGrid(UNIFIED_CARD_ART),
+  'lvbu': cloneGrid(UNIFIED_CARD_ART),
+  'liu': cloneGrid(UNIFIED_CARD_ART),
+  'guan': cloneGrid(UNIFIED_CARD_ART),
+  'zhang': cloneGrid(UNIFIED_CARD_ART),
+  'heal-potion': cloneGrid(UNIFIED_CARD_ART),
+  'fangtian': cloneGrid(UNIFIED_CARD_ART),
+  'attack-red': cloneGrid(UNIFIED_CARD_ART),
+  'attack-orange': cloneGrid(UNIFIED_CARD_ART),
+  'attack-purple': cloneGrid(UNIFIED_CARD_ART),
 };
 
 const customOverrides: Partial<Record<PixelArtKey, PixelGrid>> = {};
