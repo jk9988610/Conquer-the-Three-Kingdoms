@@ -227,9 +227,14 @@ export function openPixelEditor(onApplied: () => void): void {
       <div class="pixel-editor__module pixel-editor__module--preview" data-col-preview>
         <div class="pixel-editor__module-title">预览</div>
         <div class="pixel-editor__module-body" data-preview-panel>
-          <div class="pixel-editor__grid-frame" data-preview-frame>
-            <div class="pixel-editor__grid-inner" data-preview-inner>
-              <canvas data-preview-grid-art></canvas>
+          <div class="pixel-editor__canvas-shell" data-preview-shell>
+            <div class="pixel-editor__ruler-corner pixel-editor__ruler-corner--ghost" aria-hidden="true"></div>
+            <div class="pixel-editor__ruler-ghost pixel-editor__ruler-ghost--top" aria-hidden="true"></div>
+            <div class="pixel-editor__ruler-ghost pixel-editor__ruler-ghost--left" aria-hidden="true"></div>
+            <div class="pixel-editor__grid-frame" data-preview-frame>
+              <div class="pixel-editor__grid-inner" data-preview-inner>
+                <canvas data-preview-grid-art></canvas>
+              </div>
             </div>
           </div>
         </div>
@@ -258,26 +263,28 @@ export function openPixelEditor(onApplied: () => void): void {
       <div class="pixel-editor__aside" data-col-side>
         <div class="pixel-editor__module pixel-editor__module--tools">
           <div class="pixel-editor__module-title">工具</div>
-          <div class="pixel-editor__module-body pixel-editor__tools-panel">
-            <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
-            <div class="pixel-editor__tools-zoom">
-              <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
+          <div class="pixel-editor__module-body pixel-editor__module-body--tools">
+            <div class="pixel-editor__tools-scroll" data-tools-scroll>
+              <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
+              <div class="pixel-editor__tools-zoom">
+                <button type="button" class="btn pixel-editor__zoom-mode" data-zoom-mode-toggle title="单指拖动、双指缩放网格">缩放</button>
+              </div>
+              <div class="pixel-editor__tools-grid">
+                <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
+              </div>
+              <label class="pixel-editor__brush-size">
+                <span>画笔粗细</span>
+                <input type="range" data-brush-size min="1" max="8" value="1" />
+                <span data-brush-size-label>1</span>
+              </label>
+              <div class="pixel-editor__color-block" data-color-picker></div>
+              <div class="pixel-editor__presets" data-presets></div>
             </div>
-            <div class="pixel-editor__tools-grid">
-              <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
-            </div>
-            <label class="pixel-editor__brush-size">
-              <span>画笔粗细</span>
-              <input type="range" data-brush-size min="1" max="8" value="1" />
-              <span data-brush-size-label>1</span>
-            </label>
-            <div class="pixel-editor__color-block" data-color-picker></div>
-            <div class="pixel-editor__presets" data-presets></div>
             <div class="pixel-editor__tools-actions">
               <button type="button" class="btn" data-import-image>导入图片</button>
               <input type="file" accept="image/*" hidden data-import-file />
@@ -300,8 +307,13 @@ export function openPixelEditor(onApplied: () => void): void {
 
   const select = panel.querySelector<HTMLSelectElement>('[data-select]')!;
   const bodyEl = panel.querySelector<HTMLElement>('[data-body]')!;
+  const previewModule = panel.querySelector<HTMLElement>('[data-col-preview]')!;
+  const editModule = panel.querySelector<HTMLElement>('[data-col-edit]')!;
+  const asideEl = panel.querySelector<HTMLElement>('[data-col-side]')!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
+  const previewShell = panel.querySelector<HTMLElement>('[data-preview-shell]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
+  const toolsScroll = panel.querySelector<HTMLElement>('[data-tools-scroll]')!;
   const editScroll = panel.querySelector<HTMLElement>('[data-edit-scroll]')!;
   const editScrollInner = panel.querySelector<HTMLElement>('[data-edit-scroll-inner]')!;
   const previewFrame = panel.querySelector<HTMLElement>('[data-preview-frame]')!;
@@ -540,12 +552,36 @@ const picker = createColorPicker(
     const fitMin = fitGridToViewport(viewportW, viewportH, MIN_CELL_PX);
     baseCellSize = fitMin.cell;
 
+    const shellW = viewportW + RULER_PX;
+    const shellH = viewportH + RULER_PX;
+
     previewFrame.style.width = `${viewportW}px`;
     previewFrame.style.height = `${viewportH}px`;
-    editScroll.style.width = `${viewportW + RULER_PX}px`;
-    editScroll.style.height = `${viewportH + RULER_PX}px`;
+    editScroll.style.width = `${shellW}px`;
+    editScroll.style.height = `${shellH}px`;
+
+    if (previewShell) {
+      previewShell.style.width = `${shellW}px`;
+      previewShell.style.height = `${shellH}px`;
+    }
+
+    panel.style.setProperty('--pe-shell-w', `${shellW}px`);
+    panel.style.setProperty('--pe-shell-h', `${shellH}px`);
+    panel.style.setProperty('--pe-ruler-px', `${RULER_PX}px`);
 
     layoutGrid();
+    syncModuleChrome(shellW, shellH);
+  }
+
+  /** 预览/绘制模块外框贴合画布区（含标尺占位），宽高等同 */
+  function syncModuleChrome(shellW: number, _shellH: number): void {
+    const outerW = shellW + 12;
+    for (const mod of [previewModule, editModule]) {
+      mod.style.width = `${outerW}px`;
+      mod.style.maxWidth = `${outerW}px`;
+      mod.style.flex = '0 0 auto';
+    }
+    asideEl.style.width = `${Math.max(168, outerW)}px`;
   }
 
   /** 缩放只改格宽；行列固定；参考格线仅画布外 GRID_PAD_CELLS 格 */
@@ -612,7 +648,6 @@ const picker = createColorPicker(
     if (!showGrid) return;
 
     const { x: ox, y: oy } = artCanvasOriginInWorkspace();
-    const step = rulerLabelStep(cellSize);
     const cMin = -GRID_PAD_CELLS;
     const cMax = gridCols + GRID_PAD_CELLS - 1;
     const rMin = -GRID_PAD_CELLS;
@@ -622,13 +657,11 @@ const picker = createColorPicker(
     const y0 = oy + rMin * cellSize;
     const y1 = oy + (rMax + 1) * cellSize;
 
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
+    ctx.lineWidth = 1.5;
+
     for (let c = cMin; c <= cMax; c++) {
       const x = ox + c * cellSize + 0.5;
-      const major = c % step === 0;
-      ctx.strokeStyle = major
-        ? 'rgba(255,255,255,0.42)'
-        : 'rgba(255,255,255,0.14)';
-      ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x, y0);
       ctx.lineTo(x, y1);
@@ -637,51 +670,57 @@ const picker = createColorPicker(
 
     for (let r = rMin; r <= rMax; r++) {
       const y = oy + r * cellSize + 0.5;
-      const major = r % step === 0;
-      ctx.strokeStyle = major
-        ? 'rgba(255,255,255,0.42)'
-        : 'rgba(255,255,255,0.14)';
       ctx.beginPath();
       ctx.moveTo(x0, y);
       ctx.lineTo(x1, y);
       ctx.stroke();
     }
 
-    ctx.strokeStyle = 'rgba(201, 162, 39, 0.75)';
+    ctx.strokeStyle = 'rgba(201, 162, 39, 0.85)';
     ctx.lineWidth = 2;
     ctx.strokeRect(ox + 0.5, oy + 0.5, gridPixelW, gridPixelH);
   }
 
-  /** 标尺 0,0 对齐可绘区左上角（金色画布框） */
+  /** 标尺覆盖外延格；0,0 对齐可绘区左上角（金色框） */
   function buildRulers(): void {
     const step = rulerLabelStep(cellSize);
-    const pad = canvasPadPx();
+    const cMin = -GRID_PAD_CELLS;
+    const rMin = -GRID_PAD_CELLS;
+    const tickCols = gridCols + 2 * GRID_PAD_CELLS;
+    const tickRows = gridRows + 2 * GRID_PAD_CELLS;
+    const contentW = tickCols * cellSize;
+    const contentH = tickRows * cellSize;
+    const { x: ox, y: oy } = artCanvasOriginInWorkspace();
 
     rulerTop.innerHTML = '';
     rulerLeft.innerHTML = '';
-    rulerTop.style.width = `${gridCols * cellSize}px`;
-    rulerLeft.style.height = `${gridRows * cellSize}px`;
-    rulerTop.style.paddingLeft = `${pad + panOffset.x}px`;
-    rulerLeft.style.paddingTop = `${pad + panOffset.y}px`;
+    rulerTop.style.width = `${contentW}px`;
+    rulerTop.style.minWidth = `${contentW}px`;
+    rulerLeft.style.height = `${contentH}px`;
+    rulerLeft.style.minHeight = `${contentH}px`;
+    rulerTop.style.paddingLeft = `${ox + cMin * cellSize - RULER_PX}px`;
+    rulerLeft.style.paddingTop = `${oy + rMin * cellSize - RULER_PX}px`;
 
-    for (let c = 0; c < gridCols; c++) {
+    for (let i = 0; i < tickCols; i++) {
+      const c = i + cMin;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.width = `${cellSize}px`;
-      if (c % step === 0) {
+      if (c >= 0 && c < gridCols && c % step === 0) {
         s.textContent = String(c);
-        s.classList.add('pixel-editor__ruler-tick--major');
+        s.classList.add('pixel-editor__ruler-tick--labeled');
       }
       rulerTop.append(s);
     }
 
-    for (let r = 0; r < gridRows; r++) {
+    for (let i = 0; i < tickRows; i++) {
+      const r = i + rMin;
       const s = document.createElement('span');
       s.className = 'pixel-editor__ruler-tick';
       s.style.height = `${cellSize}px`;
-      if (r % step === 0) {
+      if (r >= 0 && r < gridRows && r % step === 0) {
         s.textContent = String(r);
-        s.classList.add('pixel-editor__ruler-tick--major');
+        s.classList.add('pixel-editor__ruler-tick--labeled');
       }
       rulerLeft.append(s);
     }
@@ -849,9 +888,24 @@ const picker = createColorPicker(
     el.addEventListener('contextmenu', blockBrowserGesture);
   }
 
+  if (toolsScroll) {
+    toolsScroll.addEventListener(
+      'touchmove',
+      (e) => e.stopPropagation(),
+      { passive: true }
+    );
+    toolsScroll.addEventListener(
+      'wheel',
+      (e) => e.stopPropagation(),
+      { passive: true }
+    );
+  }
+
   panel.addEventListener(
     'touchmove',
     (e) => {
+      const t = e.target as Node;
+      if (toolsScroll?.contains(t)) return;
       if (pointerDrawing || zoomMode) e.preventDefault();
     },
     { passive: false }
