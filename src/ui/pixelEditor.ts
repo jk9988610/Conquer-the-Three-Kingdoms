@@ -21,7 +21,7 @@ import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { getModalOverlayMount } from './overlayRoot';
 
-const MIN_CELL_PX = 2;
+const MIN_CELL_PX = 1;
 const PANE_INSET_PX = 4;
 const LAYER_COUNT = 3;
 const MAX_UNDO = 5;
