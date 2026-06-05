@@ -54,6 +54,80 @@ function toPixelColor(
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+export interface ImageCropParams {
+  panX: number;
+  panY: number;
+  userScale: number;
+  baseScale: number;
+  frameLeft: number;
+  frameTop: number;
+  frameWidth: number;
+  frameHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+function readImagePixels(image: HTMLImageElement): {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+} {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('无法读取图片');
+  ctx.drawImage(image, 0, 0);
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return { data, width, height };
+}
+
+/** 按弹窗中的平移/缩放与虚线框区域采样到网格 */
+export function sampleImageWithCrop(
+  image: HTMLImageElement,
+  cols: number,
+  rows: number,
+  crop: ImageCropParams,
+  options: ImageToGridOptions = {}
+): PixelGrid {
+  const alphaThreshold = options.alphaThreshold ?? DEFAULT_ALPHA_THRESHOLD;
+  const nw = image.naturalWidth;
+  const nh = image.naturalHeight;
+  if (nw < 1 || nh < 1) throw new Error('图片尺寸无效');
+
+  const { data, width: iw, height: ih } = readImagePixels(image);
+  const displayW = nw * crop.baseScale * crop.userScale;
+  const displayH = nh * crop.baseScale * crop.userScale;
+  const centerX = crop.viewportWidth / 2 + crop.panX;
+  const centerY = crop.viewportHeight / 2 + crop.panY;
+  const grid: PixelGrid = [];
+
+  for (let gy = 0; gy < rows; gy++) {
+    const row: Pixel[] = [];
+    for (let gx = 0; gx < cols; gx++) {
+      const vx =
+        crop.frameLeft + ((gx + 0.5) / cols) * crop.frameWidth;
+      const vy =
+        crop.frameTop + ((gy + 0.5) / rows) * crop.frameHeight;
+      const u = (vx - centerX) / displayW + 0.5;
+      const v = (vy - centerY) / displayH + 0.5;
+      if (u < 0 || u > 1 || v < 0 || v > 1) {
+        row.push(null);
+        continue;
+      }
+      const px = Math.min(iw - 1, Math.floor(u * iw));
+      const py = Math.min(ih - 1, Math.floor(v * ih));
+      const i = (py * iw + px) * 4;
+      row.push(
+        toPixelColor(data[i], data[i + 1], data[i + 2], data[i + 3], alphaThreshold)
+      );
+    }
+    grid.push(row);
+  }
+
+  return grid;
+}
+
 /**
  * 中心裁剪到目标宽高比后，按格中心点取色（最近邻，避免色块边缘混杂）。
  */
