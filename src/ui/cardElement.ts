@@ -16,12 +16,17 @@ export function createPixelArtCanvas(
   height: number
 ): HTMLCanvasElement {
   const grid = getArtGrid(artKey);
-  const { width: cw, height: ch } = gridCanvasPixelSize(grid, width, height);
+  const { width: cw, height: ch } = gridCanvasPixelSize(
+    grid,
+    width,
+    height,
+    'cover'
+  );
   const canvas = document.createElement('canvas');
   canvas.width = cw;
   canvas.height = ch;
-  canvas.style.width = `${cw}px`;
-  canvas.style.height = `${ch}px`;
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
   const ctx = canvas.getContext('2d');
   if (ctx) {
     ctx.imageSmoothingEnabled = false;
@@ -141,7 +146,7 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
       ctx.drawImage(srcCanvas, 0, 0);
     } else {
       const grid = getArtGrid(artKey);
-      const { width: cw, height: ch } = gridCanvasPixelSize(grid, w, h);
+      const { width: cw, height: ch } = gridCanvasPixelSize(grid, w, h, 'cover');
       canvas.width = cw;
       canvas.height = ch;
       ctx.clearRect(0, 0, cw, ch);

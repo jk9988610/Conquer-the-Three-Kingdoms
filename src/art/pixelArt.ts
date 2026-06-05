@@ -174,13 +174,20 @@ function parsePixelColor(c: string): { r: number; g: number; b: number; a: numbe
 export function gridCanvasPixelSize(
   grid: PixelGrid,
   displayWidth: number,
-  displayHeight: number
+  displayHeight: number,
+  mode: 'fit' | 'cover' = 'fit'
 ): { width: number; height: number; cell: number } {
   const { cols, rows } = gridDimensions(grid);
-  const cell = Math.max(
-    1,
-    Math.floor(Math.min(displayWidth / cols, displayHeight / rows))
-  );
+  const cell =
+    mode === 'cover'
+      ? Math.max(
+          1,
+          Math.ceil(Math.max(displayWidth / cols, displayHeight / rows))
+        )
+      : Math.max(
+          1,
+          Math.floor(Math.min(displayWidth / cols, displayHeight / rows))
+        );
   return { width: cols * cell, height: rows * cell, cell };
 }
 
