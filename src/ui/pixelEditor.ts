@@ -97,7 +97,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let paintColor: Pixel = 'rgba(255,255,255,1)';
   let paintArgb = pixelToArgb(paintColor);
   let brushSize = 1;
-  let tool: Tool = 'paint';
+  let tool: Tool = 'hand';
   let showGrid = true;
   let viewPanX = 0;
   let viewPanY = 0;
@@ -275,7 +275,7 @@ export function openPixelEditor(onApplied: () => void): void {
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
             <div class="pixel-editor__tools-grid">
-              <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="paint">画笔</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="paint">画笔</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
@@ -290,12 +290,12 @@ export function openPixelEditor(onApplied: () => void): void {
               <span data-brush-size-label>1</span>
             </label>
             <div class="pixel-editor__tools-zoom">
-              <button type="button" class="btn pixel-editor__tool" data-tool="hand" title="单指拖动平移">拖动</button>
+              <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="hand" title="单指拖动平移">拖动</button>
               <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
               <button type="button" class="btn" data-zoom-in title="放大">放大</button>
               <button type="button" class="btn" data-zoom-reset title="复位视图">复位</button>
             </div>
-            <p class="pixel-editor__view-hint">绘制区：双指缩放 · 拖动工具下单指平移</p>
+            <p class="pixel-editor__view-hint">绘制区：仅「拖动」工具下可平移/缩放画布</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
           </div>
@@ -388,9 +388,13 @@ const picker = createColorPicker(
     return ctx;
   }
 
+  function canPanZoomView(): boolean {
+    return tool === 'hand';
+  }
+
   function applyEditViewTransform(): void {
     editStage.style.transform = `translate(${viewPanX}px, ${viewPanY}px) scale(${viewZoom})`;
-    panel.classList.toggle('pixel-editor--pan-mode', tool === 'hand');
+    panel.classList.toggle('pixel-editor--pan-mode', canPanZoomView());
   }
 
   function updateEditorDebug(): void {
@@ -888,16 +892,19 @@ const picker = createColorPicker(
   });
 
   panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
+    if (!canPanZoomView()) return;
     viewZoom = clamp(viewZoom * 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
     applyEditViewTransform();
     updateEditorDebug();
   });
   panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
+    if (!canPanZoomView()) return;
     viewZoom = clamp(viewZoom / 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
     applyEditViewTransform();
     updateEditorDebug();
   });
   panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
+    if (!canPanZoomView()) return;
     viewPanX = 0;
     viewPanY = 0;
     viewZoom = 1;
@@ -908,6 +915,7 @@ const picker = createColorPicker(
   editViewport.addEventListener(
     'wheel',
     (e) => {
+      if (!canPanZoomView()) return;
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
       viewZoom = clamp(viewZoom * factor, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
@@ -919,12 +927,12 @@ const picker = createColorPicker(
 
   editViewport.addEventListener('pointerdown', (e) => {
     navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (navPointers.size === 2) {
+    if (navPointers.size === 2 && canPanZoomView()) {
       const pts = [...navPointers.values()];
       lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
       return;
     }
-    if (tool === 'hand') {
+    if (canPanZoomView()) {
       e.preventDefault();
       editViewport.setPointerCapture(e.pointerId);
       navPanStart = { x: e.clientX, y: e.clientY, panX: viewPanX, panY: viewPanY };
@@ -935,7 +943,7 @@ const picker = createColorPicker(
     if (!navPointers.has(e.pointerId)) return;
     navPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    if (navPointers.size === 2) {
+    if (navPointers.size === 2 && canPanZoomView()) {
       e.preventDefault();
       const pts = [...navPointers.values()];
       const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
@@ -952,7 +960,7 @@ const picker = createColorPicker(
       return;
     }
 
-    if (tool === 'hand' && navPanStart && editViewport.hasPointerCapture(e.pointerId)) {
+    if (canPanZoomView() && navPanStart && editViewport.hasPointerCapture(e.pointerId)) {
       e.preventDefault();
       viewPanX = navPanStart.panX + (e.clientX - navPanStart.x);
       viewPanY = navPanStart.panY + (e.clientY - navPanStart.y);
@@ -1111,6 +1119,7 @@ const picker = createColorPicker(
     select.value = lastKey;
   }
   loadArtForKey(currentKey);
+  setTool('hand');
   layoutGrid();
 
   overlay.append(panel);

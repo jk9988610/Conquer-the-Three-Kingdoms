@@ -96,6 +96,7 @@ function emptyPixelGrid(): PixelGrid {
 }
 
 const LEGACY_GRID_SIZES: [number, number][] = [
+  [200, 280],
   [100, 140],
   [50, 70],
   [25, 35],

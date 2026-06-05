@@ -816,6 +816,11 @@ body {
   box-sizing: border-box;
 }
 
+.pixel-editor__pane--preview .pixel-editor__pane-fill {
+  align-items: center;
+  justify-content: center;
+}
+
 .pixel-editor__art-surface {
   position: relative;
   flex-shrink: 0;
