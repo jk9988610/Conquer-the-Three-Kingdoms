@@ -133,7 +133,21 @@ function parsePixelColor(c: string): { r: number; g: number; b: number; a: numbe
   };
 }
 
-/** 将像素网格铺满画布；支持 #rgb / #rrggbb / #rrggbbaa / rgba() */
+/** 在显示区域内取整格宽，避免缩放时出现色块边缘虚线/缝隙 */
+export function gridCanvasPixelSize(
+  grid: PixelGrid,
+  displayWidth: number,
+  displayHeight: number
+): { width: number; height: number; cell: number } {
+  const { cols, rows } = gridDimensions(grid);
+  const cell = Math.max(
+    1,
+    Math.floor(Math.min(displayWidth / cols, displayHeight / rows))
+  );
+  return { width: cols * cell, height: rows * cell, cell };
+}
+
+/** 将像素网格铺满画布；每格等宽等高整数像素，支持 #rgb / #rrggbb / rgba() */
 export function drawGridToCanvas(
   ctx: CanvasRenderingContext2D,
   grid: PixelGrid,
@@ -141,8 +155,11 @@ export function drawGridToCanvas(
   height: number
 ): void {
   const { cols, rows } = gridDimensions(grid);
-  const cellW = width / cols;
-  const cellH = height / rows;
+  const cell = Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
+  const drawW = cols * cell;
+  const drawH = rows * cell;
+  const ox = Math.floor((width - drawW) / 2);
+  const oy = Math.floor((height - drawH) / 2);
   ctx.imageSmoothingEnabled = false;
 
   for (let y = 0; y < grid.length; y++) {
@@ -152,11 +169,7 @@ export function drawGridToCanvas(
       if (!c) continue;
       const { r, g, b, a } = parsePixelColor(c);
       ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-      const px = Math.round(x * cellW);
-      const py = Math.round(y * cellH);
-      const px2 = Math.round((x + 1) * cellW);
-      const py2 = Math.round((y + 1) * cellH);
-      ctx.fillRect(px, py, Math.max(1, px2 - px), Math.max(1, py2 - py));
+      ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
     }
   }
 }

@@ -152,7 +152,6 @@ export function openPixelEditor(onApplied: () => void): void {
   let lastPaintCell: { x: number; y: number } | null = null;
   let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
-  let brushSize = 1;
   let cellSize = 4;
   let gridPixelW = gridCols * cellSize;
   let gridPixelH = gridRows * cellSize;
@@ -285,14 +284,9 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
             <div class="pixel-editor__layers">
-              <div class="pixel-editor__layers-title">图层</div>
+              <div class="pixel-editor__layers-title">图层（撤销/重做仅当前层）</div>
               <div class="pixel-editor__layer-list" data-layer-list></div>
             </div>
-            <label class="pixel-editor__brush-size">
-              <span>画笔粗细</span>
-              <input type="range" data-brush-size min="1" max="8" value="1" />
-              <span data-brush-size-label>1</span>
-            </label>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
           </div>
@@ -399,6 +393,7 @@ const picker = createColorPicker(
         activeLayer = i;
         selection = null;
         selectStart = null;
+        strokeUndoPushed = false;
         selBox.hidden = true;
         renderLayerControls();
         refreshAll();
@@ -428,8 +423,7 @@ const picker = createColorPicker(
     debugEl.textContent = [
       `卡牌: ${currentKey}`,
       `工具: ${tool}`,
-      `图层: ${activeLayer + 1}/${LAYER_COUNT}`,
-      `画笔: ${brushSize}`,
+      `图层: ${activeLayer + 1}/${LAYER_COUNT}（撤销仅本层）`,
       `格宽: ${cellSize}px`,
       `网格: ${gridCols}×${gridRows}`,
       `画布: ${gridPixelW}×${gridPixelH}`,
@@ -620,24 +614,8 @@ const picker = createColorPicker(
 
   function paintAt(x: number, y: number, color: Pixel = paintColor): void {
     const layer = activeLayerGrid();
-    const r = Math.floor(brushSize / 2);
-    let changed = false;
-    for (let dy = -r; dy <= brushSize - 1 - r; dy++) {
-      for (let dx = -r; dx <= brushSize - 1 - r; dx++) {
-        const cx = x + dx;
-        const cy = y + dy;
-        if (cx < 0 || cy < 0 || cx >= gridCols || cy >= gridRows) continue;
-        if (lastPaintCell?.x === cx && lastPaintCell?.y === cy && brushSize === 1) {
-          continue;
-        }
-        layer[cy][cx] = color;
-        changed = true;
-      }
-    }
-    if (!changed && brushSize === 1) {
-      if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
-      layer[y][x] = color;
-    }
+    if (lastPaintCell?.x === x && lastPaintCell?.y === y) return;
+    layer[y][x] = color;
     lastPaintCell = { x, y };
     refreshAll();
   }
@@ -862,14 +840,6 @@ const picker = createColorPicker(
 
   panel.querySelector('[data-undo]')?.addEventListener('click', () => undoLayer());
   panel.querySelector('[data-redo]')?.addEventListener('click', () => redoLayer());
-
-  const brushRange = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
-  const brushLabel = panel.querySelector('[data-brush-size-label]')!;
-  brushRange.addEventListener('input', () => {
-    brushSize = clamp(Number(brushRange.value) || 1, 1, 8);
-    brushLabel.textContent = String(brushSize);
-    updateEditorDebug();
-  });
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
