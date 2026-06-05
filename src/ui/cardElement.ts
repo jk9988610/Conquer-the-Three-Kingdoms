@@ -1,4 +1,4 @@
-import { drawPixelArt } from '../art/pixelArt';
+import { drawPixelArt, getArtGrid, gridCanvasPixelSize } from '../art/pixelArt';
 import type { CardInstance, PixelArtKey } from '../game/types';
 import type { TcgScaledSize } from '../tcg/dimensions';
 
@@ -15,13 +15,17 @@ export function createPixelArtCanvas(
   width: number,
   height: number
 ): HTMLCanvasElement {
+  const grid = getArtGrid(artKey);
+  const { width: cw, height: ch } = gridCanvasPixelSize(grid, width, height);
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = cw;
+  canvas.height = ch;
+  canvas.style.width = `${cw}px`;
+  canvas.style.height = `${ch}px`;
   const ctx = canvas.getContext('2d');
   if (ctx) {
     ctx.imageSmoothingEnabled = false;
-    drawPixelArt(ctx, artKey, width, height, { transparent: true });
+    drawPixelArt(ctx, artKey, cw, ch, { transparent: true });
   }
   return canvas;
 }
@@ -129,11 +133,19 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
   canvas.className = 'tcg-card-ghost__art';
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.clearRect(0, 0, w, h);
+    ctx.imageSmoothingEnabled = false;
     if (srcCanvas instanceof HTMLCanvasElement) {
-      ctx.drawImage(srcCanvas, 0, 0, w, h);
+      canvas.width = srcCanvas.width;
+      canvas.height = srcCanvas.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(srcCanvas, 0, 0);
     } else {
-      drawPixelArt(ctx, artKey, w, h, { transparent: true });
+      const grid = getArtGrid(artKey);
+      const { width: cw, height: ch } = gridCanvasPixelSize(grid, w, h);
+      canvas.width = cw;
+      canvas.height = ch;
+      ctx.clearRect(0, 0, cw, ch);
+      drawPixelArt(ctx, artKey, cw, ch, { transparent: true });
     }
   }
 

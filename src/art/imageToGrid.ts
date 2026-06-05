@@ -55,7 +55,7 @@ function toPixelColor(
 }
 
 /**
- * 中心裁剪到目标宽高比后，缩放到 cols×rows 并逐格取色（双线性缩小近似区域平均）。
+ * 中心裁剪到目标宽高比后，按格中心点取色（最近邻，避免色块边缘混杂）。
  */
 export function sampleImageToGrid(
   image: HTMLImageElement,
@@ -73,21 +73,25 @@ export function sampleImageToGrid(
   const { sx, sy, sw, sh } = centerCropRect(imgW, imgH, cols / rows);
 
   const canvas = document.createElement('canvas');
-  canvas.width = cols;
-  canvas.height = rows;
+  const tw = Math.max(cols, Math.round(sw));
+  const th = Math.max(rows, Math.round(sh));
+  canvas.width = tw;
+  canvas.height = th;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('无法创建画布');
 
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, cols, rows);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, tw, th);
 
-  const { data } = ctx.getImageData(0, 0, cols, rows);
+  const { data } = ctx.getImageData(0, 0, tw, th);
   const grid: PixelGrid = [];
 
   for (let y = 0; y < rows; y++) {
     const row: Pixel[] = [];
     for (let x = 0; x < cols; x++) {
-      const i = (y * cols + x) * 4;
+      const px = Math.min(tw - 1, Math.floor(((x + 0.5) * tw) / cols));
+      const py = Math.min(th - 1, Math.floor(((y + 0.5) * th) / rows));
+      const i = (py * tw + px) * 4;
       row.push(
         toPixelColor(data[i], data[i + 1], data[i + 2], data[i + 3], alphaThreshold)
       );
