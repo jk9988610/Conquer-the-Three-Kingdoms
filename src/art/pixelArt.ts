@@ -3,7 +3,7 @@ import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 import {
   clonePackedGrid,
   createDefaultCardArtPacked,
-  drawPackedToCanvas,
+  drawPackedDisplayToCanvas,
   gridDrawLayout,
   gridToPacked,
   packedToGrid,
@@ -13,7 +13,12 @@ import {
 
 export type { GridDrawMode } from './packedGrid';
 
-export { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+export {
+  ART_DISPLAY_COLS,
+  ART_DISPLAY_ROWS,
+  ART_GRID_COLS,
+  ART_GRID_ROWS,
+} from './gridConfig';
 
 export type Pixel = string | null;
 export type PixelGrid = Pixel[][];
@@ -248,5 +253,17 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  drawPackedToCanvas(ctx, getArtPacked(key), width, height, ART_GRID_COLS, ART_GRID_ROWS, mode);
+  drawPackedDisplayToCanvas(ctx, getArtPacked(key), width, height, mode);
+}
+
+/** 编辑器预览：与卡面相同的 100×140 展示网格 */
+export function drawPackedPreview(
+  ctx: CanvasRenderingContext2D,
+  packed: PackedGrid,
+  width: number,
+  height: number,
+  cols = ART_GRID_COLS,
+  rows = ART_GRID_ROWS
+): void {
+  drawPackedDisplayToCanvas(ctx, packed, width, height, 'fit', cols, rows);
 }

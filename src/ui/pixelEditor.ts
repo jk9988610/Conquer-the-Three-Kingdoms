@@ -1,6 +1,7 @@
 import { formatArtMemoryReport } from '../art/artMemoryStats';
 import { ART_GRID_COLS, ART_GRID_MAJOR_STEP, ART_GRID_ROWS } from '../art/gridConfig';
 import {
+  drawPackedPreview,
   getArtPacked,
   setCustomArtGrid,
   type Pixel,
@@ -33,6 +34,7 @@ import { loadImageFromFile } from '../art/imageToGrid';
 import { openImageImportModal } from './imageImportModal';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
+import { ART_PREVIEW_HEIGHT, ART_PREVIEW_WIDTH } from '../tcg/dimensions';
 import { getModalOverlayMount } from './overlayRoot';
 
 const MIN_CELL_PX = 1;
@@ -115,6 +117,8 @@ export function openPixelEditor(onApplied: () => void): void {
   let cellSize = 4;
   let gridPixelW = gridCols * cellSize;
   let gridPixelH = gridRows * cellSize;
+  let previewPixelW = ART_PREVIEW_WIDTH;
+  let previewPixelH = ART_PREVIEW_HEIGHT;
 
   function makeEmptyGrid(): PackedGrid {
     return createPackedGrid(gridCols, gridRows);
@@ -418,41 +422,65 @@ const picker = createColorPicker(
     };
   }
 
-  function syncArtSurfaceSize(): void {
+  function syncEditSurfaceSize(): void {
     const size = `${gridPixelW}px`;
     const sizeH = `${gridPixelH}px`;
-    for (const el of [previewSurface, editStage]) {
-      el.style.width = size;
-      el.style.height = sizeH;
-      el.style.minWidth = size;
-      el.style.minHeight = sizeH;
-      el.style.maxWidth = size;
-      el.style.maxHeight = sizeH;
-    }
+    editStage.style.width = size;
+    editStage.style.height = sizeH;
+    editStage.style.minWidth = size;
+    editStage.style.minHeight = sizeH;
+    editStage.style.maxWidth = size;
+    editStage.style.maxHeight = sizeH;
     panel.style.setProperty('--pe-art-w', size);
     panel.style.setProperty('--pe-art-h', sizeH);
   }
 
-  /** 按三栏可用空间计算格宽，预览与绘制画布像素尺寸一致 */
+  function syncPreviewSurfaceSize(): void {
+    const w = `${previewPixelW}px`;
+    const h = `${previewPixelH}px`;
+    previewSurface.style.width = w;
+    previewSurface.style.height = h;
+    previewSurface.style.minWidth = w;
+    previewSurface.style.minHeight = h;
+    previewSurface.style.maxWidth = w;
+    previewSurface.style.maxHeight = h;
+  }
+
+  /** 预览区：按卡面展示分辨率（100×140）适配面板，与主页卡图一致 */
+  function layoutPreview(): void {
+    const avail = availSizeInPane(previewPanel);
+    const aspect = gridCols / gridRows;
+    let pw = Math.min(avail.w, ART_PREVIEW_WIDTH);
+    let ph = Math.round(pw / aspect);
+    if (ph > avail.h) {
+      ph = Math.min(avail.h, ART_PREVIEW_HEIGHT);
+      pw = Math.round(ph * aspect);
+    }
+    previewPixelW = Math.max(1, Math.floor(pw));
+    previewPixelH = Math.max(1, Math.floor(ph));
+    syncPreviewSurfaceSize();
+    const dpr = window.devicePixelRatio || 1;
+    setupCanvas(previewGridArt, previewPixelW, previewPixelH, dpr);
+    refreshPreview();
+  }
+
+  /** 绘制区：按可用空间计算格宽（完整 500×700 逻辑网格） */
   function layoutViewport(): void {
     if (canvasRow.clientWidth < 24 || canvasRow.clientHeight < 24) {
       requestAnimationFrame(layoutViewport);
       return;
     }
 
-    const previewAvail = availSizeInPane(previewPanel);
     const editAvail = availSizeInPane(editPanel);
-    const availW = Math.min(previewAvail.w, editAvail.w);
-    const availH = Math.min(previewAvail.h, editAvail.h);
-
     cellSize = Math.max(
       MIN_CELL_PX,
-      Math.floor(Math.min(availW / gridCols, availH / gridRows))
+      Math.floor(Math.min(editAvail.w / gridCols, editAvail.h / gridRows))
     );
     gridPixelW = gridCols * cellSize;
     gridPixelH = gridRows * cellSize;
-    syncArtSurfaceSize();
+    syncEditSurfaceSize();
     layoutGrid();
+    layoutPreview();
   }
 
   let debugOpen = false;
@@ -478,9 +506,8 @@ const picker = createColorPicker(
   function layoutGrid(): void {
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(previewGridArt, gridPixelW, gridPixelH, dpr);
     setupCanvas(gridLayerCanvas, gridPixelW, gridPixelH, dpr);
-    syncArtSurfaceSize();
+    syncEditSurfaceSize();
     refreshAll();
     updateSelectionBox();
     updateEditorDebug();
@@ -534,10 +561,9 @@ const picker = createColorPicker(
 
   function refreshPreview(): void {
     const sq = previewGridArt.getContext('2d');
-    if (sq) {
-      sq.clearRect(0, 0, gridPixelW, gridPixelH);
-      drawPackedGridCells(sq, grid, cellSize, gridCols, gridRows);
-    }
+    if (!sq) return;
+    sq.clearRect(0, 0, previewPixelW, previewPixelH);
+    drawPackedPreview(sq, grid, previewPixelW, previewPixelH, gridCols, gridRows);
   }
 
   function refreshAll(): void {

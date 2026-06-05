@@ -1,4 +1,9 @@
-import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+import {
+  ART_DISPLAY_COLS,
+  ART_DISPLAY_ROWS,
+  ART_GRID_COLS,
+  ART_GRID_ROWS,
+} from './gridConfig';
 import type { Pixel, PixelGrid } from './pixelArt';
 
 /** 0 = 透明；否则 0xAARRGGBB */
@@ -172,7 +177,7 @@ export function compositePackedGrids(
 
 export type GridDrawMode = 'fit' | 'cover';
 
-/** 整数格宽与偏移；cover 时格块可超出画布并由裁剪切边 */
+/** 格宽与偏移；fit 允许亚像素格宽以完整装入画布，cover 可溢出并由裁剪切边 */
 export function gridDrawLayout(
   cols: number,
   rows: number,
@@ -182,15 +187,54 @@ export function gridDrawLayout(
 ): { cell: number; ox: number; oy: number } {
   const cell =
     mode === 'cover'
-      ? Math.max(1, Math.ceil(Math.max(width / cols, height / rows)))
-      : Math.max(1, Math.floor(Math.min(width / cols, height / rows)));
+      ? Math.max(width / cols, height / rows)
+      : Math.min(width / cols, height / rows);
   const drawW = cols * cell;
   const drawH = rows * cell;
   return {
     cell,
-    ox: Math.floor((width - drawW) / 2),
-    oy: Math.floor((height - drawH) / 2),
+    ox: (width - drawW) / 2,
+    oy: (height - drawH) / 2,
   };
+}
+
+/** 将逻辑网格下采样到展示分辨率（中心取样，保持像素块感） */
+export function downsamplePackedGrid(
+  src: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PackedGrid {
+  const out = createPackedGrid(dstCols, dstRows);
+  if (srcCols === dstCols && srcRows === dstRows) {
+    out.set(src.subarray(0, dstCols * dstRows));
+    return out;
+  }
+  for (let y = 0; y < dstRows; y++) {
+    const sy = Math.min(srcRows - 1, Math.floor(((y + 0.5) * srcRows) / dstRows));
+    for (let x = 0; x < dstCols; x++) {
+      const sx = Math.min(srcCols - 1, Math.floor(((x + 0.5) * srcCols) / dstCols));
+      out[gridIndex(x, y, dstCols)] = src[gridIndex(sx, sy, srcCols)] ?? 0;
+    }
+  }
+  return out;
+}
+
+/** 卡面/预览：下采样后按 fit/cover 绘制 */
+export function drawPackedDisplayToCanvas(
+  ctx: CanvasRenderingContext2D,
+  packed: PackedGrid,
+  width: number,
+  height: number,
+  mode: GridDrawMode = 'fit',
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): void {
+  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  drawPackedToCanvas(ctx, display, width, height, dstCols, dstRows, mode);
 }
 
 export function drawPackedToCanvas(
