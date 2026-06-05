@@ -719,11 +719,50 @@ body {
   min-height: 0;
   min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   padding: 12px;
-  overflow: hidden;
+  overflow: auto;
   box-sizing: border-box;
+}
+
+.pixel-editor__art-surface {
+  position: relative;
+  flex-shrink: 0;
+  width: var(--pe-art-w, 128px);
+  height: var(--pe-art-h, 176px);
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.pixel-editor__art-surface canvas[data-edit-canvas],
+.pixel-editor__art-surface canvas[data-preview-grid-art] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  cursor: crosshair;
+}
+
+.pixel-editor__art-surface .pixel-editor__grid-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  pointer-events: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pixel-editor__art-surface .pixel-editor__sel-box {
+  position: absolute;
+  z-index: 3;
 }
 
 .pixel-editor__drawer-backdrop {

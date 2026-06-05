@@ -126,11 +126,11 @@ export function drawGridToCanvas(
       if (!c) continue;
       const { r, g, b, a } = parsePixelColor(c);
       ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-      const px = Math.floor(x * cellW);
-      const py = Math.floor(y * cellH);
-      const pw = Math.ceil((x + 1) * cellW) - px;
-      const ph = Math.ceil((y + 1) * cellH) - py;
-      ctx.fillRect(px, py, pw, ph);
+      const px = Math.round(x * cellW);
+      const py = Math.round(y * cellH);
+      const px2 = Math.round((x + 1) * cellW);
+      const py2 = Math.round((y + 1) * cellH);
+      ctx.fillRect(px, py, Math.max(1, px2 - px), Math.max(1, py2 - py));
     }
   }
 }
