@@ -436,15 +436,17 @@ body {
 }
 
 .pixel-editor {
-  width: min(96vw, 960px);
-  max-height: 92dvh;
+  width: min(98vw, 1120px);
+  height: min(94dvh, 900px);
+  max-height: 94dvh;
   overflow: hidden;
   background: #1e2a3c;
   border: 1px solid var(--tcg-accent);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   touch-action: manipulation;
   -webkit-touch-callout: none;
 }
@@ -621,20 +623,93 @@ body {
   color: var(--tcg-accent);
 }
 
-/* 绘制器：预览 | 画布 | 工具+调试 整体居中 */
+/* 绘制器：弹性分栏 + 模块外框 */
 .pixel-editor__body {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: row;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.pixel-editor__module {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: #172030;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.pixel-editor__module-title {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--tcg-muted);
+  text-align: center;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--tcg-border);
+  background: #1a2438;
+}
+
+.pixel-editor__module-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  padding: 6px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.pixel-editor__module--preview {
+  flex: 1 1 200px;
+  min-width: 150px;
+  max-width: 44%;
+}
+
+.pixel-editor__module--edit {
+  flex: 1.15 1 220px;
+  min-width: 180px;
+  max-width: 50%;
+}
+
+.pixel-editor__aside {
+  flex: 1 1 280px;
+  min-width: 168px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-height: 0;
-  flex: 1;
-  min-width: 0;
-  flex: 1 1 auto;
-  min-height: min(65dvh, 494px);
-  max-height: min(75dvh, 546px);
-  touch-action: none;
+}
+
+.pixel-editor__module--tools {
+  flex: 1.2 1 0;
+}
+
+.pixel-editor__module--debug {
+  flex: 1 1 0;
+  min-height: 72px;
+}
+
+.pixel-editor__debug-body {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
 }
 
 .pixel-editor__tools-zoom {
@@ -725,48 +800,27 @@ body {
 }
 
 .pixel-editor__tools-panel {
-  flex: 0 0 168px;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--tcg-border);
-  border-radius: 6px;
-  background: #172030;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   min-height: 0;
   overflow-y: auto;
   box-sizing: border-box;
   touch-action: manipulation;
 }
 
-.pixel-editor__editor-debug {
-  flex: 1 1 0;
-  min-width: 120px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--tcg-border);
-  border-radius: 6px;
-  background: #172030;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.pixel-editor__editor-debug-title {
-  margin: 0;
-  padding: 4px 8px;
-  font-size: 0.62rem;
-  font-weight: 600;
-  color: var(--tcg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--tcg-border);
-  flex-shrink: 0;
-}
-
 .pixel-editor__editor-debug-body {
   margin: 0;
   padding: 6px 8px;
   flex: 1 1 0;
+  width: 100%;
+  height: 100%;
   font-size: 0.58rem;
   line-height: 1.4;
   font-family: ui-monospace, monospace;
@@ -774,6 +828,7 @@ body {
   white-space: pre-wrap;
   overflow: auto;
   min-height: 0;
+  box-sizing: border-box;
 }
 
 .pixel-editor__card-label {
@@ -824,6 +879,27 @@ body {
   color: var(--tcg-muted);
   margin-bottom: 4px;
   text-align: center;
+}
+
+@media (max-width: 720px) {
+  .pixel-editor__module--preview,
+  .pixel-editor__module--edit {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .pixel-editor__aside {
+    max-width: 100%;
+    flex: 1 1 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pixel-editor__module--tools,
+  .pixel-editor__module--debug {
+    flex: 1 1 160px;
+    min-height: 120px;
+  }
 }
 
 .pixel-editor__col-head--sub {
