@@ -10,9 +10,15 @@ export interface ColorPickerHandle {
   setFromCss: (css: string) => void;
 }
 
+export interface ColorPickerOptions {
+  /** 将透明度滑条挂到指定容器（如工具栏固定区） */
+  alphaMount?: HTMLElement;
+}
+
 export function createColorPicker(
   initial: ColorPickerValue,
-  onChange: (v: ColorPickerValue) => void
+  onChange: (v: ColorPickerValue) => void,
+  options: ColorPickerOptions = {}
 ): ColorPickerHandle {
   const wrap = document.createElement('div');
   wrap.className = 'color-picker';
@@ -35,7 +41,12 @@ export function createColorPicker(
   alphaRow.innerHTML = `透明度 <input type="range" min="0" max="100" value="${Math.round(alpha * 100)}" data-alpha-range />`;
   const alphaRange = alphaRow.querySelector<HTMLInputElement>('[data-alpha-range]')!;
 
-  wrap.append(wheel, preview, alphaRow);
+  wrap.append(wheel, preview);
+  if (options.alphaMount) {
+    options.alphaMount.append(alphaRow);
+  } else {
+    wrap.append(alphaRow);
+  }
 
   function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
     const i = Math.floor(h * 6);
