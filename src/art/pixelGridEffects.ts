@@ -11,7 +11,15 @@ import {
 } from './packedGrid';
 import type { Pixel, PixelGrid } from './pixelArt';
 
-export type PixelImportEffect = 'standard' | 'sharpen' | 'dedarken' | 'vivid';
+export type PixelImportEffect =
+  | 'standard'
+  | 'sharpen'
+  | 'deblack'
+  | 'vivid'
+  | 'soft'
+  | 'contrast'
+  | 'warm'
+  | 'cool';
 
 export interface PixelImportEffectOption {
   id: PixelImportEffect;
@@ -22,8 +30,12 @@ export interface PixelImportEffectOption {
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   { id: 'standard', label: '标准', description: '保持采样原貌' },
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
-  { id: 'dedarken', label: '去深点', description: '去除孤立深色噪点' },
+  { id: 'deblack', label: '去黑点', description: '去除孤立黑色噪点' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
+  { id: 'soft', label: '柔化', description: '轻微混合邻色，更平滑' },
+  { id: 'contrast', label: '高对比', description: '拉开明暗层次' },
+  { id: 'warm', label: '暖色', description: '偏暖色调' },
+  { id: 'cool', label: '冷色', description: '偏冷色调' },
 ];
 
 interface Rgba {
@@ -72,10 +84,6 @@ function clampByte(v: number): number {
   return Math.max(0, Math.min(255, Math.round(v)));
 }
 
-function luminance(rgba: Rgba): number {
-  return (0.2126 * rgba.r + 0.7152 * rgba.g + 0.0722 * rgba.b) / 255;
-}
-
 function cloneGrid(grid: PixelGrid): PixelGrid {
   return grid.map((row) => [...row]);
 }
@@ -87,10 +95,15 @@ function getPixel(grid: PixelGrid, x: number, y: number): Rgba | null {
   return parsePixel(row[x] ?? null);
 }
 
-function neighborRgba(grid: PixelGrid, x: number, y: number): Rgba[] {
+function neighborRgba(
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  radius = 1
+): Rgba[] {
   const out: Rgba[] = [];
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
       if (dx === 0 && dy === 0) continue;
       const px = getPixel(grid, x + dx, y + dy);
       if (px) out.push(px);
@@ -115,6 +128,27 @@ function averageRgba(colors: Rgba[]): Rgba | null {
   return { r: sr / n, g: sg / n, b: sb / n, a: sa / n };
 }
 
+/** 近黑像素：RGB 均很低，专指黑点而非深灰/深色 */
+function isBlackPixel(rgba: Rgba): boolean {
+  return rgba.a > 0.08 && rgba.r <= 42 && rgba.g <= 42 && rgba.b <= 42;
+}
+
+function countBlackInWindow(
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  radius: number
+): number {
+  let count = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const px = getPixel(grid, x + dx, y + dy);
+      if (px && isBlackPixel(px)) count++;
+    }
+  }
+  return count;
+}
+
 function sharpenGrid(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
@@ -129,58 +163,42 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
       if (!avg) continue;
 
       const amount = 0.82;
-      const next: Rgba = {
+      out[y]![x] = toPixel({
         r: clampByte(center.r + amount * (center.r - avg.r)),
         g: clampByte(center.g + amount * (center.g - avg.g)),
         b: clampByte(center.b + amount * (center.b - avg.b)),
         a: center.a,
-      };
-      out[y]![x] = toPixel(next);
+      });
     }
   }
   return out;
 }
 
-function dedarkenGrid(grid: PixelGrid): PixelGrid {
+/** 去黑点：邻域内仅有一颗黑色像素时，用周围非黑色像素均值替换 */
+function deblackGrid(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const out = cloneGrid(grid);
-  const darkLum = 0.28;
-  const brightLum = 0.38;
+  const radius = 2;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const center = getPixel(grid, x, y);
-      if (!center) continue;
-      if (luminance(center) > darkLum) continue;
+      if (!center || !isBlackPixel(center)) continue;
+      if (countBlackInWindow(grid, x, y, radius) !== 1) continue;
 
-      const neighbors = neighborRgba(grid, x, y);
-      if (neighbors.length === 0) {
-        out[y]![x] = null;
-        continue;
-      }
-
-      const brightNeighbors = neighbors.filter((n) => luminance(n) >= brightLum);
-      const darkNeighbors = neighbors.filter((n) => luminance(n) <= darkLum);
-      const shouldRemove =
-        brightNeighbors.length >= 2 ||
-        (brightNeighbors.length >= 1 && darkNeighbors.length <= 1);
-
-      if (!shouldRemove) continue;
-
-      const blendFrom = brightNeighbors.length > 0 ? brightNeighbors : neighbors;
-      const avg = averageRgba(blendFrom);
+      const neighbors = neighborRgba(grid, x, y, radius).filter((n) => !isBlackPixel(n));
+      const avg = averageRgba(neighbors);
       if (!avg) {
         out[y]![x] = null;
         continue;
       }
 
-      const mix = 0.88;
       out[y]![x] = toPixel({
-        r: clampByte(center.r * (1 - mix) + avg.r * mix),
-        g: clampByte(center.g * (1 - mix) + avg.g * mix),
-        b: clampByte(center.b * (1 - mix) + avg.b * mix),
-        a: center.a * 0.85 + avg.a * 0.15,
+        r: clampByte(avg.r),
+        g: clampByte(avg.g),
+        b: clampByte(avg.b),
+        a: center.a * 0.35 + avg.a * 0.65,
       });
     }
   }
@@ -232,12 +250,9 @@ function vividGrid(grid: PixelGrid): PixelGrid {
       const center = getPixel(grid, x, y);
       if (!center) continue;
 
-      let r = center.r;
-      let g = center.g;
-      let b = center.b;
-      r = clampByte((r - 128) * contrast + 128);
-      g = clampByte((g - 128) * contrast + 128);
-      b = clampByte((b - 128) * contrast + 128);
+      let r = clampByte((center.r - 128) * contrast + 128);
+      let g = clampByte((center.g - 128) * contrast + 128);
+      let b = clampByte((center.b - 128) * contrast + 128);
 
       const [h, s, v] = rgbToHsv(r, g, b);
       const ns = Math.min(1, s * satBoost);
@@ -249,14 +264,110 @@ function vividGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
+function softGrid(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+  const mix = 0.38;
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (!center) continue;
+      const avg = averageRgba(neighborRgba(grid, x, y));
+      if (!avg) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte(center.r * (1 - mix) + avg.r * mix),
+        g: clampByte(center.g * (1 - mix) + avg.g * mix),
+        b: clampByte(center.b * (1 - mix) + avg.b * mix),
+        a: center.a,
+      });
+    }
+  }
+  return out;
+}
+
+function contrastGrid(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+  const contrast = 1.32;
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (!center) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte((center.r - 128) * contrast + 128),
+        g: clampByte((center.g - 128) * contrast + 128),
+        b: clampByte((center.b - 128) * contrast + 128),
+        a: center.a,
+      });
+    }
+  }
+  return out;
+}
+
+function warmGrid(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (!center) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte(center.r * 1.1 + 8),
+        g: clampByte(center.g * 1.03 + 2),
+        b: clampByte(center.b * 0.9),
+        a: center.a,
+      });
+    }
+  }
+  return out;
+}
+
+function coolGrid(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (!center) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte(center.r * 0.9),
+        g: clampByte(center.g * 1.02 + 2),
+        b: clampByte(center.b * 1.1 + 8),
+        a: center.a,
+      });
+    }
+  }
+  return out;
+}
+
 export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffect): PixelGrid {
   switch (effect) {
     case 'sharpen':
       return sharpenGrid(grid);
-    case 'dedarken':
-      return dedarkenGrid(grid);
+    case 'deblack':
+      return deblackGrid(grid);
     case 'vivid':
       return vividGrid(grid);
+    case 'soft':
+      return softGrid(grid);
+    case 'contrast':
+      return contrastGrid(grid);
+    case 'warm':
+      return warmGrid(grid);
+    case 'cool':
+      return coolGrid(grid);
     case 'standard':
     default:
       return cloneGrid(grid);

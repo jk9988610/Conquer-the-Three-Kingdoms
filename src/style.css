@@ -1971,21 +1971,96 @@ body {
   color: var(--tcg-accent);
 }
 
-.img-import-modal--effects {
-  width: min(96vw, 560px);
+.img-import-overlay--page {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: #0a0e14;
 }
 
-.img-import-effect__preview-pane {
+.img-import-modal--page {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.img-import-effect__topbar {
   flex-shrink: 0;
-  padding: 10px 12px;
-  border-top: 1px solid var(--tcg-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--tcg-border);
-  background: #101826;
+  background: #121a28;
+}
+
+.img-import-effect__topbar-main {
+  min-width: 0;
+}
+
+.img-import-effect__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.img-import-effect__subtitle {
+  margin: 4px 0 0;
+  font-size: 0.68rem;
+  color: var(--tcg-muted);
+  line-height: 1.35;
+}
+
+.img-import-effect__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.img-import-effect__topbar-btn {
+  font-size: 0.72rem;
+  padding: 0.28rem 0.55rem;
+}
+
+.img-import-effect__close {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tcg-text);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.img-import-effect__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.img-import-effect__preview-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  background: #0c1018;
+  border-right: 1px solid var(--tcg-border);
 }
 
 .img-import-effect__preview-label {
-  margin-bottom: 6px;
-  font-size: 0.68rem;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--tcg-muted);
   text-align: center;
@@ -1996,6 +2071,8 @@ body {
 }
 
 .img-import-effect__preview-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2006,9 +2083,10 @@ body {
   flex-shrink: 0;
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
   border: 1px solid var(--tcg-border);
-  border-radius: 4px;
+  border-radius: 6px;
   box-sizing: border-box;
   overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 
 .img-import-effect__art-surface canvas {
@@ -2019,20 +2097,33 @@ body {
   image-rendering: crisp-edges;
 }
 
-.img-import-effect__options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px 12px;
+.img-import-effect__sidebar {
+  flex: 0 0 min(360px, 38vw);
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: #172030;
+}
+
+.img-import-effect__options {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .img-import-effect__option {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  padding: 8px 10px;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
   border: 1px solid var(--tcg-border);
   border-radius: 8px;
   background: #101826;
@@ -2049,14 +2140,29 @@ body {
 }
 
 .img-import-effect__option-label {
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 600;
 }
 
 .img-import-effect__option-desc {
-  font-size: 0.62rem;
+  font-size: 0.65rem;
   color: var(--tcg-muted);
-  line-height: 1.3;
+  line-height: 1.35;
+}
+
+.img-import-effect__actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--tcg-border);
+  background: #121a28;
+}
+
+.img-import-effect__actions [data-confirm] {
+  border-color: var(--tcg-accent);
+  color: var(--tcg-accent);
 }
 
 .card-brief__name {
