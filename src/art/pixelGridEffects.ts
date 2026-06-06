@@ -1,6 +1,11 @@
-import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 import {
-  flattenPackedToDisplayBlocks,
+  ART_DISPLAY_COLS,
+  ART_DISPLAY_ROWS,
+  ART_GRID_COLS,
+  ART_GRID_ROWS,
+} from './gridConfig';
+import {
+  downsamplePackedGrid,
   gridToPacked,
   packedToGrid,
 } from './packedGrid';
@@ -258,16 +263,54 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
   }
 }
 
-/** 先压平为 75×105 展示块再处理，与编辑器预览/落盘观感一致 */
+/** 逻辑网格 → 卡面展示网格（75×105） */
+export function logicalGridToDisplayGrid(grid: PixelGrid): PixelGrid {
+  const packed = gridToPacked(grid, ART_GRID_COLS, ART_GRID_ROWS);
+  const displayPacked = downsamplePackedGrid(
+    packed,
+    ART_GRID_COLS,
+    ART_GRID_ROWS,
+    ART_DISPLAY_COLS,
+    ART_DISPLAY_ROWS
+  );
+  return packedToGrid(displayPacked, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
+}
+
+/** 展示网格 → 逻辑网格（每块填色，与编辑器 flatten 一致） */
+export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
+  const out: PixelGrid = [];
+  for (let y = 0; y < ART_GRID_ROWS; y++) {
+    const row: Pixel[] = [];
+    const dy = Math.min(
+      ART_DISPLAY_ROWS - 1,
+      Math.floor((y * ART_DISPLAY_ROWS) / ART_GRID_ROWS)
+    );
+    for (let x = 0; x < ART_GRID_COLS; x++) {
+      const dx = Math.min(
+        ART_DISPLAY_COLS - 1,
+        Math.floor((x * ART_DISPLAY_COLS) / ART_GRID_COLS)
+      );
+      row.push(display[dy]?.[dx] ?? null);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+/** 在 75×105 展示网格上处理效果，供预览与落盘 */
+export function applyPixelImportEffectOnDisplay(
+  grid: PixelGrid,
+  effect: PixelImportEffect
+): PixelGrid {
+  const display = logicalGridToDisplayGrid(grid);
+  return applyPixelImportEffect(display, effect);
+}
+
+/** 导入落盘：展示级效果 → 展开为 500×700 逻辑网格 */
 export function applyPixelImportEffectForEditor(
   grid: PixelGrid,
   effect: PixelImportEffect
 ): PixelGrid {
-  const flattened = flattenPackedToDisplayBlocks(
-    gridToPacked(grid),
-    ART_GRID_COLS,
-    ART_GRID_ROWS
-  );
-  const blockGrid = packedToGrid(flattened, ART_GRID_COLS, ART_GRID_ROWS);
-  return applyPixelImportEffect(blockGrid, effect);
+  const processed = applyPixelImportEffectOnDisplay(grid, effect);
+  return displayGridToLogicalGrid(processed);
 }

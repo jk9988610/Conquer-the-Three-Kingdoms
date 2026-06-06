@@ -1991,6 +1991,10 @@ body {
   text-align: center;
 }
 
+.img-import-effect__preview-label [data-effect-name] {
+  color: var(--tcg-accent);
+}
+
 .img-import-effect__preview-wrap {
   display: flex;
   align-items: center;

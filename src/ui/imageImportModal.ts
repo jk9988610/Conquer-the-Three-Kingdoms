@@ -50,7 +50,7 @@ export function openImageImportModal(options: ImageImportModalOptions): void {
     </div>
     <footer class="img-import-modal__actions">
       <button type="button" class="btn" data-cancel>取消</button>
-      <button type="button" class="btn" data-confirm>确定</button>
+      <button type="button" class="btn" data-confirm>下一步</button>
     </footer>
   `;
 
