@@ -1870,14 +1870,6 @@ body {
   background: #0c1018;
 }
 
-.img-import-modal__actions {
-  touch-action: manipulation;
-}
-
-.img-import-modal__actions .btn {
-  touch-action: manipulation;
-}
-
 .img-import-modal__stage {
   position: absolute;
   inset: 0;
