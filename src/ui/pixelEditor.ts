@@ -236,13 +236,35 @@ export function openPixelEditor(onApplied: () => void): void {
   function updateClipboardButtons(): void {
     const pasteBtn = panel.querySelector<HTMLButtonElement>('[data-paste]');
     if (pasteBtn) pasteBtn.disabled = !clipboard;
-    updateClipboardModeUi();
   }
 
-  function updateClipboardModeUi(): void {
-    panel.querySelector('[data-copy]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'copy');
-    panel.querySelector('[data-cut]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'cut');
-    panel.querySelector('[data-paste]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'paste');
+  function clearToolbarHighlights(): void {
+    panel.querySelectorAll('[data-tool]').forEach((btn) => {
+      btn.classList.remove('pixel-editor__tool--active');
+    });
+    panel.querySelector('[data-copy]')?.classList.remove('pixel-editor__tool--active');
+    panel.querySelector('[data-cut]')?.classList.remove('pixel-editor__tool--active');
+    panel.querySelector('[data-paste]')?.classList.remove('pixel-editor__tool--active');
+  }
+
+  function syncToolbarUi(): void {
+    clearToolbarHighlights();
+    if (clipboardMode) {
+      if (clipboardMode === 'copy') {
+        panel.querySelector('[data-copy]')?.classList.add('pixel-editor__tool--active');
+      } else if (clipboardMode === 'cut') {
+        panel.querySelector('[data-cut]')?.classList.add('pixel-editor__tool--active');
+      } else if (clipboardMode === 'paste') {
+        panel.querySelector('[data-paste]')?.classList.add('pixel-editor__tool--active');
+      }
+      return;
+    }
+    panel.querySelectorAll('[data-tool]').forEach((btn) => {
+      btn.classList.toggle(
+        'pixel-editor__tool--active',
+        (btn as HTMLElement).dataset.tool === tool
+      );
+    });
   }
 
   function clearSelection(): void {
@@ -276,7 +298,7 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     clipboardMode = null;
     selectStart = null;
-    updateClipboardModeUi();
+    syncToolbarUi();
   }
 
   function flattenEditorGrid(): void {
@@ -306,7 +328,7 @@ export function openPixelEditor(onApplied: () => void): void {
     viewZoom = 1;
     resetHistory();
     applyEditViewTransform();
-    updateClipboardModeUi();
+    syncToolbarUi();
   }
 
   const overlay = document.createElement('div');
@@ -318,6 +340,10 @@ export function openPixelEditor(onApplied: () => void): void {
   panel.innerHTML = `
     <header class="pixel-editor__topbar">
       <h2 class="pixel-editor__title">像素画绘制</h2>
+      <label class="pixel-editor__topbar-card">
+        <span class="pixel-editor__topbar-card-label">卡牌</span>
+        <select data-select class="pixel-editor__topbar-select"></select>
+      </label>
       <div class="pixel-editor__topbar-actions">
         <button type="button" class="btn pixel-editor__topbar-btn" data-open-debug>调试</button>
         <button type="button" class="btn pixel-editor__topbar-btn" data-fullscreen>全屏</button>
@@ -381,7 +407,6 @@ export function openPixelEditor(onApplied: () => void): void {
             </div>
           </div>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
-            <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
             <p class="pixel-editor__view-hint">绘制区：仅「拖动」工具下可平移/缩放画布</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
@@ -481,13 +506,9 @@ export function openPixelEditor(onApplied: () => void): void {
     return tool === 'hand' && !clipboardMode;
   }
 
-  /** 复制/剪切/粘贴时退出拖动模式，避免画布平移抢占框选 */
-  function leaveHandToolForClipboard(): void {
-    if (tool !== 'hand') return;
-    tool = 'paint';
-    panel.querySelectorAll('[data-tool]').forEach((btn) => {
-      btn.classList.remove('pixel-editor__tool--active');
-    });
+  /** 剪贴板模式下禁用绘制/平移，仅允许框选或粘贴拖动 */
+  function deactivateToolForClipboard(): void {
+    tool = 'hand';
     editCanvas.style.cursor = 'crosshair';
     applyEditViewTransform();
   }
@@ -786,12 +807,7 @@ export function openPixelEditor(onApplied: () => void): void {
   function setTool(next: Tool): void {
     exitClipboardModes(true);
     tool = next;
-    panel.querySelectorAll('[data-tool]').forEach((btn) => {
-      btn.classList.toggle(
-        'pixel-editor__tool--active',
-        (btn as HTMLElement).dataset.tool === next
-      );
-    });
+    syncToolbarUi();
     editCanvas.style.cursor = next === 'hand' ? 'grab' : 'crosshair';
     applyEditViewTransform();
     updateEditorDebug();
@@ -807,27 +823,28 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function armCopyMode(): void {
     exitClipboardModes(false);
-    leaveHandToolForClipboard();
+    deactivateToolForClipboard();
     clipboardMode = 'copy';
     clearSelection();
-    updateClipboardModeUi();
+    syncToolbarUi();
   }
 
   function armCutMode(): void {
     exitClipboardModes(false);
-    leaveHandToolForClipboard();
+    deactivateToolForClipboard();
     clipboardMode = 'cut';
     clearSelection();
-    updateClipboardModeUi();
+    syncToolbarUi();
   }
 
   function handlePasteClick(): void {
     if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selection) {
-      leaveHandToolForClipboard();
-      captureClipboardFromSelection();
+      const mode = clipboardMode;
+      deactivateToolForClipboard();
       clipboardMode = 'paste';
+      captureClipboardFromSelection(mode);
       startPasteFloating();
-      updateClipboardModeUi();
+      syncToolbarUi();
       return;
     }
     if (!clipboard) return;
@@ -836,10 +853,10 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     exitClipboardModes(false);
-    leaveHandToolForClipboard();
+    deactivateToolForClipboard();
     clipboardMode = 'paste';
     startPasteFloating();
-    updateClipboardModeUi();
+    syncToolbarUi();
   }
 
   function fillDisplayCell(dx: number, dy: number, colorArgb: number): void {
@@ -940,9 +957,8 @@ export function openPixelEditor(onApplied: () => void): void {
     refreshAll();
   }
 
-  function captureClipboardFromSelection(): boolean {
-    if (!selection || (clipboardMode !== 'copy' && clipboardMode !== 'cut')) return false;
-    const mode = clipboardMode;
+  function captureClipboardFromSelection(mode: 'copy' | 'cut'): boolean {
+    if (!selection) return false;
     clipboard = {
       pixels: selection.pixels.slice(),
       w: selection.w,
@@ -1081,6 +1097,8 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
 
+    if (clipboardMode) return;
+
     if (tool === 'hand') return;
     e.preventDefault();
     const dc = displayCellFromPointer(e.clientX, e.clientY);
@@ -1139,16 +1157,6 @@ export function openPixelEditor(onApplied: () => void): void {
     e.preventDefault();
     const dc = displayCellFromPointer(e.clientX, e.clientY);
     const cell = cellFromEvent(e);
-    if (tool === 'paint') {
-      if (!dc) return;
-      paintAtDisplay(dc);
-      return;
-    }
-    if (tool === 'eraser') {
-      if (!dc) return;
-      paintAtDisplay(dc, 0);
-      return;
-    }
     if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart && cell) {
       const { x, y } = cell;
       updateSelectionBox(normalizeRect(selectStart.x, selectStart.y, x, y));
@@ -1170,6 +1178,17 @@ export function openPixelEditor(onApplied: () => void): void {
       });
       refreshEditCanvas();
       refreshPreview();
+      return;
+    }
+    if (clipboardMode) return;
+    if (tool === 'paint') {
+      if (!dc) return;
+      paintAtDisplay(dc);
+      return;
+    }
+    if (tool === 'eraser') {
+      if (!dc) return;
+      paintAtDisplay(dc, 0);
       return;
     }
   };
@@ -1512,6 +1531,7 @@ export function openPixelEditor(onApplied: () => void): void {
   setTool('hand');
   layoutGrid();
   updateClipboardButtons();
+  syncToolbarUi();
 
   overlay.append(panel);
   editorOverlay = overlay;
