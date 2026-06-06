@@ -118,6 +118,8 @@ export function openPixelEditor(onApplied: () => void): void {
   let selectStart: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
+  let movePreviewPos: { x: number; y: number } | null = null;
+  let pasteArmed = false;
   let lastPaintCell: { x: number; y: number } | null = null;
   let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
@@ -131,18 +133,23 @@ export function openPixelEditor(onApplied: () => void): void {
     return createPackedGrid(gridCols, gridRows);
   }
 
-  function recordCellChange(index: number, next: number): void {
-    const prev = grid[index] ?? 0;
+  /** packedGrid 批量操作回调：(index, prev, next) */
+  function packedCellChange(index: number, prev: number, next: number): void {
+    const prevVal = prev >>> 0;
     const nextVal = next >>> 0;
-    if (prev === nextVal) return;
+    if (prevVal === nextVal) return;
     if (!patchBatch) patchBatch = new Map();
     const existing = patchBatch.get(index);
     if (existing) {
       existing.next = nextVal;
     } else {
-      patchBatch.set(index, { prev, next: nextVal });
+      patchBatch.set(index, { prev: prevVal, next: nextVal });
     }
     grid[index] = nextVal;
+  }
+
+  function recordCellChange(index: number, next: number): void {
+    packedCellChange(index, grid[index] ?? 0, next);
   }
 
   function beginUndoBatch(): void {
@@ -612,18 +619,37 @@ export function openPixelEditor(onApplied: () => void): void {
     ctx.globalAlpha = 1;
   }
 
+  /** 摆放拖动时在预览位置叠加选区像素 */
+  function gridForDisplay(): PackedGrid {
+    if (moveAnchor && selection && movePreviewPos) {
+      const preview = clonePackedGrid(grid);
+      pastePackedRegion(
+        preview,
+        gridCols,
+        gridRows,
+        movePreviewPos.x,
+        movePreviewPos.y,
+        selection.w,
+        selection.h,
+        selection.pixels
+      );
+      return preview;
+    }
+    return grid;
+  }
+
   function refreshEditCanvas(): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    drawPackedPreview(ctx, grid, gridPixelW, gridPixelH, gridCols, gridRows);
+    drawPackedPreview(ctx, gridForDisplay(), gridPixelW, gridPixelH, gridCols, gridRows);
   }
 
   function refreshPreview(): void {
     const sq = previewGridArt.getContext('2d');
     if (!sq) return;
     sq.clearRect(0, 0, previewPixelW, previewPixelH);
-    drawPackedPreview(sq, grid, previewPixelW, previewPixelH, gridCols, gridRows);
+    drawPackedPreview(sq, gridForDisplay(), previewPixelW, previewPixelH, gridCols, gridRows);
   }
 
   function refreshAll(): void {
@@ -698,8 +724,14 @@ export function openPixelEditor(onApplied: () => void): void {
     selBox.style.height = `${px.height}px`;
   }
 
+  function clearPasteArmed(): void {
+    pasteArmed = false;
+    panel.querySelector('[data-paste]')?.classList.remove('pixel-editor__tool--active');
+  }
+
   function setTool(next: Tool): void {
     tool = next;
+    clearPasteArmed();
     panel.querySelectorAll('.pixel-editor__tool').forEach((btn) => {
       btn.classList.toggle(
         'pixel-editor__tool--active',
@@ -707,8 +739,7 @@ export function openPixelEditor(onApplied: () => void): void {
       );
     });
     if (next !== 'move') {
-      moveAnchor = null;
-      lastDragCell = null;
+      cancelMoveDrag();
     }
     if (next !== 'select') selectStart = null;
     if (next !== 'select' && next !== 'move') {
@@ -823,9 +854,7 @@ export function openPixelEditor(onApplied: () => void): void {
     updateSelectionBox(rect);
     selectStart = null;
     updateClipboardButtons();
-    if (tool === 'move') {
-      editCanvas.style.cursor = 'grab';
-    }
+    setTool('move');
   }
 
   function copySelection(): void {
@@ -853,18 +882,18 @@ export function openPixelEditor(onApplied: () => void): void {
       selection.w,
       selection.h,
       gridCols,
-      recordCellChange
+      packedCellChange
     );
     commitUndoBatch();
     clearSelection();
     refreshAll();
   }
 
-  function pasteClipboard(): void {
+  function pasteAtCell(x: number, y: number): void {
     if (!clipboard) return;
     beginUndoBatch();
-    const tx = clamp(selection?.x ?? 0, 0, Math.max(0, gridCols - clipboard.w));
-    const ty = clamp(selection?.y ?? 0, 0, Math.max(0, gridRows - clipboard.h));
+    const tx = clamp(x, 0, Math.max(0, gridCols - clipboard.w));
+    const ty = clamp(y, 0, Math.max(0, gridRows - clipboard.h));
     pastePackedRegion(
       grid,
       gridCols,
@@ -874,7 +903,7 @@ export function openPixelEditor(onApplied: () => void): void {
       clipboard.w,
       clipboard.h,
       clipboard.pixels,
-      recordCellChange
+      packedCellChange
     );
     commitUndoBatch();
     selection = {
@@ -886,6 +915,46 @@ export function openPixelEditor(onApplied: () => void): void {
     };
     updateSelectionBox();
     updateClipboardButtons();
+    tool = 'move';
+    panel.querySelectorAll('.pixel-editor__tool').forEach((btn) => {
+      btn.classList.toggle(
+        'pixel-editor__tool--active',
+        (btn as HTMLElement).dataset.tool === 'move'
+      );
+    });
+    editCanvas.style.cursor = 'grab';
+    refreshAll();
+  }
+
+  function armPaste(): void {
+    if (!clipboard) return;
+    pasteArmed = true;
+    panel.querySelector('[data-paste]')?.classList.add('pixel-editor__tool--active');
+  }
+
+  function cancelMoveDrag(): void {
+    if (!moveAnchor || !selection) {
+      moveAnchor = null;
+      movePreviewPos = null;
+      lastDragCell = null;
+      return;
+    }
+    if (movePreviewPos) {
+      pastePackedRegion(
+        grid,
+        gridCols,
+        gridRows,
+        selection.x,
+        selection.y,
+        selection.w,
+        selection.h,
+        selection.pixels
+      );
+    }
+    patchBatch = null;
+    moveAnchor = null;
+    movePreviewPos = null;
+    lastDragCell = null;
     refreshAll();
   }
 
@@ -893,7 +962,6 @@ export function openPixelEditor(onApplied: () => void): void {
     if (!selection) return;
     const tx = clamp(targetX, 0, gridCols - selection.w);
     const ty = clamp(targetY, 0, gridRows - selection.h);
-    clearPackedRegion(grid, selection.x, selection.y, selection.w, selection.h, gridCols, recordCellChange);
     pastePackedRegion(
       grid,
       gridCols,
@@ -903,7 +971,7 @@ export function openPixelEditor(onApplied: () => void): void {
       selection.w,
       selection.h,
       selection.pixels,
-      recordCellChange
+      packedCellChange
     );
     selection = {
       x: tx,
@@ -912,6 +980,7 @@ export function openPixelEditor(onApplied: () => void): void {
       h: selection.h,
       pixels: copyPackedRegion(grid, tx, ty, selection.w, selection.h, gridCols),
     };
+    movePreviewPos = null;
     refreshAll();
   }
 
@@ -945,10 +1014,17 @@ export function openPixelEditor(onApplied: () => void): void {
   );
 
   const onEditPointerDown = (e: PointerEvent) => {
-    if (tool === 'hand' || navPointers.size >= 2) return;
+    if (navPointers.size >= 2) return;
+    const cell = cellFromEvent(e);
+    if (pasteArmed && clipboard && cell) {
+      e.preventDefault();
+      clearPasteArmed();
+      pasteAtCell(cell.x, cell.y);
+      return;
+    }
+    if (tool === 'hand') return;
     e.preventDefault();
     const dc = displayCellFromPointer(e.clientX, e.clientY);
-    const cell = cellFromEvent(e);
     if (!dc && !cell) return;
     pointerDrawing = true;
     editSurface.setPointerCapture(e.pointerId);
@@ -973,7 +1049,7 @@ export function openPixelEditor(onApplied: () => void): void {
         x,
         y,
         paintArgb,
-        recordCellChange
+        packedCellChange
       );
       commitUndoBatch();
       refreshAll();
@@ -1006,9 +1082,20 @@ export function openPixelEditor(onApplied: () => void): void {
       if (!cell || !selection) return;
       const { x, y } = cell;
       beginUndoBatch();
+      movePreviewPos = { x: selection.x, y: selection.y };
+      clearPackedRegion(
+        grid,
+        selection.x,
+        selection.y,
+        selection.w,
+        selection.h,
+        gridCols,
+        packedCellChange
+      );
       moveAnchor = { x, y };
       moveOffset = { x: x - selection.x, y: y - selection.y };
       lastDragCell = { x, y };
+      refreshAll();
       return;
     }
   };
@@ -1038,12 +1125,19 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     if (tool === 'move' && moveAnchor && selection) {
       lastDragCell = { x, y };
-      updateSelectionBox({
+      movePreviewPos = {
         x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
         y: clamp(y - moveOffset.y, 0, gridRows - selection.h),
+      };
+      updateSelectionBox({
+        x: movePreviewPos.x,
+        y: movePreviewPos.y,
         w: selection.w,
         h: selection.h,
       });
+      refreshEditCanvas();
+      refreshPreview();
+      return;
     }
   };
 
@@ -1053,8 +1147,7 @@ export function openPixelEditor(onApplied: () => void): void {
     const cell = cellFromEvent(e) ?? lastDragCell;
     if (!cell) {
       if (tool === 'move' && moveAnchor) {
-        moveAnchor = null;
-        lastDragCell = null;
+        cancelMoveDrag();
       }
       lastPaintCell = null;
       strokeUndoPushed = false;
@@ -1095,12 +1188,10 @@ export function openPixelEditor(onApplied: () => void): void {
       commitUndoBatch();
     }
     if (tool === 'move' && moveAnchor) {
-      patchBatch = null;
+      cancelMoveDrag();
     }
     lastPaintCell = null;
     strokeUndoPushed = false;
-    moveAnchor = null;
-    lastDragCell = null;
     pointerDrawing = false;
     try {
       editSurface.releasePointerCapture(e.pointerId);
@@ -1117,7 +1208,7 @@ export function openPixelEditor(onApplied: () => void): void {
   panel.querySelector('[data-redo]')?.addEventListener('click', () => redo());
   panel.querySelector('[data-copy]')?.addEventListener('click', () => copySelection());
   panel.querySelector('[data-cut]')?.addEventListener('click', () => cutSelection());
-  panel.querySelector('[data-paste]')?.addEventListener('click', () => pasteClipboard());
+  panel.querySelector('[data-paste]')?.addEventListener('click', () => armPaste());
 
   brushSizeInput.addEventListener('input', () => {
     brushSize = clamp(Number(brushSizeInput.value) || 1, 1, MAX_BRUSH);
@@ -1353,7 +1444,7 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     if (mod && (e.key === 'v' || e.key === 'V') && clipboard) {
       e.preventDefault();
-      pasteClipboard();
+      armPaste();
       return;
     }
     if (e.key !== 'Escape') return;
