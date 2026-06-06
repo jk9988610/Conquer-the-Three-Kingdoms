@@ -738,16 +738,38 @@ export function openPixelEditor(onApplied: () => void): void {
     }
   }
 
-  function logicToDisplayCell(x: number, y: number) {
-    return {
-      dx: clamp(Math.floor((x * ART_DISPLAY_COLS) / gridCols), 0, ART_DISPLAY_COLS - 1),
-      dy: clamp(Math.floor((y * ART_DISPLAY_ROWS) / gridRows), 0, ART_DISPLAY_ROWS - 1),
-    };
+  function forEachDisplayLine(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    visit: (dx: number, dy: number) => void
+  ): void {
+    let x = x0;
+    let y = y0;
+    const adx = Math.abs(x1 - x0);
+    const ady = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = adx - ady;
+
+    while (true) {
+      visit(x, y);
+      if (x === x1 && y === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -ady) {
+        err -= ady;
+        x += sx;
+      }
+      if (e2 < adx) {
+        err += adx;
+        y += sy;
+      }
+    }
   }
 
   /** 笔刷粗细按展示像素（75×105）计，与卡面所见块一致 */
-  function stampBrush(cx: number, cy: number, colorArgb: number): void {
-    const { dx: centerDx, dy: centerDy } = logicToDisplayCell(cx, cy);
+  function stampBrushAtDisplay(centerDx: number, centerDy: number, colorArgb: number): void {
     const r = brushSize - 1;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -757,13 +779,19 @@ export function openPixelEditor(onApplied: () => void): void {
     }
   }
 
-  function paintAt(x: number, y: number, colorArgb: number = paintArgb): void {
-    const { dx, dy } = logicToDisplayCell(x, y);
-    if (lastPaintCell?.x === dx && lastPaintCell?.y === dy && brushSize === 1) {
+  /** 沿展示格连线绘制/擦除，避免拖动时跳过格子形成网格残留 */
+  function paintAtDisplay(dc: { dx: number; dy: number }, colorArgb: number = paintArgb): void {
+    if (lastPaintCell?.x === dc.dx && lastPaintCell?.y === dc.dy && brushSize === 1) {
       return;
     }
-    stampBrush(x, y, colorArgb);
-    lastPaintCell = { x: dx, y: dy };
+    if (lastPaintCell) {
+      forEachDisplayLine(lastPaintCell.x, lastPaintCell.y, dc.dx, dc.dy, (px, py) => {
+        stampBrushAtDisplay(px, py, colorArgb);
+      });
+    } else {
+      stampBrushAtDisplay(dc.dx, dc.dy, colorArgb);
+    }
+    lastPaintCell = { x: dc.dx, y: dc.dy };
     refreshAll();
   }
 
@@ -919,21 +947,24 @@ export function openPixelEditor(onApplied: () => void): void {
   const onEditPointerDown = (e: PointerEvent) => {
     if (tool === 'hand' || navPointers.size >= 2) return;
     e.preventDefault();
+    const dc = displayCellFromPointer(e.clientX, e.clientY);
     const cell = cellFromEvent(e);
-    if (!cell) return;
+    if (!dc && !cell) return;
     pointerDrawing = true;
     editSurface.setPointerCapture(e.pointerId);
-    const { x, y } = cell;
     if (tool === 'paint') {
+      if (!dc) return;
       if (!strokeUndoPushed) {
         beginUndoBatch();
         strokeUndoPushed = true;
       }
       lastPaintCell = null;
-      paintAt(x, y);
+      paintAtDisplay(dc);
       return;
     }
     if (tool === 'fill') {
+      if (!cell) return;
+      const { x, y } = cell;
       beginUndoBatch();
       floodFillPacked(
         grid,
@@ -949,26 +980,31 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     if (tool === 'eraser') {
+      if (!dc) return;
       if (!strokeUndoPushed) {
         beginUndoBatch();
         strokeUndoPushed = true;
       }
       lastPaintCell = null;
-      paintAt(x, y, 0);
+      paintAtDisplay(dc, 0);
       return;
     }
     if (tool === 'eyedropper') {
-      sampleColor(x, y);
+      if (!cell) return;
+      sampleColor(cell.x, cell.y);
       setTool('paint');
       return;
     }
     if (tool === 'select') {
+      if (!cell) return;
+      const { x, y } = cell;
       selectStart = { x, y };
       updateSelectionBox({ x, y, w: 1, h: 1 });
       return;
     }
     if (tool === 'move') {
-      if (!selection) return;
+      if (!cell || !selection) return;
+      const { x, y } = cell;
       beginUndoBatch();
       moveAnchor = { x, y };
       moveOffset = { x: x - selection.x, y: y - selection.y };
@@ -982,17 +1018,20 @@ export function openPixelEditor(onApplied: () => void): void {
   const onEditPointerMove = (e: PointerEvent) => {
     if (!editSurface.hasPointerCapture(e.pointerId)) return;
     e.preventDefault();
+    const dc = displayCellFromPointer(e.clientX, e.clientY);
     const cell = cellFromEvent(e);
-    if (!cell) return;
-    const { x, y } = cell;
     if (tool === 'paint') {
-      paintAt(x, y);
+      if (!dc) return;
+      paintAtDisplay(dc);
       return;
     }
     if (tool === 'eraser') {
-      paintAt(x, y, 0);
+      if (!dc) return;
+      paintAtDisplay(dc, 0);
       return;
     }
+    if (!cell) return;
+    const { x, y } = cell;
     if (tool === 'select' && selectStart) {
       updateSelectionBox(normalizeRect(selectStart.x, selectStart.y, x, y));
       return;
