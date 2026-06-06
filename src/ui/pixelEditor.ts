@@ -364,6 +364,11 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-cut>剪切</button>
               <button type="button" class="btn" data-paste disabled>粘贴</button>
             </div>
+            <div class="pixel-editor__tools-nav">
+              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+              <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
+              <button type="button" class="btn" data-zoom-in title="放大">放大</button>
+            </div>
             <label class="pixel-editor__brush-row">
               画笔粗细
               <input type="range" min="1" max="12" value="1" data-brush-size />
@@ -377,13 +382,6 @@ export function openPixelEditor(onApplied: () => void): void {
           </div>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
-            <div class="pixel-editor__tools-grid">
-              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-            </div>
-            <div class="pixel-editor__tools-zoom">
-              <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
-              <button type="button" class="btn" data-zoom-in title="放大">放大</button>
-            </div>
             <p class="pixel-editor__view-hint">绘制区：仅「拖动」工具下可平移/缩放画布</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
@@ -480,7 +478,18 @@ export function openPixelEditor(onApplied: () => void): void {
   }
 
   function canPanZoomView(): boolean {
-    return tool === 'hand';
+    return tool === 'hand' && !clipboardMode;
+  }
+
+  /** 复制/剪切/粘贴时退出拖动模式，避免画布平移抢占框选 */
+  function leaveHandToolForClipboard(): void {
+    if (tool !== 'hand') return;
+    tool = 'paint';
+    panel.querySelectorAll('[data-tool]').forEach((btn) => {
+      btn.classList.remove('pixel-editor__tool--active');
+    });
+    editCanvas.style.cursor = 'crosshair';
+    applyEditViewTransform();
   }
 
   function applyEditViewTransform(): void {
@@ -798,6 +807,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function armCopyMode(): void {
     exitClipboardModes(false);
+    leaveHandToolForClipboard();
     clipboardMode = 'copy';
     clearSelection();
     updateClipboardModeUi();
@@ -805,6 +815,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function armCutMode(): void {
     exitClipboardModes(false);
+    leaveHandToolForClipboard();
     clipboardMode = 'cut';
     clearSelection();
     updateClipboardModeUi();
@@ -812,6 +823,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function handlePasteClick(): void {
     if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selection) {
+      leaveHandToolForClipboard();
       captureClipboardFromSelection();
       clipboardMode = 'paste';
       startPasteFloating();
@@ -824,6 +836,7 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     exitClipboardModes(false);
+    leaveHandToolForClipboard();
     clipboardMode = 'paste';
     startPasteFloating();
     updateClipboardModeUi();
@@ -1047,6 +1060,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
     if ((clipboardMode === 'copy' || clipboardMode === 'cut') && cell) {
       e.preventDefault();
+      e.stopPropagation();
       pointerDrawing = true;
       editSurface.setPointerCapture(e.pointerId);
       selectStart = { x: cell.x, y: cell.y };
@@ -1056,6 +1070,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
     if (clipboardMode === 'paste' && floatingPasteOnly && selection && cell) {
       e.preventDefault();
+      e.stopPropagation();
       pointerDrawing = true;
       editSurface.setPointerCapture(e.pointerId);
       const pos = floatingSelectionPos() ?? { x: selection.x, y: selection.y };
