@@ -317,6 +317,11 @@ export function openPixelEditor(onApplied: () => void): void {
               <input type="range" min="1" max="12" value="1" data-brush-size />
               <span data-brush-size-label>1</span>
             </label>
+            <div class="pixel-editor__tools-nav" data-alpha-mount></div>
+            <div class="pixel-editor__tools-nav">
+              <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="hand" title="单指拖动平移">拖动</button>
+              <button type="button" class="btn" data-zoom-reset title="复位视图">复位</button>
+            </div>
           </div>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
@@ -331,10 +336,8 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-paste disabled>粘贴</button>
             </div>
             <div class="pixel-editor__tools-zoom">
-              <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="hand" title="单指拖动平移">拖动</button>
               <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
               <button type="button" class="btn" data-zoom-in title="放大">放大</button>
-              <button type="button" class="btn" data-zoom-reset title="复位视图">复位</button>
             </div>
             <p class="pixel-editor__view-hint">绘制区：仅「拖动」工具下可平移/缩放画布</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
@@ -382,6 +385,7 @@ export function openPixelEditor(onApplied: () => void): void {
   const previewGridArt = panel.querySelector<HTMLCanvasElement>('[data-preview-grid-art]')!;
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const colorPickerMount = panel.querySelector('[data-color-picker]')!;
+  const alphaMount = panel.querySelector<HTMLElement>('[data-alpha-mount]')!;
 
 
   for (const k of PIXEL_ART_KEYS) {
@@ -392,12 +396,13 @@ export function openPixelEditor(onApplied: () => void): void {
   }
   select.value = currentKey;
 
-const picker = createColorPicker(
+  const picker = createColorPicker(
     { css: 'rgba(255,255,255,1)', hex: '#ffffff', alpha: 1 },
     (v: ColorPickerValue) => {
       paintColor = v.css;
       paintArgb = pixelToArgb(v.css);
-    }
+    },
+    { alphaMount }
   );
   colorPickerMount.append(picker.element);
 

@@ -17,15 +17,11 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-type ImportOverlay = HTMLElement & {
-  __importRo?: ResizeObserver;
-  __importTeardown?: () => void;
-};
+type ImportOverlay = HTMLElement & { __importRo?: ResizeObserver };
 
 export function closeImageImportModal(): void {
   const overlay = document.querySelector<ImportOverlay>('[data-modal="image-import"]');
   overlay?.__importRo?.disconnect();
-  overlay?.__importTeardown?.();
   overlay?.remove();
 }
 
@@ -137,8 +133,15 @@ export function openImageImportModal(options: ImageImportModalOptions): void {
       layoutFrame();
       if (frameWidth < 1) return;
     }
-    onConfirm(sampleImageWithCrop(image, cols, rows, getCropParams()));
+    let grid: PixelGrid;
+    try {
+      grid = sampleImageWithCrop(image, cols, rows, getCropParams());
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '图片采样失败');
+      return;
+    }
     closeImageImportModal();
+    onConfirm(grid);
   }
 
   function finishCancel(): void {
@@ -219,27 +222,24 @@ export function openImageImportModal(options: ImageImportModalOptions): void {
   viewport.addEventListener('pointerup', onPointerEnd);
   viewport.addEventListener('pointercancel', onPointerEnd);
 
-  modal.querySelector('[data-confirm]')?.addEventListener('click', finishConfirm);
-  modal.querySelector('[data-cancel]')?.addEventListener('click', finishCancel);
+  const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-confirm]')!;
+  const cancelBtn = modal.querySelector<HTMLButtonElement>('[data-cancel]')!;
+  const onConfirmTap = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    finishConfirm();
+  };
+  const onCancelTap = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    finishCancel();
+  };
+  confirmBtn.addEventListener('click', onConfirmTap);
+  cancelBtn.addEventListener('click', onCancelTap);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) finishCancel();
   });
   modal.addEventListener('click', (e) => e.stopPropagation());
-
-  const blockBrowserGesture = (e: Event) => {
-    e.preventDefault();
-  };
-  const blockWheel = (e: WheelEvent) => {
-    e.preventDefault();
-  };
-  const gestureTargets = [overlay, modal, viewport];
-  for (const el of gestureTargets) {
-    el.addEventListener('touchstart', blockBrowserGesture, { passive: false });
-    el.addEventListener('touchmove', blockBrowserGesture, { passive: false });
-    el.addEventListener('gesturestart', blockBrowserGesture, { passive: false });
-    el.addEventListener('gesturechange', blockBrowserGesture, { passive: false });
-    el.addEventListener('wheel', blockWheel, { passive: false });
-  }
 
   overlay.append(modal);
   getModalOverlayMount().append(overlay);
@@ -247,15 +247,6 @@ export function openImageImportModal(options: ImageImportModalOptions): void {
   const ro = new ResizeObserver(() => layoutFrame());
   ro.observe(viewport);
   overlay.__importRo = ro;
-  overlay.__importTeardown = () => {
-    for (const el of gestureTargets) {
-      el.removeEventListener('touchstart', blockBrowserGesture);
-      el.removeEventListener('touchmove', blockBrowserGesture);
-      el.removeEventListener('gesturestart', blockBrowserGesture);
-      el.removeEventListener('gesturechange', blockBrowserGesture);
-      el.removeEventListener('wheel', blockWheel);
-    }
-  };
 
   requestAnimationFrame(() => {
     layoutFrame();

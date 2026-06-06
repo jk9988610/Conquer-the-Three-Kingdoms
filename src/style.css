@@ -926,6 +926,30 @@ body {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.pixel-editor__tools-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pixel-editor__tools-nav .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.62rem;
+  padding: 0.22rem 0.35rem;
+}
+
+.pixel-editor__tools-fixed .color-picker__alpha {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.68rem;
+}
+
+.pixel-editor__tools-fixed .color-picker__alpha input[type='range'] {
+  width: 100%;
+}
+
 .pixel-editor__clipboard-row {
   display: flex;
   gap: 4px;
@@ -1803,10 +1827,7 @@ body {
   justify-content: center;
   padding: 12px;
   background: rgba(0, 0, 0, 0.72);
-  touch-action: none;
-  overscroll-behavior: none;
-  user-select: none;
-  -webkit-user-select: none;
+  touch-action: manipulation;
 }
 
 .img-import-modal {
@@ -1846,8 +1867,15 @@ body {
   min-height: min(52dvh, 360px);
   overflow: hidden;
   touch-action: none;
-  overscroll-behavior: none;
   background: #0c1018;
+}
+
+.img-import-modal__actions {
+  touch-action: manipulation;
+}
+
+.img-import-modal__actions .btn {
+  touch-action: manipulation;
 }
 
 .img-import-modal__stage {
@@ -1884,6 +1912,11 @@ body {
   padding: 10px 12px;
   border-top: 1px solid var(--tcg-border);
   background: #172030;
+  touch-action: manipulation;
+}
+
+.img-import-modal__actions .btn {
+  touch-action: manipulation;
 }
 
 .img-import-modal__actions [data-confirm] {
