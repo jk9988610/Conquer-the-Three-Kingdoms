@@ -117,6 +117,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let selection: Selection | null = null;
   let clipboard: { pixels: Uint32Array; w: number; h: number } | null = null;
   let selectStart: { x: number; y: number } | null = null;
+  let lastSelectEnd: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
   let movePreviewPos: { x: number; y: number } | null = null;
@@ -235,7 +236,10 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function updateClipboardButtons(): void {
     const pasteBtn = panel.querySelector<HTMLButtonElement>('[data-paste]');
-    if (pasteBtn) pasteBtn.disabled = !clipboard;
+    if (!pasteBtn) return;
+    const hasPendingSelection =
+      (clipboardMode === 'copy' || clipboardMode === 'cut') && !!selection;
+    pasteBtn.disabled = !clipboard && !hasPendingSelection;
   }
 
   function clearToolbarHighlights(): void {
@@ -274,6 +278,7 @@ export function openPixelEditor(onApplied: () => void): void {
     moveAnchor = null;
     movePreviewPos = null;
     selectStart = null;
+    lastSelectEnd = null;
     updateSelectionBox();
     updateClipboardButtons();
   }
@@ -945,6 +950,7 @@ export function openPixelEditor(onApplied: () => void): void {
     rect.w = Math.min(rect.w, gridCols - rect.x);
     rect.h = Math.min(rect.h, gridRows - rect.y);
     selectStart = null;
+    lastSelectEnd = null;
     if (rect.w < 1 || rect.h < 1) {
       clearSelection();
       return;
@@ -954,6 +960,7 @@ export function openPixelEditor(onApplied: () => void): void {
       pixels: copyPackedRegion(grid, rect.x, rect.y, rect.w, rect.h, gridCols),
     };
     updateSelectionBox(rect);
+    updateClipboardButtons();
     refreshAll();
   }
 
@@ -1080,6 +1087,7 @@ export function openPixelEditor(onApplied: () => void): void {
       pointerDrawing = true;
       editSurface.setPointerCapture(e.pointerId);
       selectStart = { x: cell.x, y: cell.y };
+      lastSelectEnd = { x: cell.x, y: cell.y };
       updateSelectionBox({ x: cell.x, y: cell.y, w: 1, h: 1 });
       return;
     }
@@ -1159,6 +1167,7 @@ export function openPixelEditor(onApplied: () => void): void {
     const cell = cellFromEvent(e);
     if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart && cell) {
       const { x, y } = cell;
+      lastSelectEnd = { x, y };
       updateSelectionBox(normalizeRect(selectStart.x, selectStart.y, x, y));
       return;
     }
@@ -1197,6 +1206,10 @@ export function openPixelEditor(onApplied: () => void): void {
 
   const onEditPointerUp = (e: PointerEvent) => {
     const cell = cellFromEvent(e) ?? lastDragCell;
+    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart) {
+      const end = cell ?? lastSelectEnd ?? selectStart;
+      finishClipboardBox(end.x, end.y);
+    }
     if (!cell) {
       if (clipboardMode === 'paste' && moveAnchor) {
         endMoveDrag();
@@ -1212,9 +1225,6 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     const { x, y } = cell;
-    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart) {
-      finishClipboardBox(x, y);
-    }
     if (clipboardMode === 'paste' && moveAnchor && selection) {
       movePreviewPos = {
         x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
