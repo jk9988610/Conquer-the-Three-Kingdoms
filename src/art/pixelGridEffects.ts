@@ -1,3 +1,9 @@
+import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+import {
+  flattenPackedToDisplayBlocks,
+  gridToPacked,
+  packedToGrid,
+} from './packedGrid';
 import type { Pixel, PixelGrid } from './pixelArt';
 
 export type PixelImportEffect = 'standard' | 'sharpen' | 'dedarken' | 'vivid';
@@ -117,7 +123,7 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
       const avg = averageRgba(neighbors);
       if (!avg) continue;
 
-      const amount = 0.55;
+      const amount = 0.82;
       const next: Rgba = {
         r: clampByte(center.r + amount * (center.r - avg.r)),
         g: clampByte(center.g + amount * (center.g - avg.g)),
@@ -134,8 +140,8 @@ function dedarkenGrid(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const out = cloneGrid(grid);
-  const darkLum = 0.22;
-  const brightLum = 0.42;
+  const darkLum = 0.28;
+  const brightLum = 0.38;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
@@ -164,7 +170,7 @@ function dedarkenGrid(grid: PixelGrid): PixelGrid {
         continue;
       }
 
-      const mix = 0.72;
+      const mix = 0.88;
       out[y]![x] = toPixel({
         r: clampByte(center.r * (1 - mix) + avg.r * mix),
         g: clampByte(center.g * (1 - mix) + avg.g * mix),
@@ -213,8 +219,8 @@ function vividGrid(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const out = cloneGrid(grid);
-  const satBoost = 1.28;
-  const contrast = 1.12;
+  const satBoost = 1.42;
+  const contrast = 1.18;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
@@ -250,4 +256,18 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
     default:
       return cloneGrid(grid);
   }
+}
+
+/** 先压平为 75×105 展示块再处理，与编辑器预览/落盘观感一致 */
+export function applyPixelImportEffectForEditor(
+  grid: PixelGrid,
+  effect: PixelImportEffect
+): PixelGrid {
+  const flattened = flattenPackedToDisplayBlocks(
+    gridToPacked(grid),
+    ART_GRID_COLS,
+    ART_GRID_ROWS
+  );
+  const blockGrid = packedToGrid(flattened, ART_GRID_COLS, ART_GRID_ROWS);
+  return applyPixelImportEffect(blockGrid, effect);
 }

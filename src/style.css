@@ -1975,20 +1975,44 @@ body {
   width: min(96vw, 560px);
 }
 
-.img-import-effect__preview-wrap {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: min(48dvh, 320px);
-  background: #0c1018;
+.img-import-effect__preview-pane {
+  flex-shrink: 0;
+  padding: 10px 12px;
   border-top: 1px solid var(--tcg-border);
   border-bottom: 1px solid var(--tcg-border);
+  background: #101826;
 }
 
-.img-import-effect__preview {
+.img-import-effect__preview-label {
+  margin-bottom: 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--tcg-muted);
+  text-align: center;
+}
+
+.img-import-effect__preview-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.img-import-effect__art-surface {
+  position: relative;
+  flex-shrink: 0;
+  background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.img-import-effect__art-surface canvas {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: min(48dvh, 320px);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .img-import-effect__options {

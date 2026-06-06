@@ -1,9 +1,12 @@
+import { ART_GRID_COLS, ART_GRID_ROWS } from '../art/gridConfig';
 import {
-  applyPixelImportEffect,
+  applyPixelImportEffectForEditor,
   PIXEL_IMPORT_EFFECTS,
   type PixelImportEffect,
 } from '../art/pixelGridEffects';
-import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
+import { drawPackedPreview, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
+import { gridToPacked } from '../art/packedGrid';
+import { ART_PREVIEW_HEIGHT, ART_PREVIEW_WIDTH } from '../tcg/dimensions';
 import { getModalOverlayMount } from './overlayRoot';
 
 export interface ImageImportEffectModalOptions {
@@ -18,6 +21,12 @@ export function closeImageImportEffectModal(): void {
   const overlay = document.querySelector<EffectOverlay>('[data-modal="image-import-effect"]');
   overlay?.__effectRo?.disconnect();
   overlay?.remove();
+}
+
+/** 与编辑器预览区一致：展示块级效果 → 75×105 像素绘制 */
+function packedForPreview(grid: PixelGrid, effect: PixelImportEffect) {
+  const processed = applyPixelImportEffectForEditor(grid, effect);
+  return gridToPacked(processed);
 }
 
 export function openImageImportEffectModal(options: ImageImportEffectModalOptions): void {
@@ -35,11 +44,16 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   modal.innerHTML = `
     <header class="img-import-modal__head">
       <h3 class="img-import-modal__title">像素画效果</h3>
-      <p class="img-import-modal__hint">选择一种观感处理，预览区会实时更新</p>
+      <p class="img-import-modal__hint">选择一种观感处理，预览区会实时更新（与绘制页预览一致）</p>
     </header>
-    <div class="img-import-effect__preview-wrap" data-preview-wrap>
-      <canvas class="img-import-effect__preview" data-preview-canvas></canvas>
-    </div>
+    <section class="img-import-effect__preview-pane">
+      <div class="img-import-effect__preview-label">预览</div>
+      <div class="img-import-effect__preview-wrap" data-preview-wrap>
+        <div class="img-import-effect__art-surface" data-preview-surface>
+          <canvas data-preview-canvas></canvas>
+        </div>
+      </div>
+    </section>
     <div class="img-import-effect__options" data-effect-options></div>
     <footer class="img-import-modal__actions">
       <button type="button" class="btn" data-cancel>取消</button>
@@ -47,9 +61,12 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     </footer>
   `;
 
-  const previewWrap = modal.querySelector<HTMLElement>('[data-preview-wrap]')!;
+  const previewSurface = modal.querySelector<HTMLElement>('[data-preview-surface]')!;
   const previewCanvas = modal.querySelector<HTMLCanvasElement>('[data-preview-canvas]')!;
   const optionsEl = modal.querySelector<HTMLElement>('[data-effect-options]')!;
+
+  previewSurface.style.width = `${ART_PREVIEW_WIDTH}px`;
+  previewSurface.style.height = `${ART_PREVIEW_HEIGHT}px`;
 
   const optionButtons = new Map<PixelImportEffect, HTMLButtonElement>();
 
@@ -73,21 +90,27 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   function renderPreview(): void {
-    const rect = previewWrap.getBoundingClientRect();
-    const width = Math.max(1, Math.floor(rect.width));
-    const height = Math.max(1, Math.floor(rect.height));
-    const prepared = prepareSharpCanvas(previewCanvas, width, height);
+    const prepared = prepareSharpCanvas(
+      previewCanvas,
+      ART_PREVIEW_WIDTH,
+      ART_PREVIEW_HEIGHT
+    );
     if (!prepared) return;
     const { ctx } = prepared;
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#0c1018';
-    ctx.fillRect(0, 0, width, height);
-    const processed = applyPixelImportEffect(grid, selected);
-    drawGridToCanvas(ctx, processed, width, height, 'fit');
+    ctx.clearRect(0, 0, ART_PREVIEW_WIDTH, ART_PREVIEW_HEIGHT);
+    const packed = packedForPreview(grid, selected);
+    drawPackedPreview(
+      ctx,
+      packed,
+      ART_PREVIEW_WIDTH,
+      ART_PREVIEW_HEIGHT,
+      ART_GRID_COLS,
+      ART_GRID_ROWS
+    );
   }
 
   function finishConfirm(): void {
-    const processed = applyPixelImportEffect(grid, selected);
+    const processed = applyPixelImportEffectForEditor(grid, selected);
     closeImageImportEffectModal();
     onConfirm(processed);
   }
@@ -116,10 +139,6 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
   overlay.append(modal);
   getModalOverlayMount().append(overlay);
-
-  const ro = new ResizeObserver(() => renderPreview());
-  ro.observe(previewWrap);
-  overlay.__effectRo = ro;
 
   selectEffect('standard');
   requestAnimationFrame(() => {
