@@ -234,7 +234,12 @@ export function drawPackedDisplayToCanvas(
   dstRows = ART_DISPLAY_ROWS
 ): void {
   const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
-  const { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
+  let { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
+  if (mode === 'fit' && Math.abs(width / height - dstCols / dstRows) < 1e-4) {
+    cell = width / dstCols;
+    ox = 0;
+    oy = 0;
+  }
   const dw = dstCols * cell;
   const dh = dstRows * cell;
 

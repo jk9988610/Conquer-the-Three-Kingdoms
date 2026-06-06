@@ -20,7 +20,7 @@ export function createPixelArtCanvas(
   if (prep) {
     drawPixelArt(prep.ctx, artKey, prep.cssWidth, prep.cssHeight, {
       transparent: true,
-      mode: 'fit',
+      mode: 'cover',
     });
   }
   return canvas;
@@ -134,7 +134,7 @@ export function createDragGhost(source: HTMLElement): HTMLElement {
     } else {
       drawPixelArt(prep.ctx, artKey, prep.cssWidth, prep.cssHeight, {
         transparent: true,
-        mode: 'fit',
+        mode: 'cover',
       });
     }
   }

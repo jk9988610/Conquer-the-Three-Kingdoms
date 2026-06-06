@@ -19,7 +19,11 @@ export type PixelImportEffect =
   | 'soft'
   | 'contrast'
   | 'warm'
-  | 'cool';
+  | 'cool'
+  | 'brightness';
+
+/** 各效果强度 0–100，可叠加调配 */
+export type PixelImportEffectMix = Record<Exclude<PixelImportEffect, 'standard'>, number>;
 
 export interface PixelImportEffectOption {
   id: PixelImportEffect;
@@ -28,7 +32,6 @@ export interface PixelImportEffectOption {
 }
 
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
-  { id: 'standard', label: '标准', description: '保持采样原貌' },
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
   { id: 'deblack', label: '去黑点', description: '去除孤立黑色噪点' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
@@ -36,7 +39,32 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   { id: 'contrast', label: '高对比', description: '拉开明暗层次' },
   { id: 'warm', label: '暖色', description: '偏暖色调' },
   { id: 'cool', label: '冷色', description: '偏冷色调' },
+  { id: 'brightness', label: '亮度', description: '整体提亮、色彩更明亮' },
 ];
+
+const MIX_EFFECT_ORDER: Exclude<PixelImportEffect, 'standard'>[] = [
+  'deblack',
+  'soft',
+  'sharpen',
+  'contrast',
+  'vivid',
+  'warm',
+  'cool',
+  'brightness',
+];
+
+export function createDefaultEffectMix(): PixelImportEffectMix {
+  return {
+    sharpen: 0,
+    deblack: 0,
+    vivid: 0,
+    soft: 0,
+    contrast: 0,
+    warm: 0,
+    cool: 0,
+    brightness: 0,
+  };
+}
 
 interface Rgba {
   r: number;
@@ -331,6 +359,30 @@ function warmGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
+function brightnessGrid(grid: PixelGrid, strength: number): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+  const t = Math.max(0, Math.min(1, strength));
+  const gain = 1 + t * 1.15;
+  const lift = t * 42;
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (!center) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte(center.r * gain + lift),
+        g: clampByte(center.g * gain + lift),
+        b: clampByte(center.b * gain + lift),
+        a: center.a,
+      });
+    }
+  }
+  return out;
+}
+
 function coolGrid(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
@@ -352,6 +404,50 @@ function coolGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
+function lerpRgba(a: Rgba, b: Rgba, t: number): Rgba {
+  const u = Math.max(0, Math.min(1, t));
+  return {
+    r: clampByte(a.r + (b.r - a.r) * u),
+    g: clampByte(a.g + (b.g - a.g) * u),
+    b: clampByte(a.b + (b.b - a.b) * u),
+    a: a.a + (b.a - a.a) * u,
+  };
+}
+
+function lerpGrids(base: PixelGrid, target: PixelGrid, t: number): PixelGrid {
+  const rows = Math.max(base.length, target.length);
+  const cols = Math.max(
+    0,
+    ...base.map((r) => r.length),
+    ...target.map((r) => r.length)
+  );
+  const out: PixelGrid = [];
+  const u = Math.max(0, Math.min(1, t));
+
+  for (let y = 0; y < rows; y++) {
+    const row: Pixel[] = [];
+    for (let x = 0; x < cols; x++) {
+      const a = getPixel(base, x, y);
+      const b = getPixel(target, x, y);
+      if (!a && !b) {
+        row.push(null);
+        continue;
+      }
+      if (!a) {
+        row.push(u >= 1 ? (target[y]?.[x] ?? null) : null);
+        continue;
+      }
+      if (!b) {
+        row.push(u <= 0 ? (base[y]?.[x] ?? null) : null);
+        continue;
+      }
+      row.push(toPixel(lerpRgba(a, b, u)));
+    }
+    out.push(row);
+  }
+  return out;
+}
+
 export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffect): PixelGrid {
   switch (effect) {
     case 'sharpen':
@@ -368,10 +464,36 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
       return warmGrid(grid);
     case 'cool':
       return coolGrid(grid);
+    case 'brightness':
+      return brightnessGrid(grid, 1);
     case 'standard':
     default:
       return cloneGrid(grid);
   }
+}
+
+/** 按滑条强度叠加多种效果（0=原图，可自由组合） */
+export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMix): PixelGrid {
+  let result = cloneGrid(display);
+  for (const id of MIX_EFFECT_ORDER) {
+    const strength = mix[id] ?? 0;
+    if (strength <= 0) continue;
+    const t = strength / 100;
+    const next =
+      id === 'brightness'
+        ? brightnessGrid(result, t)
+        : applyPixelImportEffect(result, id);
+    result = lerpGrids(result, next, t);
+  }
+  return result;
+}
+
+export function describeEffectMix(mix: PixelImportEffectMix): string {
+  const active = PIXEL_IMPORT_EFFECTS.filter((o) => (mix[o.id as keyof PixelImportEffectMix] ?? 0) > 0);
+  if (active.length === 0) return '原图';
+  return active
+    .map((o) => `${o.label} ${mix[o.id as keyof PixelImportEffectMix]}%`)
+    .join(' · ');
 }
 
 /** 逻辑网格 → 卡面展示网格（75×105） */
@@ -408,20 +530,20 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
   return out;
 }
 
-/** 在 75×105 展示网格上处理效果，供预览与落盘 */
-export function applyPixelImportEffectOnDisplay(
+/** 在 75×105 展示网格上按混合参数处理，供预览与落盘 */
+export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
-  effect: PixelImportEffect
+  mix: PixelImportEffectMix
 ): PixelGrid {
   const display = logicalGridToDisplayGrid(grid);
-  return applyPixelImportEffect(display, effect);
+  return applyPixelImportMix(display, mix);
 }
 
-/** 导入落盘：展示级效果 → 展开为 500×700 逻辑网格 */
-export function applyPixelImportEffectForEditor(
+/** 导入落盘：展示级混合效果 → 展开为 500×700 逻辑网格 */
+export function applyPixelImportMixForEditor(
   grid: PixelGrid,
-  effect: PixelImportEffect
+  mix: PixelImportEffectMix
 ): PixelGrid {
-  const processed = applyPixelImportEffectOnDisplay(grid, effect);
+  const processed = applyPixelImportMixOnDisplay(grid, mix);
   return displayGridToLogicalGrid(processed);
 }

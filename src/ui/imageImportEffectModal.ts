@@ -4,10 +4,12 @@ import {
 } from '../art/gridConfig';
 import { gridDrawLayout } from '../art/packedGrid';
 import {
-  applyPixelImportEffectForEditor,
-  applyPixelImportEffectOnDisplay,
+  applyPixelImportMixForEditor,
+  applyPixelImportMixOnDisplay,
+  createDefaultEffectMix,
+  describeEffectMix,
   PIXEL_IMPORT_EFFECTS,
-  type PixelImportEffect,
+  type PixelImportEffectMix,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
 import { getModalOverlayMount } from './overlayRoot';
@@ -41,7 +43,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   closeImageImportEffectModal();
 
   const { grid, onConfirm, onCancel } = options;
-  let selected: PixelImportEffect = 'standard';
+  const mix = createDefaultEffectMix();
 
   const overlay = document.createElement('div') as EffectOverlay;
   overlay.className = 'img-import-overlay img-import-overlay--page';
@@ -52,8 +54,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   modal.innerHTML = `
     <header class="img-import-effect__topbar">
       <div class="img-import-effect__topbar-main">
-        <h3 class="img-import-effect__title">选择像素画效果</h3>
-        <p class="img-import-effect__subtitle">左侧为像素化预览（75×105），右侧切换效果实时对比</p>
+        <h3 class="img-import-effect__title">调配像素画效果</h3>
+        <p class="img-import-effect__subtitle">拖动右侧滑条组合效果，左侧实时预览（75×105）</p>
       </div>
       <div class="img-import-effect__topbar-actions">
         <button type="button" class="btn img-import-effect__topbar-btn" data-fullscreen>全屏</button>
@@ -62,7 +64,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     </header>
     <div class="img-import-effect__body">
       <section class="img-import-effect__preview-col">
-        <div class="img-import-effect__preview-label">预览 · <span data-effect-name>标准</span></div>
+        <div class="img-import-effect__preview-label">预览 · <span data-effect-name>原图</span></div>
         <div class="img-import-effect__preview-wrap" data-preview-wrap>
           <div class="img-import-effect__art-surface" data-preview-surface>
             <canvas data-preview-canvas></canvas>
@@ -70,8 +72,9 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         </div>
       </section>
       <aside class="img-import-effect__sidebar">
-        <div class="img-import-effect__options" data-effect-options></div>
+        <div class="img-import-effect__sliders" data-effect-sliders></div>
         <footer class="img-import-effect__actions">
+          <button type="button" class="btn" data-reset>重置</button>
           <button type="button" class="btn" data-cancel>取消</button>
           <button type="button" class="btn" data-confirm>确定</button>
         </footer>
@@ -83,20 +86,34 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const previewSurface = modal.querySelector<HTMLElement>('[data-preview-surface]')!;
   const previewCanvas = modal.querySelector<HTMLCanvasElement>('[data-preview-canvas]')!;
   const effectNameEl = modal.querySelector<HTMLElement>('[data-effect-name]')!;
-  const optionsEl = modal.querySelector<HTMLElement>('[data-effect-options]')!;
+  const slidersEl = modal.querySelector<HTMLElement>('[data-effect-sliders]')!;
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
 
-  const optionButtons = new Map<PixelImportEffect, HTMLButtonElement>();
-
   for (const opt of PIXEL_IMPORT_EFFECTS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'img-import-effect__option';
-    btn.dataset.effect = opt.id;
-    btn.innerHTML = `<span class="img-import-effect__option-label">${opt.label}</span><span class="img-import-effect__option-desc">${opt.description}</span>`;
-    btn.addEventListener('click', () => selectEffect(opt.id));
-    optionsEl.append(btn);
-    optionButtons.set(opt.id, btn);
+    const row = document.createElement('label');
+    row.className = 'img-import-effect__slider-row';
+    row.innerHTML = `
+      <span class="img-import-effect__slider-head">
+        <span class="img-import-effect__option-label">${opt.label}</span>
+        <span class="img-import-effect__slider-val" data-val>0</span>
+      </span>
+      <span class="img-import-effect__option-desc">${opt.description}</span>
+      <input type="range" min="0" max="100" value="0" step="1" data-effect="${opt.id}" />
+    `;
+    const range = row.querySelector<HTMLInputElement>('[data-effect]')!;
+    const valEl = row.querySelector<HTMLElement>('[data-val]')!;
+    range.addEventListener('input', () => {
+      const v = Number(range.value) || 0;
+      mix[opt.id as keyof PixelImportEffectMix] = v;
+      if (valEl) valEl.textContent = String(v);
+      updateMixLabel();
+      renderPreview();
+    });
+    slidersEl.append(row);
+  }
+
+  function updateMixLabel(): void {
+    if (effectNameEl) effectNameEl.textContent = describeEffectMix(mix);
   }
 
   function updateFullscreenBtn(): void {
@@ -120,16 +137,6 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       void document.exitFullscreen?.();
     }
   });
-
-  function selectEffect(effect: PixelImportEffect): void {
-    selected = effect;
-    const meta = PIXEL_IMPORT_EFFECTS.find((o) => o.id === effect);
-    if (effectNameEl && meta) effectNameEl.textContent = meta.label;
-    for (const [id, btn] of optionButtons) {
-      btn.classList.toggle('img-import-effect__option--active', id === effect);
-    }
-    renderPreview();
-  }
 
   function renderPreview(): void {
     const rect = previewWrap.getBoundingClientRect();
@@ -159,7 +166,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     previewCanvas.style.width = `${cssW}px`;
     previewCanvas.style.height = `${cssH}px`;
     ctx.clearRect(0, 0, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
-    const display = applyPixelImportEffectOnDisplay(grid, selected);
+    const display = applyPixelImportMixOnDisplay(grid, mix);
     drawGridToCanvas(
       ctx,
       display,
@@ -169,8 +176,24 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     );
   }
 
+  function resetMix(): void {
+    const defaults = createDefaultEffectMix();
+    for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
+      mix[key] = defaults[key];
+    }
+    slidersEl.querySelectorAll<HTMLInputElement>('[data-effect]').forEach((range) => {
+      range.value = '0';
+      const valEl = range
+        .closest('.img-import-effect__slider-row')
+        ?.querySelector<HTMLElement>('[data-val]');
+      if (valEl) valEl.textContent = '0';
+    });
+    updateMixLabel();
+    renderPreview();
+  }
+
   function finishConfirm(): void {
-    const processed = applyPixelImportEffectForEditor(grid, selected);
+    const processed = applyPixelImportMixForEditor(grid, mix);
     closeImageImportEffectModal();
     onConfirm(processed);
   }
@@ -180,14 +203,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     closeImageImportEffectModal();
   }
 
-  const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-confirm]')!;
-  const cancelBtn = modal.querySelector<HTMLButtonElement>('[data-cancel]')!;
-  confirmBtn.addEventListener('click', (e) => {
+  modal.querySelector('[data-reset]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resetMix();
+  });
+  modal.querySelector('[data-confirm]')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     finishConfirm();
   });
-  cancelBtn.addEventListener('click', (e) => {
+  modal.querySelector('[data-cancel]')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     finishCancel();
@@ -207,7 +233,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   overlay.__effectRo = ro;
 
   updateFullscreenBtn();
-  selectEffect('standard');
+  updateMixLabel();
   requestAnimationFrame(() => {
     renderPreview();
     requestAnimationFrame(renderPreview);
