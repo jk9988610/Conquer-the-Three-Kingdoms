@@ -37,6 +37,7 @@ import {
   savePixelEditorDraft,
 } from '../art/pixelArtDraft';
 import { loadImageFromFile } from '../art/imageToGrid';
+import { openImageImportEffectModal } from './imageImportEffectModal';
 import { openImageImportModal } from './imageImportModal';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
@@ -59,7 +60,6 @@ interface CellPatch {
 type UndoEntry = CellPatch[];
 const PALETTE_PRESETS = [
   '#c44',
-  '#422',
   '#6a8',
   '#48c',
   '#ec4',
@@ -397,8 +397,6 @@ export function openPixelEditor(onApplied: () => void): void {
             </div>
             <div class="pixel-editor__tools-nav">
               <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-              <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
-              <button type="button" class="btn" data-zoom-in title="放大">放大</button>
             </div>
             <label class="pixel-editor__brush-row">
               画笔粗细
@@ -412,7 +410,6 @@ export function openPixelEditor(onApplied: () => void): void {
             </div>
           </div>
           <div class="pixel-editor__tools-scroll" data-tools-scroll>
-            <p class="pixel-editor__view-hint">绘制区：仅「拖动」工具下可平移/缩放画布</p>
             <div class="pixel-editor__color-block" data-color-picker></div>
             <div class="pixel-editor__presets" data-presets></div>
           </div>
@@ -962,6 +959,13 @@ export function openPixelEditor(onApplied: () => void): void {
     updateSelectionBox(rect);
     updateClipboardButtons();
     refreshAll();
+    if (clipboardMode === 'cut') {
+      deactivateToolForClipboard();
+      clipboardMode = 'paste';
+      captureClipboardFromSelection('cut');
+      startPasteFloating();
+      syncToolbarUi();
+    }
   }
 
   function captureClipboardFromSelection(mode: 'copy' | 'cut'): boolean {
@@ -1280,18 +1284,6 @@ export function openPixelEditor(onApplied: () => void): void {
     updateEditorDebug();
   });
 
-  panel.querySelector('[data-zoom-in]')?.addEventListener('click', () => {
-    if (!canPanZoomView()) return;
-    viewZoom = clamp(viewZoom * 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
-    applyEditViewTransform();
-    updateEditorDebug();
-  });
-  panel.querySelector('[data-zoom-out]')?.addEventListener('click', () => {
-    if (!canPanZoomView()) return;
-    viewZoom = clamp(viewZoom / 1.25, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM);
-    applyEditViewTransform();
-    updateEditorDebug();
-  });
   panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
     if (!canPanZoomView()) return;
     viewPanX = 0;
@@ -1404,16 +1396,21 @@ export function openPixelEditor(onApplied: () => void): void {
           cols: gridCols,
           rows: gridRows,
           onConfirm: (imported) => {
-            replaceGrid(gridToPacked(imported));
-            clearSelection();
-            viewPanX = 0;
-            viewPanY = 0;
-            viewZoom = 1;
-            applyEditViewTransform();
-            flattenEditorGrid();
-            refreshAll();
-            savePixelEditorDraft(currentKey, grid);
-            requestAnimationFrame(() => layoutViewport());
+            openImageImportEffectModal({
+              grid: imported,
+              onConfirm: (processed) => {
+                replaceGrid(gridToPacked(processed));
+                clearSelection();
+                viewPanX = 0;
+                viewPanY = 0;
+                viewZoom = 1;
+                applyEditViewTransform();
+                flattenEditorGrid();
+                refreshAll();
+                savePixelEditorDraft(currentKey, grid);
+                requestAnimationFrame(() => layoutViewport());
+              },
+            });
           },
         });
       } catch (err) {

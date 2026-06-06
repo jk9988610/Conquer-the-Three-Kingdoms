@@ -38,7 +38,7 @@ export function createColorPicker(
 
   const alphaRow = document.createElement('label');
   alphaRow.className = 'color-picker__alpha';
-  alphaRow.innerHTML = `透明度 <input type="range" min="0" max="100" value="${Math.round(alpha * 100)}" data-alpha-range />`;
+  alphaRow.innerHTML = `<span class="color-picker__alpha-label">透明度</span><input type="range" min="0" max="100" value="${Math.round(alpha * 100)}" data-alpha-range />`;
   const alphaRange = alphaRow.querySelector<HTMLInputElement>('[data-alpha-range]')!;
 
   wrap.append(wheel, preview);

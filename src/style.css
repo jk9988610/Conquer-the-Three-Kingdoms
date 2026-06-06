@@ -975,13 +975,23 @@ body {
 }
 
 .pixel-editor__tools-fixed .color-picker__alpha {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   min-width: 0;
   font-size: 0.68rem;
 }
 
+.pixel-editor__tools-fixed .color-picker__alpha-label {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .pixel-editor__tools-fixed .color-picker__alpha input[type='range'] {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .pixel-editor__clipboard-row {
@@ -1534,10 +1544,21 @@ body {
 
 .color-picker__alpha {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   font-size: 0.7rem;
-  gap: 4px;
+  gap: 6px;
   min-width: 120px;
+}
+
+.color-picker__alpha-label {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.color-picker__alpha input[type='range'] {
+  flex: 1;
+  min-width: 0;
 }
 
 .pixel-editor__edit-frame .pixel-editor__ruler-corner {
@@ -1948,6 +1969,66 @@ body {
 .img-import-modal__actions [data-confirm] {
   border-color: var(--tcg-accent);
   color: var(--tcg-accent);
+}
+
+.img-import-modal--effects {
+  width: min(96vw, 560px);
+}
+
+.img-import-effect__preview-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: min(48dvh, 320px);
+  background: #0c1018;
+  border-top: 1px solid var(--tcg-border);
+  border-bottom: 1px solid var(--tcg-border);
+}
+
+.img-import-effect__preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: min(48dvh, 320px);
+}
+
+.img-import-effect__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  background: #172030;
+}
+
+.img-import-effect__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--tcg-border);
+  border-radius: 8px;
+  background: #101826;
+  color: var(--tcg-text);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.img-import-effect__option--active {
+  border-color: var(--tcg-accent);
+  box-shadow: inset 0 0 0 1px rgba(236, 196, 68, 0.35);
+  background: rgba(236, 196, 68, 0.08);
+}
+
+.img-import-effect__option-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.img-import-effect__option-desc {
+  font-size: 0.62rem;
+  color: var(--tcg-muted);
+  line-height: 1.3;
 }
 
 .card-brief__name {
