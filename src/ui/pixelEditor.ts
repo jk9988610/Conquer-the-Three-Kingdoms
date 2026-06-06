@@ -68,7 +68,8 @@ const PALETTE_PRESETS = [
   '#e8589a',
 ];
 
-type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'select' | 'move' | 'hand';
+type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'hand';
+type ClipboardMode = 'copy' | 'cut' | 'paste' | null;
 
 interface Selection {
   x: number;
@@ -119,9 +120,10 @@ export function openPixelEditor(onApplied: () => void): void {
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
   let movePreviewPos: { x: number; y: number } | null = null;
-  /** 摆放模式下选区悬浮于画布，切换其他工具时落盘 */
+  /** 粘贴预览悬浮于画布，不修改底层像素直至确认落盘 */
   let selectionFloating = false;
-  let pasteArmed = false;
+  let floatingPasteOnly = false;
+  let clipboardMode: ClipboardMode = null;
   let lastPaintCell: { x: number; y: number } | null = null;
   let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
@@ -232,22 +234,49 @@ export function openPixelEditor(onApplied: () => void): void {
   }
 
   function updateClipboardButtons(): void {
-    const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]');
-    const cutBtn = panel.querySelector<HTMLButtonElement>('[data-cut]');
     const pasteBtn = panel.querySelector<HTMLButtonElement>('[data-paste]');
-    if (copyBtn) copyBtn.disabled = !selection;
-    if (cutBtn) cutBtn.disabled = !selection;
     if (pasteBtn) pasteBtn.disabled = !clipboard;
+    updateClipboardModeUi();
+  }
+
+  function updateClipboardModeUi(): void {
+    panel.querySelector('[data-copy]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'copy');
+    panel.querySelector('[data-cut]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'cut');
+    panel.querySelector('[data-paste]')?.classList.toggle('pixel-editor__tool--active', clipboardMode === 'paste');
   }
 
   function clearSelection(): void {
     selection = null;
     selectionFloating = false;
+    floatingPasteOnly = false;
     moveAnchor = null;
     movePreviewPos = null;
     selectStart = null;
     updateSelectionBox();
     updateClipboardButtons();
+  }
+
+  function discardPasteFloating(): void {
+    if (!floatingPasteOnly) return;
+    selectionFloating = false;
+    floatingPasteOnly = false;
+    selection = null;
+    moveAnchor = null;
+    movePreviewPos = null;
+    updateSelectionBox();
+    refreshAll();
+  }
+
+  function exitClipboardModes(commitPaste = false): void {
+    if (clipboardMode === 'paste' && floatingPasteOnly) {
+      if (commitPaste) commitPasteFloating();
+      else discardPasteFloating();
+    } else {
+      clearSelection();
+    }
+    clipboardMode = null;
+    selectStart = null;
+    updateClipboardModeUi();
   }
 
   function flattenEditorGrid(): void {
@@ -267,11 +296,17 @@ export function openPixelEditor(onApplied: () => void): void {
     grid = draft ? clonePackedGrid(draft.grid) : clonePackedGrid(getArtPacked(key));
     selection = null;
     selectStart = null;
+    selectionFloating = false;
+    floatingPasteOnly = false;
+    clipboardMode = null;
+    moveAnchor = null;
+    movePreviewPos = null;
     viewPanX = 0;
     viewPanY = 0;
     viewZoom = 1;
     resetHistory();
     applyEditViewTransform();
+    updateClipboardModeUi();
   }
 
   const overlay = document.createElement('div');
@@ -324,6 +359,11 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-undo disabled>撤销</button>
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
+            <div class="pixel-editor__clipboard-row">
+              <button type="button" class="btn" data-copy>复制</button>
+              <button type="button" class="btn" data-cut>剪切</button>
+              <button type="button" class="btn" data-paste disabled>粘贴</button>
+            </div>
             <label class="pixel-editor__brush-row">
               画笔粗细
               <input type="range" min="1" max="12" value="1" data-brush-size />
@@ -339,13 +379,6 @@ export function openPixelEditor(onApplied: () => void): void {
             <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
             <div class="pixel-editor__tools-grid">
               <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="move">摆放</button>
-            </div>
-            <div class="pixel-editor__clipboard-row">
-              <button type="button" class="btn" data-copy disabled>复制</button>
-              <button type="button" class="btn" data-cut disabled>剪切</button>
-              <button type="button" class="btn" data-paste disabled>粘贴</button>
             </div>
             <div class="pixel-editor__tools-zoom">
               <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
@@ -741,43 +774,59 @@ export function openPixelEditor(onApplied: () => void): void {
     selBox.style.height = `${px.height}px`;
   }
 
-  function clearPasteArmed(): void {
-    pasteArmed = false;
-    panel.querySelector('[data-paste]')?.classList.remove('pixel-editor__tool--active');
-  }
-
   function setTool(next: Tool): void {
+    exitClipboardModes(true);
     tool = next;
-    clearPasteArmed();
-    panel.querySelectorAll('.pixel-editor__tool').forEach((btn) => {
+    panel.querySelectorAll('[data-tool]').forEach((btn) => {
       btn.classList.toggle(
         'pixel-editor__tool--active',
         (btn as HTMLElement).dataset.tool === next
       );
     });
-    if (next !== 'move') {
-      endMoveDrag();
-      if (selectionFloating && selection) {
-        commitFloatingSelection();
-      }
-      clearSelection();
-    } else if (selection && !selectionFloating) {
-      enterFloatingMode();
-      updateSelectionBox();
-    } else {
-      updateSelectionBox();
-    }
-    if (next !== 'select') selectStart = null;
-    editCanvas.style.cursor =
-      next === 'hand'
-        ? 'grab'
-        : next === 'move'
-          ? selection
-            ? 'grab'
-            : 'not-allowed'
-          : 'crosshair';
+    editCanvas.style.cursor = next === 'hand' ? 'grab' : 'crosshair';
     applyEditViewTransform();
     updateEditorDebug();
+  }
+
+  function nearestPastePosition(): { x: number; y: number } {
+    if (!clipboard) return { x: 0, y: 0 };
+    return {
+      x: clamp(Math.floor((gridCols - clipboard.w) / 2), 0, Math.max(0, gridCols - clipboard.w)),
+      y: clamp(Math.floor((gridRows - clipboard.h) / 2), 0, Math.max(0, gridRows - clipboard.h)),
+    };
+  }
+
+  function armCopyMode(): void {
+    exitClipboardModes(false);
+    clipboardMode = 'copy';
+    clearSelection();
+    updateClipboardModeUi();
+  }
+
+  function armCutMode(): void {
+    exitClipboardModes(false);
+    clipboardMode = 'cut';
+    clearSelection();
+    updateClipboardModeUi();
+  }
+
+  function handlePasteClick(): void {
+    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selection) {
+      captureClipboardFromSelection();
+      clipboardMode = 'paste';
+      startPasteFloating();
+      updateClipboardModeUi();
+      return;
+    }
+    if (!clipboard) return;
+    if (clipboardMode === 'paste') {
+      exitClipboardModes(true);
+      return;
+    }
+    exitClipboardModes(false);
+    clipboardMode = 'paste';
+    startPasteFloating();
+    updateClipboardModeUi();
   }
 
   function fillDisplayCell(dx: number, dy: number, colorArgb: number): void {
@@ -857,13 +906,15 @@ export function openPixelEditor(onApplied: () => void): void {
     }
   }
 
-  function finishSelection(x1: number, y1: number): void {
-    if (!selectStart) return;
+  /** 复制/剪切框选完成：保留选区，待点击粘贴写入剪贴板 */
+  function finishClipboardBox(x1: number, y1: number): void {
+    if (!selectStart || (clipboardMode !== 'copy' && clipboardMode !== 'cut')) return;
     const rect = normalizeRect(selectStart.x, selectStart.y, x1, y1);
     rect.x = clamp(rect.x, 0, gridCols - 1);
     rect.y = clamp(rect.y, 0, gridRows - 1);
     rect.w = Math.min(rect.w, gridCols - rect.x);
     rect.h = Math.min(rect.h, gridRows - rect.y);
+    selectStart = null;
     if (rect.w < 1 || rect.h < 1) {
       clearSelection();
       return;
@@ -873,34 +924,18 @@ export function openPixelEditor(onApplied: () => void): void {
       pixels: copyPackedRegion(grid, rect.x, rect.y, rect.w, rect.h, gridCols),
     };
     updateSelectionBox(rect);
-    selectStart = null;
-    updateClipboardButtons();
-    setTool('move');
+    refreshAll();
   }
 
-  function copySelection(): void {
-    if (!selection) return;
+  function captureClipboardFromSelection(): boolean {
+    if (!selection || (clipboardMode !== 'copy' && clipboardMode !== 'cut')) return false;
+    const mode = clipboardMode;
     clipboard = {
       pixels: selection.pixels.slice(),
       w: selection.w,
       h: selection.h,
     };
-    updateClipboardButtons();
-  }
-
-  function cutSelection(): void {
-    if (!selection) return;
-    clipboard = {
-      pixels: selection.pixels.slice(),
-      w: selection.w,
-      h: selection.h,
-    };
-    if (selectionFloating) {
-      patchBatch = null;
-      selectionFloating = false;
-      movePreviewPos = null;
-      moveAnchor = null;
-    } else {
+    if (mode === 'cut') {
       beginUndoBatch();
       clearPackedRegion(
         grid,
@@ -914,13 +949,15 @@ export function openPixelEditor(onApplied: () => void): void {
       commitUndoBatch();
     }
     clearSelection();
-    refreshAll();
+    updateClipboardButtons();
+    return true;
   }
 
-  function pasteAtCell(x: number, y: number): void {
+  function startPasteFloating(at?: { x: number; y: number }): void {
     if (!clipboard) return;
-    const tx = clamp(x, 0, Math.max(0, gridCols - clipboard.w));
-    const ty = clamp(y, 0, Math.max(0, gridRows - clipboard.h));
+    const pos = at ?? nearestPastePosition();
+    const tx = clamp(pos.x, 0, Math.max(0, gridCols - clipboard.w));
+    const ty = clamp(pos.y, 0, Math.max(0, gridRows - clipboard.h));
     selection = {
       x: tx,
       y: ty,
@@ -928,32 +965,11 @@ export function openPixelEditor(onApplied: () => void): void {
       h: clipboard.h,
       pixels: clipboard.pixels.slice(),
     };
-    selectionFloating = false;
-    movePreviewPos = null;
-    updateSelectionBox();
-    updateClipboardButtons();
-    setTool('move');
-  }
-
-  function armPaste(): void {
-    if (!clipboard) return;
-    pasteArmed = true;
-    panel.querySelector('[data-paste]')?.classList.add('pixel-editor__tool--active');
-  }
-
-  function enterFloatingMode(): void {
-    if (!selection || selectionFloating) return;
-    beginUndoBatch();
     selectionFloating = true;
-    clearPackedRegion(
-      grid,
-      selection.x,
-      selection.y,
-      selection.w,
-      selection.h,
-      gridCols,
-      packedCellChange
-    );
+    floatingPasteOnly = true;
+    movePreviewPos = { x: tx, y: ty };
+    moveAnchor = null;
+    updateSelectionBox();
     refreshAll();
   }
 
@@ -969,11 +985,12 @@ export function openPixelEditor(onApplied: () => void): void {
     refreshAll();
   }
 
-  function commitFloatingSelection(): void {
-    if (!selection || !selectionFloating) return;
+  function commitPasteFloating(): void {
+    if (!selection || !floatingPasteOnly) return;
     const pos = floatingSelectionPos() ?? { x: selection.x, y: selection.y };
     const tx = clamp(pos.x, 0, gridCols - selection.w);
     const ty = clamp(pos.y, 0, gridRows - selection.h);
+    beginUndoBatch();
     pastePackedRegion(
       grid,
       gridCols,
@@ -985,20 +1002,13 @@ export function openPixelEditor(onApplied: () => void): void {
       selection.pixels,
       packedCellChange
     );
-    selection.x = tx;
-    selection.y = ty;
-    selection.pixels = copyPackedRegion(
-      grid,
-      tx,
-      ty,
-      selection.w,
-      selection.h,
-      gridCols
-    );
+    commitUndoBatch();
     selectionFloating = false;
+    floatingPasteOnly = false;
+    selection = null;
     movePreviewPos = null;
     moveAnchor = null;
-    commitUndoBatch();
+    updateSelectionBox();
     refreshAll();
   }
 
@@ -1034,12 +1044,28 @@ export function openPixelEditor(onApplied: () => void): void {
   const onEditPointerDown = (e: PointerEvent) => {
     if (navPointers.size >= 2) return;
     const cell = cellFromEvent(e);
-    if (pasteArmed && clipboard && cell) {
+
+    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && cell) {
       e.preventDefault();
-      clearPasteArmed();
-      pasteAtCell(cell.x, cell.y);
+      pointerDrawing = true;
+      editSurface.setPointerCapture(e.pointerId);
+      selectStart = { x: cell.x, y: cell.y };
+      updateSelectionBox({ x: cell.x, y: cell.y, w: 1, h: 1 });
       return;
     }
+
+    if (clipboardMode === 'paste' && floatingPasteOnly && selection && cell) {
+      e.preventDefault();
+      pointerDrawing = true;
+      editSurface.setPointerCapture(e.pointerId);
+      const pos = floatingSelectionPos() ?? { x: selection.x, y: selection.y };
+      movePreviewPos = { ...pos };
+      moveAnchor = { x: cell.x, y: cell.y };
+      moveOffset = { x: cell.x - pos.x, y: cell.y - pos.y };
+      lastDragCell = { x: cell.x, y: cell.y };
+      return;
+    }
+
     if (tool === 'hand') return;
     e.preventDefault();
     const dc = displayCellFromPointer(e.clientX, e.clientY);
@@ -1089,26 +1115,6 @@ export function openPixelEditor(onApplied: () => void): void {
       setTool('paint');
       return;
     }
-    if (tool === 'select') {
-      if (!cell) return;
-      const { x, y } = cell;
-      selectStart = { x, y };
-      updateSelectionBox({ x, y, w: 1, h: 1 });
-      return;
-    }
-    if (tool === 'move') {
-      if (!cell || !selection) return;
-      const { x, y } = cell;
-      if (!selectionFloating) {
-        enterFloatingMode();
-      }
-      const pos = floatingSelectionPos() ?? { x: selection.x, y: selection.y };
-      movePreviewPos = { ...pos };
-      moveAnchor = { x, y };
-      moveOffset = { x: x - pos.x, y: y - pos.y };
-      lastDragCell = { x, y };
-      return;
-    }
   };
 
   editSurface.addEventListener('pointerdown', onEditPointerDown);
@@ -1128,13 +1134,14 @@ export function openPixelEditor(onApplied: () => void): void {
       paintAtDisplay(dc, 0);
       return;
     }
-    if (!cell) return;
-    const { x, y } = cell;
-    if (tool === 'select' && selectStart) {
+    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart && cell) {
+      const { x, y } = cell;
       updateSelectionBox(normalizeRect(selectStart.x, selectStart.y, x, y));
       return;
     }
-    if (tool === 'move' && moveAnchor && selection) {
+    if (!cell) return;
+    const { x, y } = cell;
+    if (clipboardMode === 'paste' && moveAnchor && selection) {
       lastDragCell = { x, y };
       movePreviewPos = {
         x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
@@ -1157,7 +1164,7 @@ export function openPixelEditor(onApplied: () => void): void {
   const onEditPointerUp = (e: PointerEvent) => {
     const cell = cellFromEvent(e) ?? lastDragCell;
     if (!cell) {
-      if (tool === 'move' && moveAnchor) {
+      if (clipboardMode === 'paste' && moveAnchor) {
         endMoveDrag();
       }
       lastPaintCell = null;
@@ -1171,14 +1178,15 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     const { x, y } = cell;
-    if (tool === 'select' && selectStart) finishSelection(x, y);
-    if (tool === 'move' && moveAnchor && selection) {
+    if ((clipboardMode === 'copy' || clipboardMode === 'cut') && selectStart) {
+      finishClipboardBox(x, y);
+    }
+    if (clipboardMode === 'paste' && moveAnchor && selection) {
       movePreviewPos = {
         x: clamp(x - moveOffset.x, 0, gridCols - selection.w),
         y: clamp(y - moveOffset.y, 0, gridRows - selection.h),
       };
       endMoveDrag();
-      editCanvas.style.cursor = 'grab';
     }
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
@@ -1199,7 +1207,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
     }
-    if (tool === 'move' && moveAnchor) {
+    if (clipboardMode === 'paste' && moveAnchor) {
       endMoveDrag();
     }
     lastPaintCell = null;
@@ -1218,9 +1226,9 @@ export function openPixelEditor(onApplied: () => void): void {
 
   panel.querySelector('[data-undo]')?.addEventListener('click', () => undo());
   panel.querySelector('[data-redo]')?.addEventListener('click', () => redo());
-  panel.querySelector('[data-copy]')?.addEventListener('click', () => copySelection());
-  panel.querySelector('[data-cut]')?.addEventListener('click', () => cutSelection());
-  panel.querySelector('[data-paste]')?.addEventListener('click', () => armPaste());
+  panel.querySelector('[data-copy]')?.addEventListener('click', () => armCopyMode());
+  panel.querySelector('[data-cut]')?.addEventListener('click', () => armCutMode());
+  panel.querySelector('[data-paste]')?.addEventListener('click', () => handlePasteClick());
 
   brushSizeInput.addEventListener('input', () => {
     brushSize = clamp(Number(brushSizeInput.value) || 1, 1, MAX_BRUSH);
@@ -1444,27 +1452,34 @@ export function openPixelEditor(onApplied: () => void): void {
       redo();
       return;
     }
-    if (mod && (e.key === 'c' || e.key === 'C') && selection) {
+    if (mod && (e.key === 'c' || e.key === 'C')) {
       e.preventDefault();
-      copySelection();
+      armCopyMode();
       return;
     }
-    if (mod && (e.key === 'x' || e.key === 'X') && selection) {
+    if (mod && (e.key === 'x' || e.key === 'X')) {
       e.preventDefault();
-      cutSelection();
+      armCutMode();
       return;
     }
-    if (mod && (e.key === 'v' || e.key === 'V') && clipboard) {
+    if (mod && (e.key === 'v' || e.key === 'V')) {
       e.preventDefault();
-      armPaste();
+      handlePasteClick();
       return;
     }
-    if (e.key !== 'Escape') return;
-    if (debugOpen) {
-      closeDebug();
+    if (e.key === 'Escape') {
+      if (clipboardMode) {
+        e.preventDefault();
+        exitClipboardModes(false);
+        return;
+      }
+      if (debugOpen) {
+        closeDebug();
+        return;
+      }
+      closePixelEditor();
       return;
     }
-    closePixelEditor();
   };
   document.addEventListener('keydown', onEditorKey);
 
