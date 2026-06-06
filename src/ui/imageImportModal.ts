@@ -17,11 +17,15 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-type ImportOverlay = HTMLElement & { __importRo?: ResizeObserver };
+type ImportOverlay = HTMLElement & {
+  __importRo?: ResizeObserver;
+  __importTeardown?: () => void;
+};
 
 export function closeImageImportModal(): void {
   const overlay = document.querySelector<ImportOverlay>('[data-modal="image-import"]');
   overlay?.__importRo?.disconnect();
+  overlay?.__importTeardown?.();
   overlay?.remove();
 }
 
@@ -222,12 +226,36 @@ export function openImageImportModal(options: ImageImportModalOptions): void {
   });
   modal.addEventListener('click', (e) => e.stopPropagation());
 
+  const blockBrowserGesture = (e: Event) => {
+    e.preventDefault();
+  };
+  const blockWheel = (e: WheelEvent) => {
+    e.preventDefault();
+  };
+  const gestureTargets = [overlay, modal, viewport];
+  for (const el of gestureTargets) {
+    el.addEventListener('touchstart', blockBrowserGesture, { passive: false });
+    el.addEventListener('touchmove', blockBrowserGesture, { passive: false });
+    el.addEventListener('gesturestart', blockBrowserGesture, { passive: false });
+    el.addEventListener('gesturechange', blockBrowserGesture, { passive: false });
+    el.addEventListener('wheel', blockWheel, { passive: false });
+  }
+
   overlay.append(modal);
   getModalOverlayMount().append(overlay);
 
   const ro = new ResizeObserver(() => layoutFrame());
   ro.observe(viewport);
   overlay.__importRo = ro;
+  overlay.__importTeardown = () => {
+    for (const el of gestureTargets) {
+      el.removeEventListener('touchstart', blockBrowserGesture);
+      el.removeEventListener('touchmove', blockBrowserGesture);
+      el.removeEventListener('gesturestart', blockBrowserGesture);
+      el.removeEventListener('gesturechange', blockBrowserGesture);
+      el.removeEventListener('wheel', blockWheel);
+    }
+  };
 
   requestAnimationFrame(() => {
     layoutFrame();

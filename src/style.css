@@ -912,6 +912,36 @@ body {
   overflow: hidden;
 }
 
+.pixel-editor__tools-fixed {
+  flex-shrink: 0;
+  padding: 4px;
+  border-bottom: 1px solid var(--tcg-border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: #1a2438;
+}
+
+.pixel-editor__tools-grid--primary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.pixel-editor__clipboard-row {
+  display: flex;
+  gap: 4px;
+}
+
+.pixel-editor__clipboard-row .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.62rem;
+  padding: 0.22rem 0.25rem;
+}
+
+.pixel-editor__edit-stage > .pixel-editor__art-surface {
+  border: none;
+}
+
 .pixel-editor__edit-frame {
   display: grid;
   grid-template-columns: var(--pe-ruler-px, 18px) 1fr;
@@ -1773,7 +1803,10 @@ body {
   justify-content: center;
   padding: 12px;
   background: rgba(0, 0, 0, 0.72);
-  touch-action: manipulation;
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .img-import-modal {
@@ -1813,6 +1846,7 @@ body {
   min-height: min(52dvh, 360px);
   overflow: hidden;
   touch-action: none;
+  overscroll-behavior: none;
   background: #0c1018;
 }
 
