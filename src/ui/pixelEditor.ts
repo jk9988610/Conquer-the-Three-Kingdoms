@@ -114,6 +114,7 @@ export function openPixelEditor(onApplied: () => void): void {
   const navPointers = new Map<number, { x: number; y: number }>();
   let lastPinchDist = 0;
   let selection: Selection | null = null;
+  let clipboard: { pixels: Uint32Array; w: number; h: number } | null = null;
   let selectStart: { x: number; y: number } | null = null;
   let moveAnchor: { x: number; y: number } | null = null;
   let moveOffset = { x: 0, y: 0 };
@@ -221,6 +222,22 @@ export function openPixelEditor(onApplied: () => void): void {
     if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
+  function updateClipboardButtons(): void {
+    const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]');
+    const cutBtn = panel.querySelector<HTMLButtonElement>('[data-cut]');
+    const pasteBtn = panel.querySelector<HTMLButtonElement>('[data-paste]');
+    if (copyBtn) copyBtn.disabled = !selection;
+    if (cutBtn) cutBtn.disabled = !selection;
+    if (pasteBtn) pasteBtn.disabled = !clipboard;
+  }
+
+  function clearSelection(): void {
+    selection = null;
+    selectStart = null;
+    updateSelectionBox();
+    updateClipboardButtons();
+  }
+
   function flattenEditorGrid(): void {
     grid = flattenPackedToDisplayBlocks(grid, gridCols, gridRows);
   }
@@ -287,15 +304,11 @@ export function openPixelEditor(onApplied: () => void): void {
     <section class="pixel-editor__pane pixel-editor__pane--tools">
       <div class="pixel-editor__pane-label">工具</div>
       <div class="pixel-editor__pane-fill pixel-editor__pane-fill--tools" data-tools-panel>
-          <div class="pixel-editor__tools-scroll" data-tools-scroll>
-            <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
-            <div class="pixel-editor__tools-grid">
+          <div class="pixel-editor__tools-fixed">
+            <div class="pixel-editor__tools-grid pixel-editor__tools-grid--primary">
               <button type="button" class="btn pixel-editor__tool" data-tool="paint">画笔</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="move">移动</button>
               <button type="button" class="btn" data-undo disabled>撤销</button>
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
@@ -304,6 +317,19 @@ export function openPixelEditor(onApplied: () => void): void {
               <input type="range" min="1" max="12" value="1" data-brush-size />
               <span data-brush-size-label>1</span>
             </label>
+          </div>
+          <div class="pixel-editor__tools-scroll" data-tools-scroll>
+            <label class="pixel-editor__card-label">卡牌 <select data-select></select></label>
+            <div class="pixel-editor__tools-grid">
+              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="select">框选</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="move">摆放</button>
+            </div>
+            <div class="pixel-editor__clipboard-row">
+              <button type="button" class="btn" data-copy disabled>复制</button>
+              <button type="button" class="btn" data-cut disabled>剪切</button>
+              <button type="button" class="btn" data-paste disabled>粘贴</button>
+            </div>
             <div class="pixel-editor__tools-zoom">
               <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="hand" title="单指拖动平移">拖动</button>
               <button type="button" class="btn" data-zoom-out title="缩小">缩小</button>
@@ -602,20 +628,47 @@ const picker = createColorPicker(
     updateSelectionBox();
   }
 
-  /** 屏幕坐标 → 逻辑像素格（仅 TCG 画布内；参考格线外延区返回 null） */
-  function cellFromPointer(clientX: number, clientY: number): { x: number; y: number } | null {
+  function logicBlockForDisplayCell(dx: number, dy: number) {
+    const x0 = Math.floor((dx * gridCols) / ART_DISPLAY_COLS);
+    const y0 = Math.floor((dy * gridRows) / ART_DISPLAY_ROWS);
+    const x1 =
+      dx >= ART_DISPLAY_COLS - 1
+        ? gridCols
+        : Math.floor(((dx + 1) * gridCols) / ART_DISPLAY_COLS);
+    const y1 =
+      dy >= ART_DISPLAY_ROWS - 1
+        ? gridRows
+        : Math.floor(((dy + 1) * gridRows) / ART_DISPLAY_ROWS);
+    return { x0, y0, x1, y1 };
+  }
+
+  /** 屏幕坐标 → 展示格（含最底行/最右列） */
+  function displayCellFromPointer(
+    clientX: number,
+    clientY: number
+  ): { dx: number; dy: number } | null {
     const rect = editCanvas.getBoundingClientRect();
     const dw = rect.width > 0 ? rect.width : gridPixelW || 1;
     const dh = rect.height > 0 ? rect.height : gridPixelH || 1;
     const canvasX = ((clientX - rect.left) / dw) * gridPixelW;
     const canvasY = ((clientY - rect.top) / dh) * gridPixelH;
-    if (canvasX < 0 || canvasY < 0 || canvasX >= gridPixelW || canvasY >= gridPixelH) {
+    if (canvasX < 0 || canvasY < 0 || canvasX > gridPixelW || canvasY > gridPixelH) {
       return null;
     }
+    const nx = Math.min(Math.max(canvasX / gridPixelW, 0), 1 - 1e-6);
+    const ny = Math.min(Math.max(canvasY / gridPixelH, 0), 1 - 1e-6);
     return {
-      x: clamp(Math.floor((canvasX / gridPixelW) * gridCols), 0, gridCols - 1),
-      y: clamp(Math.floor((canvasY / gridPixelH) * gridRows), 0, gridRows - 1),
+      dx: clamp(Math.floor(nx * ART_DISPLAY_COLS), 0, ART_DISPLAY_COLS - 1),
+      dy: clamp(Math.floor(ny * ART_DISPLAY_ROWS), 0, ART_DISPLAY_ROWS - 1),
     };
+  }
+
+  /** 屏幕坐标 → 逻辑像素格（映射到展示块起点） */
+  function cellFromPointer(clientX: number, clientY: number): { x: number; y: number } | null {
+    const dc = displayCellFromPointer(clientX, clientY);
+    if (!dc) return null;
+    const { x0, y0 } = logicBlockForDisplayCell(dc.dx, dc.dy);
+    return { x: x0, y: y0 };
   }
 
   function cellFromEvent(e: PointerEvent): { x: number; y: number } | null {
@@ -653,7 +706,11 @@ const picker = createColorPicker(
       lastDragCell = null;
     }
     if (next !== 'select') selectStart = null;
-    if (next === 'move') updateSelectionBox();
+    if (next !== 'select' && next !== 'move') {
+      clearSelection();
+    } else if (next === 'move') {
+      updateSelectionBox();
+    }
     editCanvas.style.cursor =
       next === 'hand'
         ? 'grab'
@@ -664,15 +721,6 @@ const picker = createColorPicker(
           : 'crosshair';
     applyEditViewTransform();
     updateEditorDebug();
-  }
-
-  function logicBlockForDisplayCell(dx: number, dy: number) {
-    return {
-      x0: Math.floor((dx * gridCols) / ART_DISPLAY_COLS),
-      y0: Math.floor((dy * gridRows) / ART_DISPLAY_ROWS),
-      x1: Math.floor(((dx + 1) * gridCols) / ART_DISPLAY_COLS),
-      y1: Math.floor(((dy + 1) * gridRows) / ART_DISPLAY_ROWS),
-    };
   }
 
   function fillDisplayCell(dx: number, dy: number, colorArgb: number): void {
@@ -732,8 +780,7 @@ const picker = createColorPicker(
     rect.w = Math.min(rect.w, gridCols - rect.x);
     rect.h = Math.min(rect.h, gridRows - rect.y);
     if (rect.w < 1 || rect.h < 1) {
-      selection = null;
-      selBox.hidden = true;
+      clearSelection();
       return;
     }
     selection = {
@@ -742,9 +789,71 @@ const picker = createColorPicker(
     };
     updateSelectionBox(rect);
     selectStart = null;
+    updateClipboardButtons();
     if (tool === 'move') {
       editCanvas.style.cursor = 'grab';
     }
+  }
+
+  function copySelection(): void {
+    if (!selection) return;
+    clipboard = {
+      pixels: selection.pixels.slice(),
+      w: selection.w,
+      h: selection.h,
+    };
+    updateClipboardButtons();
+  }
+
+  function cutSelection(): void {
+    if (!selection) return;
+    beginUndoBatch();
+    clipboard = {
+      pixels: selection.pixels.slice(),
+      w: selection.w,
+      h: selection.h,
+    };
+    clearPackedRegion(
+      grid,
+      selection.x,
+      selection.y,
+      selection.w,
+      selection.h,
+      gridCols,
+      recordCellChange
+    );
+    commitUndoBatch();
+    clearSelection();
+    refreshAll();
+  }
+
+  function pasteClipboard(): void {
+    if (!clipboard) return;
+    beginUndoBatch();
+    const tx = clamp(selection?.x ?? 0, 0, Math.max(0, gridCols - clipboard.w));
+    const ty = clamp(selection?.y ?? 0, 0, Math.max(0, gridRows - clipboard.h));
+    pastePackedRegion(
+      grid,
+      gridCols,
+      gridRows,
+      tx,
+      ty,
+      clipboard.w,
+      clipboard.h,
+      clipboard.pixels,
+      recordCellChange
+    );
+    commitUndoBatch();
+    selection = {
+      x: tx,
+      y: ty,
+      w: clipboard.w,
+      h: clipboard.h,
+      pixels: copyPackedRegion(grid, tx, ty, clipboard.w, clipboard.h, gridCols),
+    };
+    updateSelectionBox();
+    updateClipboardButtons();
+    refreshAll();
   }
 
   function commitMove(targetX: number, targetY: number): void {
@@ -962,6 +1071,9 @@ const picker = createColorPicker(
 
   panel.querySelector('[data-undo]')?.addEventListener('click', () => undo());
   panel.querySelector('[data-redo]')?.addEventListener('click', () => redo());
+  panel.querySelector('[data-copy]')?.addEventListener('click', () => copySelection());
+  panel.querySelector('[data-cut]')?.addEventListener('click', () => cutSelection());
+  panel.querySelector('[data-paste]')?.addEventListener('click', () => pasteClipboard());
 
   brushSizeInput.addEventListener('input', () => {
     brushSize = clamp(Number(brushSizeInput.value) || 1, 1, MAX_BRUSH);
@@ -1092,12 +1204,17 @@ const picker = createColorPicker(
           image: img,
           cols: gridCols,
           rows: gridRows,
-          onConfirm: (grid) => {
-            replaceGrid(gridToPacked(grid));
-            selection = null;
-            selectStart = null;
+          onConfirm: (imported) => {
+            replaceGrid(gridToPacked(imported));
+            clearSelection();
+            viewPanX = 0;
+            viewPanY = 0;
+            viewZoom = 1;
+            applyEditViewTransform();
+            flattenEditorGrid();
             refreshAll();
-            persistDraft();
+            savePixelEditorDraft(currentKey, grid);
+            requestAnimationFrame(() => layoutViewport());
           },
         });
       } catch (err) {
@@ -1180,6 +1297,21 @@ const picker = createColorPicker(
       redo();
       return;
     }
+    if (mod && (e.key === 'c' || e.key === 'C') && selection) {
+      e.preventDefault();
+      copySelection();
+      return;
+    }
+    if (mod && (e.key === 'x' || e.key === 'X') && selection) {
+      e.preventDefault();
+      cutSelection();
+      return;
+    }
+    if (mod && (e.key === 'v' || e.key === 'V') && clipboard) {
+      e.preventDefault();
+      pasteClipboard();
+      return;
+    }
     if (e.key !== 'Escape') return;
     if (debugOpen) {
       closeDebug();
@@ -1202,6 +1334,7 @@ const picker = createColorPicker(
   loadArtForKey(currentKey);
   setTool('hand');
   layoutGrid();
+  updateClipboardButtons();
 
   overlay.append(panel);
   editorOverlay = overlay;
