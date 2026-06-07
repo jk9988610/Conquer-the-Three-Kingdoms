@@ -65,7 +65,22 @@ export function breathPulsePhase(nowMs: number, breathSpeed = 50): number {
   return 0.5 + 0.5 * Math.sin((nowMs / periodMs) * Math.PI * 2);
 }
 
-/** 在 60×84 展示格上绘制高亮/光晕/呼吸叠加（不改底层像素） */
+function clampByte(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function brightenArgb(argb: number, amount: number): number {
+  const a = (argb >>> 24) & 255;
+  const r = (argb >>> 16) & 255;
+  const g = (argb >>> 8) & 255;
+  const b = argb & 255;
+  const br = clampByte(r + (255 - r) * amount);
+  const bg = clampByte(g + (255 - g) * amount);
+  const bb = clampByte(b + (255 - b) * amount);
+  return (a << 24) | (br << 16) | (bg << 8) | bb;
+}
+
+/** 在 60×84 展示格上绘制高亮/光晕/呼吸叠加（不改底层像素，作用于色块本体） */
 export function paintDisplayHighlightOverlay(
   ctx: CanvasRenderingContext2D,
   displayPacked: PackedGrid,
@@ -80,42 +95,49 @@ export function paintDisplayHighlightOverlay(
 
   const pulse = breathPulsePhase(nowMs, breathSpeed);
   const cell = Math.max(1, cellPx);
+  const pad = Math.max(1, cell * 0.22);
 
   for (let dy = 0; dy < ART_DISPLAY_ROWS; dy++) {
     for (let dx = 0; dx < ART_DISPLAY_COLS; dx++) {
       const flags = getDisplayHighlightFlags(highlightGrid, dx, dy);
       if (!hasDisplayHighlightMark(flags)) continue;
-      if ((displayPacked[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) === 0) continue;
+
+      const v = displayPacked[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0;
+      if (v === 0) continue;
 
       const x = originX + dx * cell;
       const y = originY + dy * cell;
       const w = cell;
       const h = cell;
-      const v = displayPacked[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0;
       const cr = (v >>> 16) & 255;
       const cg = (v >>> 8) & 255;
       const cb = v & 255;
+      const ca = ((v >>> 24) & 255) / 255;
 
-      let outlineAlpha = 0.88;
-      if (hasDisplayHighlightBreath(flags)) {
-        outlineAlpha = 0.28 + 0.62 * pulse;
+      const glow = hasDisplayHighlightGlow(flags);
+      const breath = hasDisplayHighlightBreath(flags);
+
+      if (glow || breath) {
+        const baseAlpha = breath ? 0.14 + pulse * 0.28 : 0.3;
+        const layers = breath ? 2 + Math.round(pulse * 2) : 3;
+        const breathScale = breath ? 0.55 + pulse * 0.45 : 1;
+        for (let layer = layers; layer >= 1; layer--) {
+          const spread = pad * layer;
+          ctx.fillStyle = `rgba(${cr},${cg},${cb},${(baseAlpha / layer) * breathScale})`;
+          ctx.fillRect(x - spread, y - spread, w + spread * 2, h + spread * 2);
+        }
       }
 
-      ctx.strokeStyle = `rgba(255, 220, 64, ${outlineAlpha})`;
-      ctx.lineWidth = Math.max(1, cell * 0.14);
-      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      let brighten = 0.34;
+      if (glow) brighten = Math.max(brighten, 0.46);
+      if (breath) brighten = Math.max(brighten, 0.16 + pulse * 0.4);
 
-      if (hasDisplayHighlightGlow(flags) || hasDisplayHighlightBreath(flags)) {
-        const glowAlpha = hasDisplayHighlightBreath(flags)
-          ? 0.18 + 0.42 * pulse
-          : 0.5;
-        const pad = Math.max(1, cell * 0.22);
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha})`;
-        ctx.lineWidth = pad;
-        ctx.strokeRect(x + pad * 0.5, y + pad * 0.5, w - pad, h - pad);
-        ctx.fillStyle = `rgba(255, 255, 255, ${glowAlpha * 0.22})`;
-        ctx.fillRect(x, y, w, h);
-      }
+      const bright = brightenArgb(v, Math.min(1, brighten));
+      const br = (bright >>> 16) & 255;
+      const bg = (bright >>> 8) & 255;
+      const bb = bright & 255;
+      ctx.fillStyle = `rgba(${br},${bg},${bb},${ca})`;
+      ctx.fillRect(x, y, w, h);
     }
   }
 }

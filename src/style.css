@@ -861,6 +861,9 @@ body {
 
 .pixel-editor__pane--preview .pixel-editor__art-surface {
   box-sizing: border-box;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .pixel-editor__pane--preview .pixel-editor__art-surface canvas[data-preview-grid-art] {
