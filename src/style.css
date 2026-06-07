@@ -975,7 +975,7 @@ body {
 }
 
 .pixel-editor__tools-grid--effects {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .pixel-editor__tools-grid--effects .btn {
@@ -1517,6 +1517,12 @@ body {
 
 .pixel-editor__tools-grid--render-undo {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pixel-editor__clear-render {
+  width: 100%;
+  font-size: 0.62rem;
+  padding: 0.28rem 0.35rem;
 }
 
 .pixel-editor__layers-title {
