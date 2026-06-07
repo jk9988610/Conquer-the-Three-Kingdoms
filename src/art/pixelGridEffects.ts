@@ -334,8 +334,8 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'outer', label: '除去最外层', description: '综合优化后剥离主体最外一圈边缘像素' },
-  { id: 'outerSafe', label: '安全剥离', description: '仅剥离接近背景色的边缘像素' },
+  { id: 'outer', label: '除去最外层', description: '综合优化后剥离最外一圈光晕/杂色边缘' },
+  { id: 'outerSafe', label: '安全剥离', description: '更积极剥离边缘杂色，保留明确主体色' },
   { id: 'outerFringe', label: '残留收束', description: '除去最外层 + 迭代清除边缘残留杂色（非双层）' },
   { id: 'outerCorner', label: '角落剥离', description: '除去最外层 + 四角区域额外清除' },
   { id: 'outerFull', label: '综合剥离', description: '智能剥离 + 残留收束 + 角落 + 孔洞填补' },
@@ -781,12 +781,13 @@ function averageInteriorNeighborColor(
   return averageRgba(colors);
 }
 
+type PeelBoundaryStyle = 'fringe' | 'safe';
+
 interface PeelBoundaryOptions {
-  safeOnly?: boolean;
-  smart?: boolean;
+  style?: PeelBoundaryStyle;
 }
 
-/** 判断是否应剥离该边缘像素 */
+/** 判断是否应剥离该边缘像素（仅处理与透明区相邻的一圈） */
 function shouldPeelBoundaryPixel(
   mask: boolean[][],
   grid: PixelGrid,
@@ -799,34 +800,28 @@ function shouldPeelBoundaryPixel(
   const px = getPixel(grid, x, y);
   if (!px || px.a < 0.08) return true;
 
-  // 除去最外层：盲剥与透明区相邻的一圈，不做智能保留
-  if (!opts.safeOnly && opts.smart === false) return true;
-
   if (localDetailWeight(grid, x, y) >= OUTER_PEEL_DETAIL_MAX) return false;
   if (countForegroundNeighbors4(mask, x, y) <= 2) return false;
 
-  const safeTol = tolerance * 1.08;
-
-  if (opts.safeOnly) {
-    return isSimilarToBgRefs(px, bgRefs, safeTol);
-  }
-
+  const style = opts.style ?? 'fringe';
   const bgDist = Math.min(...bgRefs.map((ref) => rgbaDistance(px, ref)));
   const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
+  const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
 
-  if (interiorAvg) {
-    const interiorDist = rgbaDistance(px, interiorAvg);
-    if (interiorDist < bgDist * 0.72) return false;
-    if (bgDist < interiorDist * 0.88) return true;
-  }
+  if (interiorAvg && interiorDist < bgDist * 0.66) return false;
 
-  if (bgDist <= tolerance * 1.02) return true;
-  if (interiorAvg && rgbaDistance(px, interiorAvg) > tolerance * 0.55) return false;
+  const bgTol = tolerance * (style === 'safe' ? 1.14 : 1.06);
+  const fringeRatio = style === 'safe' ? 0.96 : 0.9;
 
-  return true;
+  if (isSimilarToBgRefs(px, bgRefs, bgTol)) return true;
+  if (interiorAvg && bgDist < interiorDist * fringeRatio) return true;
+
+  return false;
 }
 
-/** 单圈边缘剥离 */
+/**
+ * 单圈边缘剥离：基于输入掩码判定边界，写入新掩码，避免同遍循环中级联剥光全图。
+ */
 function peelOneBoundaryRing(
   mask: boolean[][],
   grid: PixelGrid,
@@ -836,30 +831,28 @@ function peelOneBoundaryRing(
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
+  const next = cloneMask(mask);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      if (out[y]![x]) continue;
-      if (countBgNeighbors8(out, x, y) < 1) continue;
-      if (!shouldPeelBoundaryPixel(out, grid, x, y, bgRefs, tolerance, opts)) continue;
-      out[y]![x] = true;
+      if (mask[y]![x]) continue;
+      if (countBgNeighbors8(mask, x, y) < 1) continue;
+      if (!shouldPeelBoundaryPixel(mask, grid, x, y, bgRefs, tolerance, opts)) continue;
+      next[y]![x] = true;
     }
   }
 
-  return out;
+  return next;
 }
 
 interface OutermostPeelOptions {
-  safeOnly?: boolean;
-  smart?: boolean;
-  /** 首圈后迭代收束残留边缘（仅 safe 条件），非固定双层 */
+  style?: PeelBoundaryStyle;
+  /** 首圈后迭代收束残留边缘，非固定双层 */
   fringePasses?: number;
 }
 
 /**
- * 除去主体最外圈：与透明区相邻的边缘像素智能剥离。
- * fringePasses 时多遍收束接近背景色的残留边缘，避免双层硬剥伤主体。
+ * 除去主体最外圈：与透明区相邻的边缘像素按色差/光晕判定剥离。
  */
 function peelOutermostForegroundRing(
   mask: boolean[][],
@@ -870,15 +863,11 @@ function peelOutermostForegroundRing(
 ): boolean[][] {
   const fringePasses = opts.fringePasses ?? 0;
   let out = peelOneBoundaryRing(mask, grid, bgRefs, tolerance, {
-    safeOnly: opts.safeOnly ?? false,
-    smart: opts.smart ?? false,
+    style: opts.style ?? 'fringe',
   });
 
   for (let pass = 0; pass < fringePasses; pass++) {
-    const next = peelOneBoundaryRing(out, grid, bgRefs, tolerance, {
-      safeOnly: true,
-      smart: true,
-    });
+    const next = peelOneBoundaryRing(out, grid, bgRefs, tolerance, { style: 'safe' });
     if (masksEqual(out, next)) break;
     out = next;
   }
@@ -900,8 +889,7 @@ function masksEqual(a: boolean[][], b: boolean[][]): boolean {
 }
 
 interface RefinedOuterVariantOpts {
-  peelSafeOnly?: boolean;
-  peelSmart?: boolean;
+  peelStyle?: PeelBoundaryStyle;
   fringePasses?: number;
   extraCorner?: boolean;
   closeAfterPeel?: boolean;
@@ -917,8 +905,7 @@ function buildRefinedOuterMaskVariant(
   const primaryRef = bgRefs[0]!;
   let mask = buildRefinedDetailMask(grid, bgRefs, tolerance);
   mask = peelOutermostForegroundRing(mask, grid, bgRefs, tolerance, {
-    safeOnly: opts.peelSafeOnly ?? false,
-    smart: opts.peelSmart ?? false,
+    style: opts.peelStyle ?? 'fringe',
     fringePasses: opts.fringePasses ?? 0,
   });
   if (opts.extraCorner) {
@@ -948,20 +935,21 @@ export function computeRemoveBgMask(
   switch (mode) {
     case 'outerSafe':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelSafeOnly: true,
+        peelStyle: 'safe',
       });
     case 'outerFringe':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelSmart: false,
+        peelStyle: 'fringe',
         fringePasses: 5,
       });
     case 'outerCorner':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
+        peelStyle: 'fringe',
         extraCorner: true,
       });
     case 'outerFull':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelSmart: false,
+        peelStyle: 'safe',
         fringePasses: 5,
         extraCorner: true,
         closeAfterPeel: true,
@@ -969,7 +957,7 @@ export function computeRemoveBgMask(
     case 'outer':
     default:
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelSmart: false,
+        peelStyle: 'fringe',
       });
   }
 }
