@@ -433,33 +433,108 @@ function isSimilarToBgRefs(px: Rgba, refs: Rgba[], tolerance: number): boolean {
   return false;
 }
 
-/** 四角分别采样，得到 1–4 个背景参考色 */
-function collectCornerBackgroundRefs(grid: PixelGrid): Rgba[] {
+/** 四边采样 + 色相近组统计，得到动态背景色板（非固定单色） */
+function collectDynamicBackgroundPalette(grid: PixelGrid, maxColors = 14): Rgba[] {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0) return [];
 
-  const corners: [number, number][] = [
-    [0, 0],
-    [cols - 1, 0],
-    [0, rows - 1],
-    [cols - 1, rows - 1],
-  ];
-  const refs: Rgba[] = [];
-  const seen = new Set<string>();
+  const buckets = new Map<string, { color: Rgba; count: number; edgeCount: number }>();
 
-  for (const [cx, cy] of corners) {
-    const local = estimateLocalCornerBackground(grid, cx, cy);
-    if (!local) continue;
-    const key = colorBucketKey(local);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    refs.push(local);
+  function addSample(x: number, y: number, onEdge: boolean): void {
+    const px = getPixel(grid, x, y);
+    if (!px || px.a < 0.08) return;
+    const key = colorBucketKey(px);
+    const entry = buckets.get(key);
+    if (entry) {
+      entry.count++;
+      if (onEdge) entry.edgeCount++;
+    } else {
+      buckets.set(key, { color: px, count: 1, edgeCount: onEdge ? 1 : 0 });
+    }
   }
 
-  if (refs.length > 0) return refs;
+  for (let x = 0; x < cols; x++) {
+    addSample(x, 0, true);
+    addSample(x, rows - 1, true);
+  }
+  for (let y = 0; y < rows; y++) {
+    addSample(0, y, true);
+    addSample(cols - 1, y, true);
+  }
+
+  const ranked = [...buckets.values()].sort((a, b) => {
+    if (b.edgeCount !== a.edgeCount) return b.edgeCount - a.edgeCount;
+    return b.count - a.count;
+  });
+
+  if (ranked.length > 0) {
+    return ranked.slice(0, maxColors).map((b) => b.color);
+  }
+
   const fallback = estimateCornerBackgroundColor(grid);
   return fallback ? [fallback] : [];
+}
+
+function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
+  if (palette.length === 0) return Number.POSITIVE_INFINITY;
+  return Math.min(...palette.map((ref) => rgbaDistance(px, ref)));
+}
+
+/** 八连通泛洪：从四边种子扩展，支持渐变/多色背景 */
+function floodBgMaskFromEdges(
+  grid: PixelGrid,
+  bgPalette: Rgba[],
+  tolerance: number
+): boolean[][] {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const isBg: boolean[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => false)
+  );
+  const queue: [number, number][] = [];
+  const linkTol = tolerance * 0.72;
+  const seedTol = tolerance * 1.06;
+
+  function trySeed(x: number, y: number): void {
+    const px = getPixel(grid, x, y);
+    if (!px || px.a < 0.08 || isBg[y]![x]!) return;
+    if (!isSimilarToBgRefs(px, bgPalette, seedTol)) return;
+    isBg[y]![x] = true;
+    queue.push([x, y]);
+  }
+
+  for (let x = 0; x < cols; x++) {
+    trySeed(x, 0);
+    trySeed(x, rows - 1);
+  }
+  for (let y = 0; y < rows; y++) {
+    trySeed(0, y);
+    trySeed(cols - 1, y);
+  }
+
+  while (queue.length > 0) {
+    const [x, y] = queue.shift()!;
+    const cur = getPixel(grid, x, y);
+    if (!cur) continue;
+
+    for (const [dx, dy] of NEIGHBOR8_DIRS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
+      const npx = getPixel(grid, nx, ny);
+      if (!npx || npx.a < 0.08) continue;
+      if (
+        rgbaDistance(npx, cur) <= linkTol ||
+        isSimilarToBgRefs(npx, bgPalette, tolerance)
+      ) {
+        isBg[ny]![nx] = true;
+        queue.push([nx, ny]);
+      }
+    }
+  }
+
+  return isBg;
 }
 
 /** 形态学闭运算：填补背景区域内的小孔，避免斑马线式间断 */
@@ -605,29 +680,6 @@ function forceClearCornerBackground(
   return out;
 }
 
-/** 全局色差：凡接近任一背景参考色的像素均标记为背景 */
-function buildGlobalBgMask(
-  grid: PixelGrid,
-  bgRefs: Rgba[],
-  tolerance: number
-): boolean[][] {
-  const rows = grid.length;
-  const cols = Math.max(0, ...grid.map((r) => r.length));
-  const mask: boolean[][] = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => false)
-  );
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (isSimilarToBgRefs(px, bgRefs, tolerance)) mask[y]![x] = true;
-    }
-  }
-
-  return mask;
-}
-
 const SURROUND_DETAIL_MAX = 0.3;
 
 /** 清除主体与背景交界处的残留背景色（边缘光晕） */
@@ -732,7 +784,8 @@ function buildRefinedDetailMask(
   tolerance: number
 ): boolean[][] {
   const primaryRef = bgRefs[0]!;
-  let mask = buildGlobalBgMask(grid, bgRefs, tolerance);
+  let mask = floodBgMaskFromEdges(grid, bgRefs, tolerance);
+  mask = closeBgMask(mask, grid, primaryRef, tolerance);
   mask = protectSubjectInMask(mask, grid, bgRefs, tolerance, {
     protectDetail: true,
   });
@@ -798,17 +851,25 @@ function averageAdjacentClearedColor(
   return averageRgba(colors);
 }
 
-function collectPeelBgRefs(
+function hasSimilarClearedNeighbor(
   mask: boolean[][],
   grid: PixelGrid,
   x: number,
   y: number,
-  bgRefs: Rgba[]
-): Rgba[] {
-  const refs = [...bgRefs];
-  const cleared = averageAdjacentClearedColor(mask, grid, x, y);
-  if (cleared) refs.push(cleared);
-  return refs;
+  px: Rgba,
+  tolerance: number
+): boolean {
+  const matchTol = tolerance * 1.1;
+  for (const [dx, dy] of NEIGHBOR8_DIRS) {
+    const ny = y + dy;
+    const nx = x + dx;
+    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
+    if (!mask[ny]![nx]) continue;
+    const npx = getPixel(grid, nx, ny);
+    if (!npx || npx.a < 0.08) continue;
+    if (rgbaDistance(px, npx) <= matchTol) return true;
+  }
+  return false;
 }
 
 type PeelBoundaryStyle = 'outer' | 'safe';
@@ -818,40 +879,46 @@ interface PeelBoundaryOptions {
 }
 
 /**
- * 最外圈像素是否为背景色块：与参考背景/已清除邻色接近，且不像内侧主体。
+ * 辨别最外圈背景色块：须像已清除邻域/边框色板中的背景，且不像内侧主体。
  */
 function isOutermostBgColoredPixel(
   mask: boolean[][],
   grid: PixelGrid,
   x: number,
   y: number,
-  bgRefs: Rgba[],
+  bgPalette: Rgba[],
   tolerance: number,
   style: PeelBoundaryStyle
 ): boolean {
   const px = getPixel(grid, x, y);
   if (!px || px.a < 0.08) return true;
 
-  const peelRefs = collectPeelBgRefs(mask, grid, x, y, bgRefs);
-  const bgDist = Math.min(...peelRefs.map((ref) => rgbaDistance(px, ref)));
+  const clearedAvg = averageAdjacentClearedColor(mask, grid, x, y);
   const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
+  const paletteDist = nearestPaletteDistance(px, bgPalette);
+  const clearedDist = clearedAvg ? rgbaDistance(px, clearedAvg) : Number.POSITIVE_INFINITY;
   const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
+  const bgDist = Math.min(paletteDist, clearedDist);
 
-  if (interiorAvg && interiorDist < bgDist * 0.72) return false;
+  if (interiorAvg && interiorDist < bgDist * 0.76) return false;
 
   if (countForegroundNeighbors4(mask, x, y) <= 2) {
-    if (!interiorAvg || interiorDist < bgDist * 0.82) return false;
+    if (!interiorAvg || interiorDist < bgDist * 0.88) return false;
   }
 
-  const bgTol = tolerance * (style === 'safe' ? 1.05 : 1.14);
+  const paletteTol = tolerance * (style === 'safe' ? 1.04 : 1.1);
+  const clearedTol = tolerance * 1.12;
+  const likePalette = paletteDist <= paletteTol;
+  const likeCleared = clearedAvg !== null && clearedDist <= clearedTol;
+  const likeClearedNeighbor = hasSimilarClearedNeighbor(mask, grid, x, y, px, tolerance);
 
-  if (isSimilarToBgRefs(px, peelRefs, bgTol)) return true;
+  if (!likePalette && !likeCleared && !likeClearedNeighbor) return false;
 
-  if (style === 'outer' && interiorAvg && bgDist < interiorDist * 0.98) {
-    return true;
-  }
+  if (interiorAvg && interiorDist < bgDist * 0.9) return false;
 
-  return false;
+  if (likeCleared || likeClearedNeighbor) return true;
+
+  return likePalette && (!interiorAvg || bgDist < interiorDist * 0.86);
 }
 
 /** 判断是否应剥离该边缘像素（仅处理与透明区相邻的一圈） */
@@ -984,7 +1051,7 @@ export function computeRemoveBgMask(
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0 || tolerance <= 0) return null;
 
-  const bgRefs = collectCornerBackgroundRefs(grid);
+  const bgRefs = collectDynamicBackgroundPalette(grid);
   if (bgRefs.length === 0) return null;
 
   switch (mode) {
