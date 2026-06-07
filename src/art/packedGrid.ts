@@ -198,6 +198,82 @@ export function gridDrawLayout(
   };
 }
 
+/** 16 级 RGB 色桶键，与去背景参考色组分桶一致 */
+export function argbColorBucketKey(v: number): string {
+  const r = (v >>> 16) & 255;
+  const g = (v >>> 8) & 255;
+  const b = v & 255;
+  const q = 4;
+  return `${r >> q},${g >> q},${b >> q}`;
+}
+
+function argbToCentroidArgb(pixels: number[]): number {
+  if (pixels.length === 0) return 0;
+  let sr = 0;
+  let sg = 0;
+  let sb = 0;
+  let sa = 0;
+  for (const v of pixels) {
+    sr += (v >>> 16) & 255;
+    sg += (v >>> 8) & 255;
+    sb += v & 255;
+    sa += (v >>> 24) & 255;
+  }
+  const n = pixels.length;
+  const r = Math.round(sr / n);
+  const g = Math.round(sg / n);
+  const b = Math.round(sb / n);
+  const a = Math.round(sa / n);
+  return ((a & 255) << 24) | ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
+}
+
+/**
+ * 块内按 16 级色桶多数票下采样（桶内取均值），与去背景参考色组在同一色彩空间。
+ */
+export function downsamplePackedGridBucketMajority(
+  src: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PackedGrid {
+  const out = createPackedGrid(dstCols, dstRows);
+  if (srcCols === dstCols && srcRows === dstRows) {
+    out.set(src.subarray(0, dstCols * dstRows));
+    return out;
+  }
+  for (let y = 0; y < dstRows; y++) {
+    const y0 = Math.floor((y * srcRows) / dstRows);
+    const y1 = Math.min(srcRows, Math.floor(((y + 1) * srcRows) / dstRows));
+    for (let x = 0; x < dstCols; x++) {
+      const x0 = Math.floor((x * srcCols) / dstCols);
+      const x1 = Math.min(srcCols, Math.floor(((x + 1) * srcCols) / dstCols));
+      const bucketPixels = new Map<string, number[]>();
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const v = src[gridIndex(sx, sy, srcCols)] ?? 0;
+          if (v === 0) continue;
+          const key = argbColorBucketKey(v);
+          const group = bucketPixels.get(key) ?? [];
+          group.push(v);
+          bucketPixels.set(key, group);
+        }
+      }
+      let bestKey = '';
+      let bestCount = 0;
+      for (const [key, pixels] of bucketPixels) {
+        if (pixels.length > bestCount) {
+          bestCount = pixels.length;
+          bestKey = key;
+        }
+      }
+      const winner = bestKey ? bucketPixels.get(bestKey) : undefined;
+      out[gridIndex(x, y, dstCols)] = winner ? argbToCentroidArgb(winner) : 0;
+    }
+  }
+  return out;
+}
+
 /** 将逻辑网格下采样到展示分辨率（块内多数色，用于抠图等需稳定颜色的场景） */
 export function downsamplePackedGridMajority(
   src: PackedGrid,
