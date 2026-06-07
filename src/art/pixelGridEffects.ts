@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '综合优化 + 除去最外层，选择下方方案并调节容差',
+    description: '沿相似色连通至画面边缘判定背景，选择下方方案并调节容差',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -334,11 +334,31 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'outer', label: '除去最外层', description: '剥离最外一圈中的背景色块，保留主体色边缘' },
-  { id: 'outerSafe', label: '安全剥离', description: '仅剥离最外圈明确接近背景色的像素' },
-  { id: 'outerFringe', label: '残留收束', description: '除去最外层 + 迭代清除边缘残留杂色（非双层）' },
-  { id: 'outerCorner', label: '角落剥离', description: '除去最外层 + 四角区域额外清除' },
-  { id: 'outerFull', label: '综合剥离', description: '智能剥离 + 残留收束 + 角落 + 孔洞填补' },
+  {
+    id: 'outer',
+    label: '除去最外层',
+    description: '仅去除可沿相似色连通至边缘的背景，并剥离最外一圈',
+  },
+  {
+    id: 'outerSafe',
+    label: '安全剥离',
+    description: '边缘连通背景 + 保守剥离最外圈，减少误删本体',
+  },
+  {
+    id: 'outerFringe',
+    label: '残留收束',
+    description: '除去最外层后迭代收束边缘残留杂色',
+  },
+  {
+    id: 'outerCorner',
+    label: '缝隙填充',
+    description: '边缘连通背景 + 填充肢体缝隙内与边缘色板一致的小片',
+  },
+  {
+    id: 'outerFull',
+    label: '综合剥离',
+    description: '安全剥离 + 残留收束 + 强化缝隙填充',
+  },
 ];
 
 export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'outer';
@@ -529,7 +549,10 @@ function filterPaletteExcludingSubject(
   });
 }
 
-/** 八连通泛洪：从四边种子扩展，支持渐变/多色背景 */
+/**
+ * 边缘连通背景：从四边且属于边缘色板的像素出发，仅沿相邻色差在容差内的路径扩展。
+ * 能到达画面边缘的像素才视为背景；局部与邻居相似但无法连通至边缘的不算背景。
+ */
 function floodBgMaskFromEdges(
   grid: PixelGrid,
   bgPalette: Rgba[],
@@ -582,37 +605,29 @@ function floodBgMaskFromEdges(
   return isBg;
 }
 
-/** 形态学闭运算：填补背景区域内的小孔，避免斑马线式间断 */
-function closeBgMask(
+/** 剔除泛洪链路漂移进本体的像素：掩码内像素须仍接近边缘色板 */
+function restrictMaskToEdgePalette(
   mask: boolean[][],
   grid: PixelGrid,
-  bgRef: Rgba,
+  bgPalette: Rgba[],
   tolerance: number
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
-  const dilated = cloneMask(mask);
+  const paletteTol = tolerance * 1.02;
+  const out = cloneMask(mask);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      if (dilated[y]![x]) continue;
+      if (!out[y]![x]) continue;
       const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (!isSimilarToBg(px, bgRef, tolerance)) continue;
-      if (countBgNeighbors8(dilated, x, y) >= 5) dilated[y]![x] = true;
+      if (!px || px.a < 0.08 || !isSimilarToBgRefs(px, bgPalette, paletteTol)) {
+        out[y]![x] = false;
+      }
     }
   }
 
-  const closed = cloneMask(dilated);
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (!closed[y]![x] || mask[y]![x]) continue;
-      if (countBgNeighbors8(dilated, x, y) >= 4) continue;
-      closed[y]![x] = false;
-    }
-  }
-
-  return closed;
+  return out;
 }
 
 interface ProtectSubjectOptions {
@@ -659,88 +674,34 @@ function protectSubjectInMask(
   return out;
 }
 
-/** 单角 3×3 采样背景参考色 */
-function estimateLocalCornerBackground(
-  grid: PixelGrid,
-  cx: number,
-  cy: number
-): Rgba | null {
-  const buckets = new Map<string, { color: Rgba; count: number }>();
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const px = getPixel(grid, cx + dx, cy + dy);
-      if (!px || px.a < 0.08) continue;
-      const key = colorBucketKey(px);
-      const entry = buckets.get(key);
-      if (entry) entry.count++;
-      else buckets.set(key, { color: px, count: 1 });
-    }
-  }
-  let best: { color: Rgba; count: number } | null = null;
-  for (const entry of buckets.values()) {
-    if (!best || entry.count > best.count) best = entry;
-  }
-  return best?.color ?? null;
-}
-
-/** 强制清除四角区域内接近背景色的像素 */
-function forceClearCornerBackground(
-  mask: boolean[][],
-  grid: PixelGrid,
-  bgRefs: Rgba[],
-  tolerance: number
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
-  const cornerSpan = Math.max(4, Math.min(8, Math.floor(Math.min(cols, rows) / 10)));
-  const cornerTol = tolerance * 1.1;
-  const corners: [number, number][] = [
-    [0, 0],
-    [cols - 1, 0],
-    [0, rows - 1],
-    [cols - 1, rows - 1],
-  ];
-
-  for (const [cx, cy] of corners) {
-    const localRef = estimateLocalCornerBackground(grid, cx, cy);
-    const cornerRefs = localRef ? [localRef, ...bgRefs] : bgRefs;
-    for (let dy = 0; dy < cornerSpan; dy++) {
-      for (let dx = 0; dx < cornerSpan; dx++) {
-        const x = cx === 0 ? dx : cols - 1 - dx;
-        const y = cy === 0 ? dy : rows - 1 - dy;
-        if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
-        const px = getPixel(grid, x, y);
-        if (!px || px.a < 0.08) continue;
-        if (
-          isSimilarToBgRefs(px, cornerRefs, cornerTol) ||
-          isSimilarToBgRefs(px, bgRefs, tolerance)
-        ) {
-          out[y]![x] = true;
-        }
-      }
-    }
-  }
-
-  return out;
-}
-
 const SURROUND_DETAIL_MAX = 0.3;
 
+interface FillPocketOptions {
+  /** 额外迭代轮数（不含默认 4 轮） */
+  extraPasses?: number;
+  /** 包围非背景邻居下限，越大越保守 */
+  minEnclosure?: number;
+}
 
-/** 清除肢体缝隙内、被主体包围的背景色小片 */
-function fillInteriorBgPockets(
+/**
+ * 填充肢体缝隙内残留背景：须严格匹配边缘色板、被主体紧密包围，且未被边缘连通泛洪覆盖。
+ * 不依赖局部邻域相似延伸，避免把本体色块误判为背景。
+ */
+function fillEnclosedEdgePalettePockets(
   mask: boolean[][],
   grid: PixelGrid,
   bgPalette: Rgba[],
-  tolerance: number
+  tolerance: number,
+  opts: FillPocketOptions = {}
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
   let out = cloneMask(mask);
-  const pocketTol = tolerance * 0.94;
+  const pocketTol = tolerance * 0.82;
+  const minEnclosure = opts.minEnclosure ?? 5;
+  const maxPasses = 4 + (opts.extraPasses ?? 0);
 
-  for (let pass = 0; pass < 6; pass++) {
+  for (let pass = 0; pass < maxPasses; pass++) {
     let changed = false;
     const next = cloneMask(out);
     for (let y = 0; y < rows; y++) {
@@ -750,7 +711,7 @@ function fillInteriorBgPockets(
         if (!px || px.a < 0.08) continue;
         if (!isSimilarToBgRefs(px, bgPalette, pocketTol)) continue;
         if (localDetailWeight(grid, x, y) >= SURROUND_DETAIL_MAX) continue;
-        if (countNonBgNeighbors8(out, x, y) < 4) continue;
+        if (countNonBgNeighbors8(out, x, y) < minEnclosure) continue;
         next[y]![x] = true;
         changed = true;
       }
@@ -762,21 +723,22 @@ function fillInteriorBgPockets(
   return out;
 }
 
+/** 边缘连通背景掩码：泛洪 + 边缘色板校验 + 主体保护 */
 function buildRefinedDetailMask(
   grid: PixelGrid,
   bgRefs: Rgba[],
-  tolerance: number
+  tolerance: number,
+  pocketOpts?: FillPocketOptions
 ): boolean[][] {
-  const primaryRef = bgRefs[0]!;
   let mask = floodBgMaskFromEdges(grid, bgRefs, tolerance);
-  mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  mask = restrictMaskToEdgePalette(mask, grid, bgRefs, tolerance);
   mask = protectSubjectInMask(mask, grid, bgRefs, tolerance, {
     protectDetail: true,
     strength: 'strong',
   });
-  mask = fillInteriorBgPockets(mask, grid, bgRefs, tolerance);
-  mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
-  mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  if (pocketOpts) {
+    mask = fillEnclosedEdgePalettePockets(mask, grid, bgRefs, tolerance, pocketOpts);
+  }
   return mask;
 }
 
@@ -870,12 +832,15 @@ function isOutermostBgColoredPixel(
   grid: PixelGrid,
   x: number,
   y: number,
-  _bgPalette: Rgba[],
+  bgPalette: Rgba[],
   tolerance: number,
   style: PeelBoundaryStyle
 ): boolean {
   const px = getPixel(grid, x, y);
   if (!px || px.a < 0.08) return true;
+
+  const paletteTol = tolerance * (style === 'safe' ? 0.98 : 1.02);
+  const matchesEdgePalette = isSimilarToBgRefs(px, bgPalette, paletteTol);
 
   const clearedAvg = averageAdjacentClearedColor(mask, grid, x, y);
   const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
@@ -893,7 +858,7 @@ function isOutermostBgColoredPixel(
   const likeCleared = clearedAvg !== null && clearedDist <= clearedTol;
   const likeClearedNeighbor = hasSimilarClearedNeighbor(mask, grid, x, y, px, tolerance);
 
-  if (!likeCleared && !likeClearedNeighbor) return false;
+  if (!matchesEdgePalette && !likeCleared && !likeClearedNeighbor) return false;
 
   if (interiorAvg && interiorDist < bgDist * 0.88) return false;
 
@@ -992,29 +957,24 @@ function masksEqual(a: boolean[][], b: boolean[][]): boolean {
 interface RefinedOuterVariantOpts {
   peelStyle?: PeelBoundaryStyle;
   fringePasses?: number;
-  extraCorner?: boolean;
-  closeAfterPeel?: boolean;
+  /** 剥离后强化肢体缝隙内边缘色板填充 */
+  pocketFill?: FillPocketOptions;
 }
 
-/** 综合优化 + 除去最外层，再按方案叠加剥离强度与后处理 */
+/** 边缘连通背景 + 除去最外层，再按方案叠加剥离强度与缝隙填充 */
 function buildRefinedOuterMaskVariant(
   grid: PixelGrid,
   bgRefs: Rgba[],
   tolerance: number,
   opts: RefinedOuterVariantOpts
 ): boolean[][] {
-  const primaryRef = bgRefs[0]!;
-  let mask = buildRefinedDetailMask(grid, bgRefs, tolerance);
+  let mask = buildRefinedDetailMask(grid, bgRefs, tolerance, opts.pocketFill);
   mask = peelOutermostForegroundRing(mask, grid, bgRefs, tolerance, {
     style: opts.peelStyle ?? 'outer',
     fringePasses: opts.fringePasses ?? 0,
   });
-  mask = fillInteriorBgPockets(mask, grid, bgRefs, tolerance);
-  if (opts.extraCorner) {
-    mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
-  }
-  if (opts.closeAfterPeel) {
-    mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  if (opts.pocketFill) {
+    mask = fillEnclosedEdgePalettePockets(mask, grid, bgRefs, tolerance, opts.pocketFill);
   }
   return mask;
 }
@@ -1048,14 +1008,13 @@ export function computeRemoveBgMask(
     case 'outerCorner':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
         peelStyle: 'outer',
-        extraCorner: true,
+        pocketFill: { extraPasses: 2 },
       });
     case 'outerFull':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
         peelStyle: 'safe',
         fringePasses: 5,
-        extraCorner: true,
-        closeAfterPeel: true,
+        pocketFill: { extraPasses: 4, minEnclosure: 4 },
       });
     case 'outer':
     default:
