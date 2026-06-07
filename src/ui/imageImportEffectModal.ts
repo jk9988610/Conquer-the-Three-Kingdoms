@@ -10,8 +10,8 @@ import {
   clonePixelImportMix,
   createDefaultEffectMix,
   describeEffectMix,
-  displayGridToLogicalGrid,
   formatImportEffectSliderValue,
+  mergeDisplayRectIntoLogicalGrid,
   isThresholdImportEffect,
   PIXEL_IMPORT_EFFECTS,
   type PixelImportEffect,
@@ -271,7 +271,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       strength,
       displayRect
     );
-    currentGrid = displayGridToLogicalGrid(displayPatched);
+    currentGrid = mergeDisplayRectIntoLogicalGrid(
+      currentGrid,
+      displayPatched,
+      displayRect
+    );
     mix[effectId] = 0;
     sliderByEffect.get(effectId)?.setValue(0, { silent: true });
     cancelBoxSelect();
