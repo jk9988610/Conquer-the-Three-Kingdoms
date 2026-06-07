@@ -2196,6 +2196,10 @@ body {
   background: #121a28;
 }
 
+.img-import-effect__actions [data-change-image] {
+  margin-right: 4px;
+}
+
 .img-import-effect__actions [data-reset] {
   margin-right: auto;
 }

@@ -1455,6 +1455,8 @@ export function openPixelEditor(onApplied: () => void): void {
           onConfirm: (imported) => {
             openImageImportEffectModal({
               grid: imported,
+              cols: gridCols,
+              rows: gridRows,
               onConfirm: (processed) => {
                 replaceGrid(gridToPacked(processed));
                 clearSelection();
