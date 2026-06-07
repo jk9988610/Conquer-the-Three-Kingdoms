@@ -6,6 +6,7 @@ import {
 } from './gridConfig';
 import {
   downsamplePackedGrid,
+  downsamplePackedGridMajority,
   gridToPacked,
   packedToGrid,
 } from './packedGrid';
@@ -36,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '边缘保护泛洪 + 主体内镂空背景清除，滑条为颜色容差',
+    description: '四边泛洪去背景，滑条为颜色容差',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -359,79 +360,53 @@ function estimateCornerBackgroundColor(grid: PixelGrid): Rgba | null {
   return best?.color ?? null;
 }
 
-function countNonBgNeighbors8(mask: boolean[][], x: number, y: number): number {
+const NEIGHBOR8_DIRS: [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+function cloneMask(mask: boolean[][]): boolean[][] {
+  return mask.map((row) => [...row]);
+}
+
+function countBgNeighbors8(mask: boolean[][], x: number, y: number): number {
   let count = 0;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const ny = y + dy;
-      const nx = x + dx;
-      if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-      if (!mask[ny]![nx]) count++;
-    }
+  for (const [dx, dy] of NEIGHBOR8_DIRS) {
+    const ny = y + dy;
+    const nx = x + dx;
+    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
+    if (mask[ny]![nx]) count++;
   }
   return count;
+}
+
+function countNonBgNeighbors8(mask: boolean[][], x: number, y: number): number {
+  return NEIGHBOR8_DIRS.length - countBgNeighbors8(mask, x, y);
 }
 
 function isSimilarToBg(px: Rgba, bgRef: Rgba, tolerance: number): boolean {
   return rgbaDistance(px, bgRef) <= tolerance;
 }
 
-/** 收缩主体边缘误标记，并清除主体内镂空背景 */
-function refineBgMask(
+/** 八连通泛洪：与父格或参考背景色接近则继续扩展 */
+function floodBgMaskFromEdges(
   grid: PixelGrid,
-  mask: boolean[][],
   bgRef: Rgba,
   tolerance: number
 ): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = mask.map((row) => [...row]);
-  const pocketTol = tolerance * 0.9;
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (!out[y]![x]) continue;
-      if (countNonBgNeighbors8(out, x, y) >= 3) out[y]![x] = false;
-    }
-  }
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (out[y]![x]) continue;
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (!isSimilarToBg(px, bgRef, pocketTol)) continue;
-      if (countNonBgNeighbors8(out, x, y) < 6) continue;
-      out[y]![x] = true;
-    }
-  }
-
-  return out;
-}
-
-/**
- * 去背景掩码：从四边泛洪，邻格颜色接近则视为背景。
- * 支持纯色底与轻微渐变；高对比边界处停止泛洪以保护主体。
- */
-export function computeRemoveBgMask(
-  grid: PixelGrid,
-  tolerance: number
-): boolean[][] | null {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (cols === 0 || rows === 0 || tolerance <= 0) return null;
-
-  const bgEst = estimateCornerBackgroundColor(grid);
-  if (!bgEst) return null;
-  const bgRef: Rgba = bgEst;
-
   const isBg: boolean[][] = Array.from({ length: rows }, () =>
     Array.from({ length: cols }, () => false)
   );
   const queue: [number, number][] = [];
   const linkTol = tolerance * 0.72;
-  const edgeStop = Math.max(16, tolerance * 0.5);
 
   function trySeed(x: number, y: number): void {
     const px = getPixel(grid, x, y);
@@ -450,41 +425,107 @@ export function computeRemoveBgMask(
     trySeed(cols - 1, y);
   }
 
-  const dirs: [number, number][] = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ];
-
   while (queue.length > 0) {
     const [x, y] = queue.shift()!;
     const cur = getPixel(grid, x, y);
     if (!cur) continue;
 
-    for (const [dx, dy] of dirs) {
+    for (const [dx, dy] of NEIGHBOR8_DIRS) {
       const nx = x + dx;
       const ny = y + dy;
       if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
       const npx = getPixel(grid, nx, ny);
       if (!npx || npx.a < 0.08) continue;
-      const stepDist = rgbaDistance(npx, cur);
-      const toBg = rgbaDistance(npx, bgRef);
-      const canExpand =
-        stepDist <= linkTol || (toBg <= tolerance && stepDist <= edgeStop);
-      if (!canExpand) continue;
-      isBg[ny]![nx] = true;
-      queue.push([nx, ny]);
+      if (rgbaDistance(npx, cur) <= linkTol || rgbaDistance(npx, bgRef) <= tolerance) {
+        isBg[ny]![nx] = true;
+        queue.push([nx, ny]);
+      }
     }
   }
 
-  return refineBgMask(grid, isBg, bgRef, tolerance);
+  return isBg;
 }
 
-function removeBgGrid(grid: PixelGrid, tolerance: number): PixelGrid {
-  const mask = computeRemoveBgMask(grid, tolerance);
-  if (!mask) return cloneGrid(grid);
+/** 形态学闭运算：填补背景区域内的小孔，避免斑马线式间断 */
+function closeBgMask(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const dilated = cloneMask(mask);
 
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (dilated[y]![x]) continue;
+      const px = getPixel(grid, x, y);
+      if (!px || px.a < 0.08) continue;
+      if (!isSimilarToBg(px, bgRef, tolerance)) continue;
+      if (countBgNeighbors8(dilated, x, y) >= 5) dilated[y]![x] = true;
+    }
+  }
+
+  const closed = cloneMask(dilated);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (!closed[y]![x] || mask[y]![x]) continue;
+      if (countBgNeighbors8(dilated, x, y) >= 4) continue;
+      closed[y]![x] = false;
+    }
+  }
+
+  return closed;
+}
+
+/** 撤销明显非背景色、且被主体紧密包围的误标记 */
+function protectSubjectInMask(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const out = cloneMask(mask);
+  const guardDist = Math.max(8, tolerance * 0.68);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (!out[y]![x]) continue;
+      const px = getPixel(grid, x, y);
+      if (!px || px.a < 0.08) continue;
+      if (rgbaDistance(px, bgRef) <= guardDist) continue;
+      if (countNonBgNeighbors8(out, x, y) < 5) continue;
+      out[y]![x] = false;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * 去背景掩码：从四边八连通泛洪，邻格颜色接近则视为背景。
+ * 闭运算填补背景孔洞；明显非背景色且被主体包围的格予以保护。
+ */
+export function computeRemoveBgMask(
+  grid: PixelGrid,
+  tolerance: number
+): boolean[][] | null {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0 || tolerance <= 0) return null;
+
+  const bgEst = estimateCornerBackgroundColor(grid);
+  if (!bgEst) return null;
+
+  const flooded = floodBgMaskFromEdges(grid, bgEst, tolerance);
+  const closed = closeBgMask(flooded, grid, bgEst, tolerance);
+  return protectSubjectInMask(closed, grid, bgEst, tolerance);
+}
+
+function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
   const out = cloneGrid(grid);
   for (let y = 0; y < mask.length; y++) {
     for (let x = 0; x < (mask[y]?.length ?? 0); x++) {
@@ -492,6 +533,17 @@ function removeBgGrid(grid: PixelGrid, tolerance: number): PixelGrid {
     }
   }
   return out;
+}
+
+function removeBgGrid(
+  grid: PixelGrid,
+  tolerance: number,
+  maskSource?: PixelGrid
+): PixelGrid {
+  const source = maskSource ?? grid;
+  const mask = computeRemoveBgMask(source, tolerance);
+  if (!mask) return cloneGrid(grid);
+  return applyRemoveBgMask(grid, mask);
 }
 
 export function clonePixelImportMix(mix: PixelImportEffectMix): PixelImportEffectMix {
@@ -756,13 +808,21 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
 }
 
 /** 按滑条强度叠加多种效果（0=原图，可自由组合；去深色点为深度阈值） */
-export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMix): PixelGrid {
+export function applyPixelImportMix(
+  display: PixelGrid,
+  mix: PixelImportEffectMix,
+  mattingGrid?: PixelGrid | null
+): PixelGrid {
   let result = cloneGrid(display);
   for (const id of MIX_EFFECT_ORDER) {
     const strength = mix[id] ?? 0;
     if (strength <= 0) continue;
     if (id === 'removeBg') {
-      result = removeBgGrid(result, removeBgSliderToTolerance(strength));
+      result = removeBgGrid(
+        result,
+        removeBgSliderToTolerance(strength),
+        mattingGrid ?? undefined
+      );
       continue;
     }
     if (id === 'deblack') {
@@ -839,6 +899,19 @@ export function logicalGridToDisplayGrid(grid: PixelGrid): PixelGrid {
   return packedToGrid(displayPacked, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
 }
 
+/** 逻辑网格 → 展示网格（块内多数色，专供去背景算掩码，减少取样条纹） */
+export function logicalGridToDisplayGridMatting(grid: PixelGrid): PixelGrid {
+  const packed = gridToPacked(grid, ART_GRID_COLS, ART_GRID_ROWS);
+  const displayPacked = downsamplePackedGridMajority(
+    packed,
+    ART_GRID_COLS,
+    ART_GRID_ROWS,
+    ART_DISPLAY_COLS,
+    ART_DISPLAY_ROWS
+  );
+  return packedToGrid(displayPacked, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
+}
+
 /** 展示网格 → 逻辑网格（每块填色，与编辑器 flatten 一致） */
 export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
   const out: PixelGrid = [];
@@ -866,7 +939,9 @@ export function applyPixelImportMixOnDisplay(
   mix: PixelImportEffectMix
 ): PixelGrid {
   const display = logicalGridToDisplayGrid(grid);
-  return applyPixelImportMix(display, mix);
+  const matting =
+    (mix.removeBg ?? 0) > 0 ? logicalGridToDisplayGridMatting(grid) : null;
+  return applyPixelImportMix(display, mix, matting);
 }
 
 /** 导入落盘：展示级混合效果 → 展开为 500×700 逻辑网格 */
