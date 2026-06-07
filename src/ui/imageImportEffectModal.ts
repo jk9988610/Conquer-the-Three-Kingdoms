@@ -3,7 +3,6 @@ import {
   ART_DISPLAY_ROWS,
 } from '../art/gridConfig';
 import { gridDrawLayout } from '../art/packedGrid';
-import { loadImageFromFile } from '../art/imageToGrid';
 import {
   applyPixelImportMixForEditor,
   applyPixelImportMixOnDisplay,
@@ -16,6 +15,8 @@ import {
   type PixelImportEffectMix,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
+import { loadImageFromFile } from '../art/imageToGrid';
+import { createRangeSliderRow } from './rangeSliderRow';
 import { openImageImportModal } from './imageImportModal';
 import { getModalOverlayMount } from './overlayRoot';
 
@@ -98,30 +99,26 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const effectNameEl = modal.querySelector<HTMLElement>('[data-effect-name]')!;
   const slidersEl = modal.querySelector<HTMLElement>('[data-effect-sliders]')!;
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
+  const sliderHandles: ReturnType<typeof createRangeSliderRow>[] = [];
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
     const effectId = opt.id as Exclude<PixelImportEffect, 'standard'>;
     const isThreshold = isThresholdImportEffect(effectId);
-    const row = document.createElement('label');
-    row.className = `img-import-effect__slider-row${isThreshold ? ' img-import-effect__slider-row--threshold' : ''}`;
-    row.innerHTML = `
-      <span class="img-import-effect__slider-head">
-        <span class="img-import-effect__option-label">${opt.label}</span>
-        <span class="img-import-effect__slider-val" data-val>${isThreshold ? '关' : '0'}</span>
-      </span>
-      <span class="img-import-effect__option-desc">${opt.description}</span>
-      <input type="range" min="0" max="100" value="0" step="1" data-effect="${opt.id}" />
-    `;
-    const range = row.querySelector<HTMLInputElement>('[data-effect]')!;
-    const valEl = row.querySelector<HTMLElement>('[data-val]')!;
-    range.addEventListener('input', () => {
-      const v = Number(range.value) || 0;
-      mix[effectId] = v;
-      if (valEl) valEl.textContent = formatImportEffectSliderValue(effectId, v);
-      updateMixLabel();
-      renderPreview();
+    const slider = createRangeSliderRow({
+      label: opt.label,
+      description: opt.description,
+      value: 0,
+      className: isThreshold ? 'img-import-effect__slider-row--threshold' : undefined,
+      formatValue: (v) => formatImportEffectSliderValue(effectId, v),
+      onChange: (v) => {
+        mix[effectId] = v;
+        updateMixLabel();
+        renderPreview();
+      },
     });
-    slidersEl.append(row);
+    slider.root.classList.add('img-import-effect__slider-row');
+    sliderHandles.push(slider);
+    slidersEl.append(slider.root);
   }
 
   function updateMixLabel(): void {
@@ -193,18 +190,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
       mix[key] = defaults[key];
     }
-    slidersEl.querySelectorAll<HTMLInputElement>('[data-effect]').forEach((range) => {
-      range.value = '0';
-      const row = range.closest('.img-import-effect__slider-row');
-      const valEl = row?.querySelector<HTMLElement>('[data-val]');
-      const effectId = range.dataset.effect as Exclude<PixelImportEffect, 'standard'> | undefined;
-      if (valEl) {
-        valEl.textContent =
-          effectId && isThresholdImportEffect(effectId)
-            ? '关'
-            : '0';
-      }
-    });
+    sliderHandles.forEach((handle) => handle.setValue(0, { silent: true }));
     updateMixLabel();
     renderPreview();
   }
@@ -213,6 +199,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     const processed = applyPixelImportMixForEditor(currentGrid, mix);
     closeImageImportEffectModal();
     onConfirm(processed);
+  }
+
+  function finishCancel(): void {
+    onCancel?.();
+    closeImageImportEffectModal();
   }
 
   const changeFileInput = modal.querySelector<HTMLInputElement>('[data-change-file]')!;
@@ -245,11 +236,6 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     })();
   });
 
-  function finishCancel(): void {
-    onCancel?.();
-    closeImageImportEffectModal();
-  }
-
   modal.querySelector('[data-change-image]')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -276,6 +262,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     finishCancel();
   });
   modal.addEventListener('click', (e) => e.stopPropagation());
+
+  overlay.addEventListener(
+    'touchmove',
+    (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('input[type="range"]') || t.closest('.range-slider-row')) return;
+    },
+    { passive: true }
+  );
 
   overlay.append(modal);
   getModalOverlayMount().append(overlay);
