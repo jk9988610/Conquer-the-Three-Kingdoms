@@ -8,7 +8,7 @@ import {
   applyPixelImportMixOnDisplay,
   clonePixelImportMix,
   cloneRemoveBgBoxSelection,
-  computeRemoveBgDisplayMaskFromLogical,
+  computeRemoveBgDisplayMask,
   createDefaultEffectMix,
   createEmptyRemoveBgBoxSelection,
   DEFAULT_REMOVE_BG_MODE,
@@ -747,8 +747,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     }
 
     if (maskOverlay && isRemoveBgActive()) {
-      const mask = computeRemoveBgDisplayMaskFromLogical(
-        currentGrid,
+      const mask = computeRemoveBgDisplayMask(
+        logicalGridToDisplayGridMatting(currentGrid),
         mix.removeBg ?? 0,
         mixOptions()
       );
