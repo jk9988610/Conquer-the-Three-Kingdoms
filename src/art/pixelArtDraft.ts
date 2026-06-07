@@ -27,6 +27,7 @@ const STORAGE_KEY_V1 = 'tcg-pixel-editor-drafts-v1';
 export interface PixelEditorDraft {
   grid: PackedGrid;
   highlight: DisplayHighlightGrid;
+  highlightBreathSpeed?: number;
   updatedAt: number;
 }
 
@@ -35,7 +36,12 @@ interface DraftStoreV3 {
   byKey: Partial<
     Record<
       PixelArtKey,
-      { gridB64: string; highlightB64?: string; updatedAt: number }
+      {
+        gridB64: string;
+        highlightB64?: string;
+        highlightBreathSpeed?: number;
+        updatedAt: number;
+      }
     >
   >;
 }
@@ -166,6 +172,7 @@ export function loadPixelEditorDraft(key: PixelArtKey): PixelEditorDraft | null 
       highlight: stored.highlightB64
         ? decodeDisplayHighlightBase64(stored.highlightB64)
         : createEmptyDisplayHighlight(),
+      highlightBreathSpeed: stored.highlightBreathSpeed,
       updatedAt: stored.updatedAt,
     };
   }
@@ -179,13 +186,15 @@ export function loadPixelEditorDraft(key: PixelArtKey): PixelEditorDraft | null 
 export function savePixelEditorDraft(
   key: PixelArtKey,
   grid: PackedGrid,
-  highlight: DisplayHighlightGrid = createEmptyDisplayHighlight()
+  highlight: DisplayHighlightGrid = createEmptyDisplayHighlight(),
+  highlightBreathSpeed = 50
 ): void {
   const store = readStoreV3();
   store.lastArtKey = key;
   store.byKey[key] = {
     gridB64: encodePackedBase64(grid),
     highlightB64: encodeDisplayHighlightBase64(highlight),
+    highlightBreathSpeed: Math.max(1, Math.min(100, Math.round(highlightBreathSpeed))),
     updatedAt: Date.now(),
   };
   writeStoreV3(store);
