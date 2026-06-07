@@ -2337,6 +2337,7 @@ body {
 .img-import-effect__preview-viewport .img-import-effect__art-surface {
   transform-origin: center center;
   will-change: transform;
+  overflow: visible;
 }
 
 .img-import-effect__art-surface {
@@ -2350,7 +2351,7 @@ body {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 
-.img-import-effect__art-surface canvas {
+.img-import-effect__preview-viewport .img-import-effect__art-surface canvas {
   display: block;
   width: 100%;
   height: 100%;
