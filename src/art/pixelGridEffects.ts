@@ -476,9 +476,57 @@ function collectDynamicBackgroundPalette(grid: PixelGrid, maxColors = 14): Rgba[
   return fallback ? [fallback] : [];
 }
 
-function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
-  if (palette.length === 0) return Number.POSITIVE_INFINITY;
-  return Math.min(...palette.map((ref) => rgbaDistance(px, ref)));
+/** 从色板中剔除更像主体中心色的条目，避免泛洪误侵本体 */
+function filterPaletteExcludingSubject(
+  grid: PixelGrid,
+  palette: Rgba[],
+  tolerance: number
+): Rgba[] {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (palette.length <= 1 || cols === 0 || rows === 0) return palette;
+
+  const matchTol = tolerance * 1.04;
+  const cx0 = Math.floor(cols * 0.28);
+  const cx1 = Math.ceil(cols * 0.72);
+  const cy0 = Math.floor(rows * 0.28);
+  const cy1 = Math.ceil(rows * 0.72);
+
+  function regionMatchCount(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    ref: Rgba
+  ): number {
+    let count = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const px = getPixel(grid, x, y);
+        if (!px || px.a < 0.08) continue;
+        if (rgbaDistance(px, ref) <= matchTol) count++;
+      }
+    }
+    return count;
+  }
+
+  return palette.filter((ref) => {
+    let edgeCount = 0;
+    for (let x = 0; x < cols; x++) {
+      const top = getPixel(grid, x, 0);
+      const bottom = getPixel(grid, x, rows - 1);
+      if (top && top.a >= 0.08 && rgbaDistance(top, ref) <= matchTol) edgeCount++;
+      if (bottom && bottom.a >= 0.08 && rgbaDistance(bottom, ref) <= matchTol) edgeCount++;
+    }
+    for (let y = 0; y < rows; y++) {
+      const left = getPixel(grid, 0, y);
+      const right = getPixel(grid, cols - 1, y);
+      if (left && left.a >= 0.08 && rgbaDistance(left, ref) <= matchTol) edgeCount++;
+      if (right && right.a >= 0.08 && rgbaDistance(right, ref) <= matchTol) edgeCount++;
+    }
+    const centerCount = regionMatchCount(cx0, cy0, cx1, cy1, ref);
+    return edgeCount >= centerCount || edgeCount >= 2;
+  });
 }
 
 /** 八连通泛洪：从四边种子扩展，支持渐变/多色背景 */
@@ -524,10 +572,7 @@ function floodBgMaskFromEdges(
       if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
       const npx = getPixel(grid, nx, ny);
       if (!npx || npx.a < 0.08) continue;
-      if (
-        rgbaDistance(npx, cur) <= linkTol ||
-        isSimilarToBgRefs(npx, bgPalette, tolerance)
-      ) {
+      if (rgbaDistance(npx, cur) <= linkTol) {
         isBg[ny]![nx] = true;
         queue.push([nx, ny]);
       }
@@ -682,45 +727,18 @@ function forceClearCornerBackground(
 
 const SURROUND_DETAIL_MAX = 0.3;
 
-/** 清除主体与背景交界处的残留背景色（边缘光晕） */
-function peelFringingBackground(
+
+/** 清除肢体缝隙内、被主体包围的背景色小片 */
+function fillInteriorBgPockets(
   mask: boolean[][],
   grid: PixelGrid,
-  bgRefs: Rgba[],
+  bgPalette: Rgba[],
   tolerance: number
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
-  const peelTol = tolerance * 1.06;
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (out[y]![x]) continue;
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (!isSimilarToBgRefs(px, bgRefs, peelTol)) continue;
-      if (localDetailWeight(grid, x, y) >= SURROUND_DETAIL_MAX) continue;
-      const bgN = countBgNeighbors8(out, x, y);
-      const fgN = countNonBgNeighbors8(out, x, y);
-      if (bgN >= 1 && fgN >= 1) out[y]![x] = true;
-    }
-  }
-
-  return out;
-}
-
-/** 从已清除区域向外扩展，去除周围相近背景色块 */
-function peelSurroundingBackground(
-  mask: boolean[][],
-  grid: PixelGrid,
-  bgRefs: Rgba[],
-  tolerance: number
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  let out = peelFringingBackground(mask, grid, bgRefs, tolerance);
-  const peelTol = tolerance * 1.05;
+  let out = cloneMask(mask);
+  const pocketTol = tolerance * 0.94;
 
   for (let pass = 0; pass < 6; pass++) {
     let changed = false;
@@ -730,43 +748,9 @@ function peelSurroundingBackground(
         if (next[y]![x]) continue;
         const px = getPixel(grid, x, y);
         if (!px || px.a < 0.08) continue;
-        if (!isSimilarToBgRefs(px, bgRefs, peelTol)) continue;
+        if (!isSimilarToBgRefs(px, bgPalette, pocketTol)) continue;
         if (localDetailWeight(grid, x, y) >= SURROUND_DETAIL_MAX) continue;
-        if (countBgNeighbors8(out, x, y) < 1) continue;
-        next[y]![x] = true;
-        changed = true;
-      }
-    }
-    out = next;
-    if (!changed) break;
-  }
-
-  return out;
-}
-
-/** 向邻域扩展清除与背景相近的低细节像素 */
-function expandBgMaskSimilar(
-  mask: boolean[][],
-  grid: PixelGrid,
-  bgRefs: Rgba[],
-  tolerance: number
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  let out = cloneMask(mask);
-  const expandTol = tolerance * 1.1;
-
-  for (let pass = 0; pass < 5; pass++) {
-    let changed = false;
-    const next = cloneMask(out);
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        if (next[y]![x]) continue;
-        const px = getPixel(grid, x, y);
-        if (!px || px.a < 0.08) continue;
-        if (!isSimilarToBgRefs(px, bgRefs, expandTol)) continue;
-        if (localDetailWeight(grid, x, y) >= SURROUND_DETAIL_MAX) continue;
-        if (countBgNeighbors8(out, x, y) < 2) continue;
+        if (countNonBgNeighbors8(out, x, y) < 4) continue;
         next[y]![x] = true;
         changed = true;
       }
@@ -788,9 +772,9 @@ function buildRefinedDetailMask(
   mask = closeBgMask(mask, grid, primaryRef, tolerance);
   mask = protectSubjectInMask(mask, grid, bgRefs, tolerance, {
     protectDetail: true,
+    strength: 'strong',
   });
-  mask = peelSurroundingBackground(mask, grid, bgRefs, tolerance);
-  mask = expandBgMaskSimilar(mask, grid, bgRefs, tolerance);
+  mask = fillInteriorBgPockets(mask, grid, bgRefs, tolerance);
   mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
   mask = closeBgMask(mask, grid, primaryRef, tolerance);
   return mask;
@@ -886,7 +870,7 @@ function isOutermostBgColoredPixel(
   grid: PixelGrid,
   x: number,
   y: number,
-  bgPalette: Rgba[],
+  _bgPalette: Rgba[],
   tolerance: number,
   style: PeelBoundaryStyle
 ): boolean {
@@ -895,30 +879,25 @@ function isOutermostBgColoredPixel(
 
   const clearedAvg = averageAdjacentClearedColor(mask, grid, x, y);
   const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
-  const paletteDist = nearestPaletteDistance(px, bgPalette);
   const clearedDist = clearedAvg ? rgbaDistance(px, clearedAvg) : Number.POSITIVE_INFINITY;
   const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
-  const bgDist = Math.min(paletteDist, clearedDist);
+  const bgDist = clearedDist;
 
-  if (interiorAvg && interiorDist < bgDist * 0.76) return false;
+  if (interiorAvg && interiorDist < bgDist * 0.8) return false;
 
   if (countForegroundNeighbors4(mask, x, y) <= 2) {
-    if (!interiorAvg || interiorDist < bgDist * 0.88) return false;
+    if (!interiorAvg || interiorDist < bgDist * 0.92) return false;
   }
 
-  const paletteTol = tolerance * (style === 'safe' ? 1.04 : 1.1);
-  const clearedTol = tolerance * 1.12;
-  const likePalette = paletteDist <= paletteTol;
+  const clearedTol = tolerance * (style === 'safe' ? 1.06 : 1.1);
   const likeCleared = clearedAvg !== null && clearedDist <= clearedTol;
   const likeClearedNeighbor = hasSimilarClearedNeighbor(mask, grid, x, y, px, tolerance);
 
-  if (!likePalette && !likeCleared && !likeClearedNeighbor) return false;
+  if (!likeCleared && !likeClearedNeighbor) return false;
 
-  if (interiorAvg && interiorDist < bgDist * 0.9) return false;
+  if (interiorAvg && interiorDist < bgDist * 0.88) return false;
 
-  if (likeCleared || likeClearedNeighbor) return true;
-
-  return likePalette && (!interiorAvg || bgDist < interiorDist * 0.86);
+  return true;
 }
 
 /** 判断是否应剥离该边缘像素（仅处理与透明区相邻的一圈） */
@@ -1030,6 +1009,7 @@ function buildRefinedOuterMaskVariant(
     style: opts.peelStyle ?? 'outer',
     fringePasses: opts.fringePasses ?? 0,
   });
+  mask = fillInteriorBgPockets(mask, grid, bgRefs, tolerance);
   if (opts.extraCorner) {
     mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
   }
@@ -1051,7 +1031,8 @@ export function computeRemoveBgMask(
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0 || tolerance <= 0) return null;
 
-  const bgRefs = collectDynamicBackgroundPalette(grid);
+  const rawPalette = collectDynamicBackgroundPalette(grid);
+  const bgRefs = filterPaletteExcludingSubject(grid, rawPalette, tolerance);
   if (bgRefs.length === 0) return null;
 
   switch (mode) {
