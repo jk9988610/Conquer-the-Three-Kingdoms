@@ -1372,35 +1372,7 @@ body {
   border-radius: 3px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
-  cursor: pointer;
-}
-
-.img-import-effect__remove-bg-swatch.is-whitelist,
-.img-import-effect__remove-bg-swatch--whitelist {
-  box-shadow:
-    0 0 0 2px rgba(72, 200, 120, 0.95),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
-}
-
-.img-import-effect__remove-bg-swatch.is-blacklist,
-.img-import-effect__remove-bg-swatch--blacklist {
-  box-shadow:
-    0 0 0 2px rgba(255, 88, 72, 0.95),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
-}
-
-.img-import-effect__remove-bg-rules {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 10px 4px;
-  min-height: 26px;
-  align-items: center;
-}
-
-.img-import-effect__remove-bg-rules-empty {
-  font-size: 11px;
-  color: var(--tcg-muted, #8a8a8a);
+  cursor: default;
 }
 
 .pixel-editor__view-hint {
@@ -2326,12 +2298,43 @@ body {
   position: relative;
 }
 
-.img-import-effect__preview-viewport.is-pick-protect {
+.img-import-effect__preview-viewport.is-box-protect {
   cursor: crosshair;
 }
 
-.img-import-effect__preview-viewport.is-pick-remove {
-  cursor: cell;
+.img-import-effect__preview-viewport.is-box-remove {
+  cursor: crosshair;
+}
+
+.img-import-effect__box-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.img-import-effect__box-outline {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.img-import-effect__box-outline--remove {
+  border-color: rgba(255, 88, 72, 0.92);
+  background: rgba(255, 88, 72, 0.12);
+}
+
+.img-import-effect__box-outline--protect {
+  border-color: rgba(72, 200, 120, 0.92);
+  background: rgba(72, 200, 120, 0.12);
+}
+
+.img-import-effect__box-outline.is-draft {
+  border-style: dashed;
+  opacity: 0.85;
 }
 
 .img-import-effect__preview-viewport .img-import-effect__art-surface {
