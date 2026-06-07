@@ -520,6 +520,35 @@ export function clonePixelImportMix(mix: PixelImportEffectMix): PixelImportEffec
   return { ...createDefaultEffectMix(), ...mix };
 }
 
+/**
+ * 仅将展示网格框选区合并回逻辑网格，框外保持原逻辑像素不变。
+ * 避免整图 display→logical 往返导致已烘焙区域（如去背景）被还原。
+ */
+export function mergeDisplayRectIntoLogicalGrid(
+  logical: PixelGrid,
+  display: PixelGrid,
+  rect: { x: number; y: number; w: number; h: number }
+): PixelGrid {
+  const out = cloneGrid(logical);
+  const x1 = rect.x + rect.w;
+  const y1 = rect.y + rect.h;
+
+  for (let dy = rect.y; dy < y1; dy++) {
+    for (let dx = rect.x; dx < x1; dx++) {
+      const pixel = display[dy]?.[dx] ?? null;
+      const { x0, y0, x1: lx1, y1: ly1 } = displayCellLogicBounds(dx, dy);
+      for (let y = y0; y < ly1; y++) {
+        const row = out[y];
+        if (!row) continue;
+        for (let x = x0; x < lx1; x++) {
+          row[x] = pixel;
+        }
+      }
+    }
+  }
+  return out;
+}
+
 /** 全图去背景（展示网格级泛洪后展开为逻辑网格） */
 export function applyRemoveBgOnLogicalGrid(
   grid: PixelGrid,
