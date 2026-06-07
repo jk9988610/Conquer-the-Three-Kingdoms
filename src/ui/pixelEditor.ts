@@ -45,7 +45,7 @@ import {
   DISPLAY_HIGHLIGHT_GLOW,
   DISPLAY_HIGHLIGHT_MARK,
   displayHighlightIndex,
-  paintDisplayHighlightOverlay,
+  paintDisplayHighlightMarks,
   registerHighlightBreathTarget,
   type DisplayHighlightGrid,
 } from '../art/displayHighlight';
@@ -858,15 +858,6 @@ export function openPixelEditor(onApplied: () => void): void {
     );
     const previewCellPx = Math.max(1, Math.floor(layout.cell));
     drawTransparentFlashOverlay(sq, previewCellPx, layout.ox, layout.oy);
-    paintDisplayHighlightOverlay(
-      sq,
-      displayPackedForView(),
-      highlightGrid,
-      previewCellPx,
-      layout.ox,
-      layout.oy,
-      breathSpeed
-    );
   }
 
   function refreshAll(): void {
@@ -1090,16 +1081,8 @@ export function openPixelEditor(onApplied: () => void): void {
     syncBreathAnimation();
   }
 
-  function paintHighlightOverlay(ctx: CanvasRenderingContext2D): void {
-    paintDisplayHighlightOverlay(
-      ctx,
-      displayPackedForView(),
-      highlightGrid,
-      cellSize,
-      0,
-      0,
-      breathSpeed
-    );
+  function paintHighlightMarks(ctx: CanvasRenderingContext2D): void {
+    paintDisplayHighlightMarks(ctx, highlightGrid, cellSize, 0, 0, breathSpeed);
   }
 
   function redrawGridLayer(): void {
@@ -1107,7 +1090,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
     if (showGrid) drawReferenceGridLines(ctx);
-    paintHighlightOverlay(ctx);
+    paintHighlightMarks(ctx);
   }
 
   function drawReferenceGridLines(ctx: CanvasRenderingContext2D): void {
@@ -1162,31 +1145,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (unregisterBreathTarget) return;
     unregisterBreathTarget = registerHighlightBreathTarget({
       hasBreath: () => anyDisplayHighlightBreath(highlightGrid),
-      redraw: () => {
-        redrawGridLayer();
-        const sq = previewGridArt.getContext('2d');
-        if (!sq) return;
-        const layout = gridDrawLayout(
-          ART_DISPLAY_COLS,
-          ART_DISPLAY_ROWS,
-          previewPixelW,
-          previewPixelH,
-          'fit'
-        );
-        const previewCellPx = Math.max(1, Math.floor(layout.cell));
-        sq.clearRect(0, 0, previewPixelW, previewPixelH);
-        drawPackedPreview(sq, gridForDisplay(), previewPixelW, previewPixelH, gridCols, gridRows);
-        drawTransparentFlashOverlay(sq, previewCellPx, layout.ox, layout.oy);
-        paintDisplayHighlightOverlay(
-          sq,
-          displayPackedForView(),
-          highlightGrid,
-          previewCellPx,
-          layout.ox,
-          layout.oy,
-          breathSpeed
-        );
-      },
+      redraw: () => redrawGridLayer(),
     });
   }
 

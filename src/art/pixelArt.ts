@@ -3,8 +3,8 @@ import {
   anyDisplayHighlightBreath,
   cloneDisplayHighlight,
   createEmptyDisplayHighlight,
+  drawPackedDisplayWithHighlight,
   hasAnyDisplayHighlight,
-  paintDisplayHighlightOverlay,
   type DisplayHighlightGrid,
 } from './displayHighlight';
 import {
@@ -16,7 +16,6 @@ import {
 import {
   clonePackedGrid,
   createDefaultCardArtPacked,
-  downsamplePackedGrid,
   drawPackedDisplayToCanvas,
   gridDrawLayout,
   gridToPacked,
@@ -291,35 +290,27 @@ export function drawPixelArt(
   }
 
   const packed = getArtPacked(key);
-  drawPackedDisplayToCanvas(ctx, packed, width, height, mode);
-
   const highlight = options.highlight ?? getArtHighlight(key);
-  if (!hasAnyDisplayHighlight(highlight)) return;
+  const breathSpeed = options.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key);
 
-  const layout = gridDrawLayout(
-    ART_DISPLAY_COLS,
-    ART_DISPLAY_ROWS,
-    width,
-    height,
-    mode
-  );
-  const cellPx = Math.max(1, Math.floor(layout.cell));
-  const display = downsamplePackedGrid(
-    packed,
-    ART_GRID_COLS,
-    ART_GRID_ROWS,
-    ART_DISPLAY_COLS,
-    ART_DISPLAY_ROWS
-  );
-  paintDisplayHighlightOverlay(
-    ctx,
-    display,
-    highlight,
-    cellPx,
-    layout.ox,
-    layout.oy,
-    options.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key)
-  );
+  if (hasAnyDisplayHighlight(highlight)) {
+    drawPackedDisplayWithHighlight(
+      ctx,
+      packed,
+      width,
+      height,
+      highlight,
+      mode,
+      breathSpeed,
+      performance.now(),
+      ART_GRID_COLS,
+      ART_GRID_ROWS,
+      ART_DISPLAY_COLS,
+      ART_DISPLAY_ROWS
+    );
+  } else {
+    drawPackedDisplayToCanvas(ctx, packed, width, height, mode);
+  }
 }
 
 export function artHasHighlightBreath(key: PixelArtKey): boolean {
