@@ -229,36 +229,39 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       section.className = 'img-import-effect__remove-bg-section';
       section.append(slider.root);
 
-      const modesLabel = document.createElement('div');
-      modesLabel.className = 'img-import-effect__remove-bg-modes-label';
-      modesLabel.textContent = '去背景方案';
-      section.append(modesLabel);
+      if (REMOVE_BG_MODES.length > 1) {
+        const modesLabel = document.createElement('div');
+        modesLabel.className = 'img-import-effect__remove-bg-modes-label';
+        modesLabel.textContent = '去背景方案';
+        section.append(modesLabel);
 
-      const modesEl = document.createElement('div');
-      modesEl.className = 'img-import-effect__remove-bg-modes';
-      for (const modeOpt of REMOVE_BG_MODES) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'img-import-effect__remove-bg-mode';
-        btn.dataset.mode = modeOpt.id;
-        btn.textContent = modeOpt.label;
-        btn.title = modeOpt.description;
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (removeBgMode === modeOpt.id) return;
-          pushEffectUndo();
-          removeBgMode = modeOpt.id;
-          updateRemoveBgModeButtons();
-          updateMixLabel();
-          renderPreview();
-        });
-        removeBgModeButtons.set(modeOpt.id, btn);
-        modesEl.append(btn);
+        const modesEl = document.createElement('div');
+        modesEl.className = 'img-import-effect__remove-bg-modes';
+        for (const modeOpt of REMOVE_BG_MODES) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'img-import-effect__remove-bg-mode';
+          btn.dataset.mode = modeOpt.id;
+          btn.textContent = modeOpt.label;
+          btn.title = modeOpt.description;
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (removeBgMode === modeOpt.id) return;
+            pushEffectUndo();
+            removeBgMode = modeOpt.id;
+            updateRemoveBgModeButtons();
+            updateMixLabel();
+            renderPreview();
+          });
+          removeBgModeButtons.set(modeOpt.id, btn);
+          modesEl.append(btn);
+        }
+        section.append(modesEl);
+        updateRemoveBgModeButtons();
       }
-      section.append(modesEl);
+
       slidersEl.append(section);
-      updateRemoveBgModeButtons();
     } else {
       slidersEl.append(slider.root);
     }
