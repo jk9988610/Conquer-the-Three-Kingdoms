@@ -37,16 +37,9 @@ import {
   loadPixelEditorDraft,
   savePixelEditorDraft,
 } from '../art/pixelArtDraft';
-import {
-  applyRemoveBgLocalOnLogicalGrid,
-  applyRemoveBgOnLogicalGrid,
-  formatRemoveBgSliderValue,
-  removeBgSliderToTolerance,
-} from '../art/pixelGridEffects';
 import { loadImageFromFile } from '../art/imageToGrid';
 import { openImageImportEffectModal } from './imageImportEffectModal';
 import { openImageImportModal } from './imageImportModal';
-import { createRangeSliderRow } from './rangeSliderRow';
 import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { ART_PREVIEW_HEIGHT, ART_PREVIEW_WIDTH } from '../tcg/dimensions';
@@ -58,7 +51,7 @@ const PANE_INSET_PX = 4;
 const ART_INNER_FRAME_PX = 1;
 /** 绘制区外框（edit-stage 单边边框），包裹 art-surface */
 const EDIT_STAGE_FRAME_PX = 1;
-const MAX_UNDO = 5;
+const MAX_UNDO = 10;
 const MAX_BRUSH = 12;
 const MIN_VIEW_ZOOM = 0.15;
 const MAX_VIEW_ZOOM = 12;
@@ -137,7 +130,6 @@ export function openPixelEditor(onApplied: () => void): void {
   let selectionFloating = false;
   let floatingPasteOnly = false;
   let clipboardMode: ClipboardMode = null;
-  let removeBgSlider = 0;
   let lastPaintCell: { x: number; y: number } | null = null;
   let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
@@ -255,18 +247,6 @@ export function openPixelEditor(onApplied: () => void): void {
     pasteBtn.disabled = !clipboard && !hasPendingSelection;
   }
 
-  function updateLocalFxButtons(): void {
-    const localBtn = panel.querySelector<HTMLButtonElement>('[data-local-remove-bg]');
-    if (!localBtn) return;
-    const canLocal =
-      removeBgSlider > 0 &&
-      !!selection &&
-      !selectionFloating &&
-      selection.w > 0 &&
-      selection.h > 0;
-    localBtn.disabled = !canLocal;
-  }
-
   function clearToolbarHighlights(): void {
     panel.querySelectorAll('[data-tool]').forEach((btn) => {
       btn.classList.remove('pixel-editor__tool--active');
@@ -287,7 +267,6 @@ export function openPixelEditor(onApplied: () => void): void {
         panel.querySelector('[data-paste]')?.classList.add('pixel-editor__tool--active');
       }
       updateClipboardButtons();
-      updateLocalFxButtons();
       return;
     }
     panel.querySelectorAll('[data-tool]').forEach((btn) => {
@@ -296,7 +275,6 @@ export function openPixelEditor(onApplied: () => void): void {
         (btn as HTMLElement).dataset.tool === tool
       );
     });
-    updateLocalFxButtons();
   }
 
   function clearSelection(): void {
@@ -424,7 +402,6 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-cut>剪切</button>
               <button type="button" class="btn" data-paste disabled>粘贴</button>
             </div>
-            <div class="pixel-editor__remove-bg-row" data-remove-bg-mount></div>
             <label class="pixel-editor__brush-row">
               画笔粗细
               <input type="range" min="1" max="12" value="1" data-brush-size />
@@ -483,9 +460,6 @@ export function openPixelEditor(onApplied: () => void): void {
   const selBox = panel.querySelector<HTMLElement>('[data-sel-box]')!;
   const colorPickerMount = panel.querySelector('[data-color-picker]')!;
   const alphaMount = panel.querySelector<HTMLElement>('[data-alpha-mount]')!;
-  const removeBgMount = panel.querySelector<HTMLElement>('[data-remove-bg-mount]')!;
-
-
   for (const k of PIXEL_ART_KEYS) {
     const opt = document.createElement('option');
     opt.value = k;
@@ -763,14 +737,6 @@ export function openPixelEditor(onApplied: () => void): void {
     return movePreviewPos ?? { x: selection.x, y: selection.y };
   }
 
-  function packedWithRemoveBgPreview(source: PackedGrid): PackedGrid {
-    if (removeBgSlider <= 0) return source;
-    const tolerance = removeBgSliderToTolerance(removeBgSlider);
-    const logical = packedToGrid(source, gridCols, gridRows);
-    const processed = applyRemoveBgOnLogicalGrid(logical, tolerance);
-    return gridToPacked(processed, gridCols, gridRows);
-  }
-
   /** 摆放悬浮时在预览位置叠加选区像素 */
   function gridForDisplay(): PackedGrid {
     const pos = selectionFloating ? floatingSelectionPos() : null;
@@ -786,31 +752,9 @@ export function openPixelEditor(onApplied: () => void): void {
         selection.h,
         selection.pixels
       );
-      return packedWithRemoveBgPreview(preview);
+      return preview;
     }
-    return packedWithRemoveBgPreview(grid);
-  }
-
-  function applyLocalRemoveBg(): void {
-    if (
-      removeBgSlider <= 0 ||
-      !selection ||
-      selectionFloating ||
-      selection.w <= 0 ||
-      selection.h <= 0
-    ) {
-      return;
-    }
-    const tolerance = removeBgSliderToTolerance(removeBgSlider);
-    const logical = packedToGrid(grid, gridCols, gridRows);
-    const processed = applyRemoveBgLocalOnLogicalGrid(
-      logical,
-      { x: selection.x, y: selection.y, w: selection.w, h: selection.h },
-      tolerance
-    );
-    replaceGrid(gridToPacked(processed, gridCols, gridRows));
-    refreshAll();
-    updateLocalFxButtons();
+    return grid;
   }
 
   function refreshEditCanvas(): void {
@@ -840,7 +784,6 @@ export function openPixelEditor(onApplied: () => void): void {
     refreshPreview();
     drawReferenceGrid();
     updateSelectionBox();
-    updateLocalFxButtons();
   }
 
   function logicBlockForDisplayCell(dx: number, dy: number) {
@@ -1072,13 +1015,6 @@ export function openPixelEditor(onApplied: () => void): void {
     updateSelectionBox(rect);
     updateClipboardButtons();
     refreshAll();
-    if (clipboardMode === 'cut') {
-      deactivateToolForClipboard();
-      clipboardMode = 'paste';
-      captureClipboardFromSelection('cut');
-      startPasteFloating();
-      syncToolbarUi();
-    }
   }
 
   function captureClipboardFromSelection(mode: 'copy' | 'cut'): boolean {
@@ -1194,35 +1130,6 @@ export function openPixelEditor(onApplied: () => void): void {
     },
     { passive: false }
   );
-
-  const removeBgSliderRow = createRangeSliderRow({
-    label: '去背景',
-    description: '四角取色泛洪；拖动预览全图，「局部」对框选区瞬间生效',
-    value: 0,
-    className: 'pixel-editor__remove-bg-slider',
-    formatValue: formatRemoveBgSliderValue,
-    onChange: (v) => {
-      removeBgSlider = v;
-      refreshAll();
-      updateLocalFxButtons();
-    },
-  });
-  const localRemoveBgBtn = document.createElement('button');
-  localRemoveBgBtn.type = 'button';
-  localRemoveBgBtn.className = 'btn pixel-editor__local-fx-btn';
-  localRemoveBgBtn.dataset.localRemoveBg = '';
-  localRemoveBgBtn.textContent = '局部';
-  localRemoveBgBtn.title = '按当前容差，在框选区内去除全图背景色（需先复制/剪切框选）';
-  localRemoveBgBtn.disabled = true;
-  localRemoveBgBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    applyLocalRemoveBg();
-  });
-  const removeBgActions = document.createElement('div');
-  removeBgActions.className = 'pixel-editor__remove-bg-actions';
-  removeBgActions.append(localRemoveBgBtn);
-  removeBgMount.append(removeBgSliderRow.root, removeBgActions);
 
   const onEditPointerDown = (e: PointerEvent) => {
     if (navPointers.size >= 2) return;

@@ -13,6 +13,7 @@ import type { Pixel, PixelGrid } from './pixelArt';
 
 export type PixelImportEffect =
   | 'standard'
+  | 'removeBg'
   | 'sharpen'
   | 'deblack'
   | 'vivid'
@@ -32,6 +33,7 @@ export interface PixelImportEffectOption {
 }
 
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
+  { id: 'removeBg', label: '去背景', description: '四角取色 + 边缘泛洪，滑条为颜色容差' },
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
@@ -43,6 +45,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
 ];
 
 const MIX_EFFECT_ORDER: Exclude<PixelImportEffect, 'standard'>[] = [
+  'removeBg',
   'deblack',
   'soft',
   'sharpen',
@@ -55,6 +58,7 @@ const MIX_EFFECT_ORDER: Exclude<PixelImportEffect, 'standard'>[] = [
 
 export function createDefaultEffectMix(): PixelImportEffectMix {
   return {
+    removeBg: 0,
     sharpen: 0,
     deblack: 0,
     vivid: 0,
@@ -446,6 +450,76 @@ function removeBgGrid(grid: PixelGrid, tolerance: number): PixelGrid {
   return out;
 }
 
+/** 展示网格上局部去背景（按全图四角背景掩码，仅清除框内） */
+export function applyRemoveBgLocalOnDisplay(
+  display: PixelGrid,
+  tolerance: number,
+  rect: { x: number; y: number; w: number; h: number }
+): PixelGrid {
+  if (tolerance <= 0 || rect.w < 1 || rect.h < 1) return cloneGrid(display);
+  const mask = computeRemoveBgMask(display, tolerance);
+  if (!mask) return cloneGrid(display);
+
+  const out = cloneGrid(display);
+  const x1 = rect.x + rect.w;
+  const y1 = rect.y + rect.h;
+  for (let y = rect.y; y < y1; y++) {
+    for (let x = rect.x; x < x1; x++) {
+      if (mask[y]?.[x]) out[y]![x] = null;
+    }
+  }
+  return out;
+}
+
+/** 在展示网格的框选区内应用单一效果（全图上下文，仅写入框内） */
+export function applyImportEffectLocalOnDisplay(
+  display: PixelGrid,
+  effectId: Exclude<PixelImportEffect, 'standard'>,
+  strength: number,
+  rect: { x: number; y: number; w: number; h: number }
+): PixelGrid {
+  if (strength <= 0 || rect.w < 1 || rect.h < 1) return cloneGrid(display);
+
+  const x0 = rect.x;
+  const y0 = rect.y;
+  const x1 = rect.x + rect.w;
+  const y1 = rect.y + rect.h;
+
+  if (effectId === 'removeBg') {
+    return applyRemoveBgLocalOnDisplay(
+      display,
+      removeBgSliderToTolerance(strength),
+      rect
+    );
+  }
+
+  let processed: PixelGrid;
+  if (effectId === 'deblack') {
+    processed = deblackGrid(display, deblackSliderToLuminanceThreshold(strength));
+  } else {
+    const t = strength / 100;
+    const next =
+      effectId === 'brightness'
+        ? brightnessGrid(display, t)
+        : applyPixelImportEffect(display, effectId);
+    processed = lerpGrids(display, next, t);
+  }
+
+  const out = cloneGrid(display);
+  for (let y = y0; y < y1; y++) {
+    const row = out[y];
+    if (!row) continue;
+    for (let x = x0; x < x1; x++) {
+      row[x] = processed[y]?.[x] ?? null;
+    }
+  }
+  return out;
+}
+
+export function clonePixelImportMix(mix: PixelImportEffectMix): PixelImportEffectMix {
+  return { ...createDefaultEffectMix(), ...mix };
+}
+
 /** 全图去背景（展示网格级泛洪后展开为逻辑网格） */
 export function applyRemoveBgOnLogicalGrid(
   grid: PixelGrid,
@@ -747,6 +821,10 @@ export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMi
   for (const id of MIX_EFFECT_ORDER) {
     const strength = mix[id] ?? 0;
     if (strength <= 0) continue;
+    if (id === 'removeBg') {
+      result = removeBgGrid(result, removeBgSliderToTolerance(strength));
+      continue;
+    }
     if (id === 'deblack') {
       result = deblackGrid(result, deblackSliderToLuminanceThreshold(strength));
       continue;
@@ -766,7 +844,9 @@ export function describeEffectMix(mix: PixelImportEffectMix): string {
   for (const o of PIXEL_IMPORT_EFFECTS) {
     const v = mix[o.id as keyof PixelImportEffectMix] ?? 0;
     if (v <= 0) continue;
-    if (o.id === 'deblack') {
+    if (o.id === 'removeBg') {
+      parts.push(`${o.label} 容差${removeBgSliderToTolerance(v)}`);
+    } else if (o.id === 'deblack') {
       parts.push(`${o.label} 深度${deblackSliderToLuminanceThreshold(v)}`);
     } else {
       parts.push(`${o.label} ${v}%`);
@@ -775,7 +855,10 @@ export function describeEffectMix(mix: PixelImportEffectMix): string {
   return parts.length === 0 ? '原图' : parts.join(' · ');
 }
 
-const THRESHOLD_SLIDER_EFFECTS = new Set<Exclude<PixelImportEffect, 'standard'>>(['deblack']);
+const THRESHOLD_SLIDER_EFFECTS = new Set<Exclude<PixelImportEffect, 'standard'>>([
+  'removeBg',
+  'deblack',
+]);
 
 export function isThresholdImportEffect(
   id: Exclude<PixelImportEffect, 'standard'>
@@ -789,6 +872,8 @@ export function formatImportEffectSliderValue(
 ): string {
   if (sliderValue <= 0 && isThresholdImportEffect(effect)) return '关';
   switch (effect) {
+    case 'removeBg':
+      return `容差${removeBgSliderToTolerance(sliderValue)}`;
     case 'deblack':
       return `深度${deblackSliderToLuminanceThreshold(sliderValue)}`;
     default:
