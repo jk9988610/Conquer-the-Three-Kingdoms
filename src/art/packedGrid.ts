@@ -198,6 +198,47 @@ export function gridDrawLayout(
   };
 }
 
+/** 将逻辑网格下采样到展示分辨率（块内多数色，用于抠图等需稳定颜色的场景） */
+export function downsamplePackedGridMajority(
+  src: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PackedGrid {
+  const out = createPackedGrid(dstCols, dstRows);
+  if (srcCols === dstCols && srcRows === dstRows) {
+    out.set(src.subarray(0, dstCols * dstRows));
+    return out;
+  }
+  for (let y = 0; y < dstRows; y++) {
+    const y0 = Math.floor((y * srcRows) / dstRows);
+    const y1 = Math.min(srcRows, Math.floor(((y + 1) * srcRows) / dstRows));
+    for (let x = 0; x < dstCols; x++) {
+      const x0 = Math.floor((x * srcCols) / dstCols);
+      const x1 = Math.min(srcCols, Math.floor(((x + 1) * srcCols) / dstCols));
+      const buckets = new Map<number, number>();
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const v = src[gridIndex(sx, sy, srcCols)] ?? 0;
+          if (v === 0) continue;
+          buckets.set(v, (buckets.get(v) ?? 0) + 1);
+        }
+      }
+      let best = 0;
+      let bestCount = 0;
+      for (const [color, count] of buckets) {
+        if (count > bestCount) {
+          bestCount = count;
+          best = color;
+        }
+      }
+      out[gridIndex(x, y, dstCols)] = best;
+    }
+  }
+  return out;
+}
+
 /** 将逻辑网格下采样到展示分辨率（中心取样，保持像素块感） */
 export function downsamplePackedGrid(
   src: PackedGrid,
