@@ -4,10 +4,13 @@ import {
 } from '../art/gridConfig';
 import { gridDrawLayout } from '../art/packedGrid';
 import {
+  applyImportEffectLocalOnDisplay,
   applyPixelImportMixForEditor,
   applyPixelImportMixOnDisplay,
+  clonePixelImportMix,
   createDefaultEffectMix,
   describeEffectMix,
+  displayGridToLogicalGrid,
   formatImportEffectSliderValue,
   isThresholdImportEffect,
   PIXEL_IMPORT_EFFECTS,
@@ -19,6 +22,8 @@ import { loadImageFromFile } from '../art/imageToGrid';
 import { createRangeSliderRow } from './rangeSliderRow';
 import { openImageImportModal } from './imageImportModal';
 import { getModalOverlayMount } from './overlayRoot';
+
+const MAX_EFFECT_UNDO = 10;
 
 export interface ImageImportEffectModalOptions {
   grid: PixelGrid;
@@ -32,6 +37,26 @@ type EffectOverlay = HTMLElement & {
   __effectRo?: ResizeObserver;
   __onFullscreenChange?: () => void;
 };
+
+interface EffectHistoryEntry {
+  grid: PixelGrid;
+  mix: PixelImportEffectMix;
+}
+
+function clonePixelGrid(grid: PixelGrid): PixelGrid {
+  return grid.map((row) => [...row]);
+}
+
+function normalizeDisplayRect(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): { x: number; y: number; w: number; h: number } {
+  const x = Math.min(x0, x1);
+  const y = Math.min(y0, y1);
+  return { x, y, w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+}
 
 export function closeImageImportEffectModal(): void {
   const overlay = document.querySelector<EffectOverlay>('[data-modal="image-import-effect"]');
@@ -53,6 +78,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const { cols, rows, onConfirm, onCancel } = options;
   let currentGrid = options.grid;
   const mix = createDefaultEffectMix();
+  const undoStack: EffectHistoryEntry[] = [];
+  const redoStack: EffectHistoryEntry[] = [];
 
   const overlay = document.createElement('div') as EffectOverlay;
   overlay.className = 'img-import-overlay img-import-overlay--page';
@@ -64,7 +91,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     <header class="img-import-effect__topbar">
       <div class="img-import-effect__topbar-main">
         <h3 class="img-import-effect__title">调配像素画效果</h3>
-        <p class="img-import-effect__subtitle">拖动右侧滑条组合效果，左侧实时预览（60×84）</p>
+        <p class="img-import-effect__subtitle">拖动滑条预览全图；点「框选」后在左侧拉框，框内立即生效</p>
       </div>
       <div class="img-import-effect__topbar-actions">
         <button type="button" class="btn img-import-effect__topbar-btn" data-fullscreen>全屏</button>
@@ -77,12 +104,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         <div class="img-import-effect__preview-wrap" data-preview-wrap>
           <div class="img-import-effect__art-surface" data-preview-surface>
             <canvas data-preview-canvas></canvas>
+            <div class="img-import-effect__sel-box" data-preview-sel hidden></div>
           </div>
         </div>
       </section>
       <aside class="img-import-effect__sidebar">
         <div class="img-import-effect__sliders" data-effect-sliders></div>
         <footer class="img-import-effect__actions">
+          <button type="button" class="btn" data-undo disabled>撤回</button>
+          <button type="button" class="btn" data-redo disabled>重做</button>
           <button type="button" class="btn" data-change-image>换图</button>
           <button type="button" class="btn" data-reset>重置</button>
           <button type="button" class="btn" data-cancel>取消</button>
@@ -96,29 +126,204 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const previewWrap = modal.querySelector<HTMLElement>('[data-preview-wrap]')!;
   const previewSurface = modal.querySelector<HTMLElement>('[data-preview-surface]')!;
   const previewCanvas = modal.querySelector<HTMLCanvasElement>('[data-preview-canvas]')!;
+  const previewSelBox = modal.querySelector<HTMLElement>('[data-preview-sel]')!;
   const effectNameEl = modal.querySelector<HTMLElement>('[data-effect-name]')!;
   const slidersEl = modal.querySelector<HTMLElement>('[data-effect-sliders]')!;
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
-  const sliderHandles: ReturnType<typeof createRangeSliderRow>[] = [];
+  const undoBtn = modal.querySelector<HTMLButtonElement>('[data-undo]')!;
+  const redoBtn = modal.querySelector<HTMLButtonElement>('[data-redo]')!;
+
+  const sliderByEffect = new Map<
+    Exclude<PixelImportEffect, 'standard'>,
+    ReturnType<typeof createRangeSliderRow>
+  >();
+  const boxBtnByEffect = new Map<
+    Exclude<PixelImportEffect, 'standard'>,
+    HTMLButtonElement
+  >();
+
+  let armedBoxEffect: Exclude<PixelImportEffect, 'standard'> | null = null;
+  let boxSelectStart: { x: number; y: number } | null = null;
+  let boxPointerId: number | null = null;
+
+  function updateEffectUndoRedo(): void {
+    if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+  }
+
+  function pushEffectUndo(): void {
+    undoStack.push({
+      grid: clonePixelGrid(currentGrid),
+      mix: clonePixelImportMix(mix),
+    });
+    if (undoStack.length > MAX_EFFECT_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    updateEffectUndoRedo();
+  }
+
+  function restoreEffectHistory(entry: EffectHistoryEntry): void {
+    currentGrid = clonePixelGrid(entry.grid);
+    const defaults = createDefaultEffectMix();
+    for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
+      mix[key] = entry.mix[key] ?? 0;
+    }
+    for (const [id, slider] of sliderByEffect) {
+      slider.setValue(mix[id] ?? 0, { silent: true });
+    }
+    updateBoxButtons();
+    updateMixLabel();
+    renderPreview();
+  }
+
+  function effectUndo(): void {
+    if (undoStack.length === 0) return;
+    redoStack.push({
+      grid: clonePixelGrid(currentGrid),
+      mix: clonePixelImportMix(mix),
+    });
+    const entry = undoStack.pop()!;
+    restoreEffectHistory(entry);
+    updateEffectUndoRedo();
+  }
+
+  function effectRedo(): void {
+    if (redoStack.length === 0) return;
+    undoStack.push({
+      grid: clonePixelGrid(currentGrid),
+      mix: clonePixelImportMix(mix),
+    });
+    const entry = redoStack.pop()!;
+    restoreEffectHistory(entry);
+    updateEffectUndoRedo();
+  }
+
+  function updateBoxButtons(): void {
+    for (const [id, btn] of boxBtnByEffect) {
+      const strength = mix[id] ?? 0;
+      btn.disabled = strength <= 0;
+      btn.classList.toggle(
+        'img-import-effect__box-btn--armed',
+        armedBoxEffect === id
+      );
+    }
+    previewSurface.classList.toggle(
+      'img-import-effect__art-surface--box-armed',
+      armedBoxEffect !== null
+    );
+  }
+
+  function cancelBoxSelect(): void {
+    armedBoxEffect = null;
+    boxSelectStart = null;
+    boxPointerId = null;
+    previewSelBox.hidden = true;
+    updateBoxButtons();
+  }
+
+  function displayCellFromPreview(
+    clientX: number,
+    clientY: number
+  ): { x: number; y: number } | null {
+    const rect = previewCanvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const nx = (clientX - rect.left) / rect.width;
+    const ny = (clientY - rect.top) / rect.height;
+    if (nx < 0 || ny < 0 || nx > 1 || ny > 1) return null;
+    const x = Math.min(
+      ART_DISPLAY_COLS - 1,
+      Math.max(0, Math.ceil(nx * ART_DISPLAY_COLS) - 1)
+    );
+    const y = Math.min(
+      ART_DISPLAY_ROWS - 1,
+      Math.max(0, Math.ceil(ny * ART_DISPLAY_ROWS) - 1)
+    );
+    return { x, y };
+  }
+
+  function updatePreviewSelBox(rect: { x: number; y: number; w: number; h: number }): void {
+    const canvasRect = previewCanvas.getBoundingClientRect();
+    const surfaceRect = previewSurface.getBoundingClientRect();
+    const cellW = canvasRect.width / ART_DISPLAY_COLS;
+    const cellH = canvasRect.height / ART_DISPLAY_ROWS;
+    const offsetX = canvasRect.left - surfaceRect.left;
+    const offsetY = canvasRect.top - surfaceRect.top;
+    previewSelBox.hidden = false;
+    previewSelBox.style.left = `${offsetX + rect.x * cellW}px`;
+    previewSelBox.style.top = `${offsetY + rect.y * cellH}px`;
+    previewSelBox.style.width = `${rect.w * cellW}px`;
+    previewSelBox.style.height = `${rect.h * cellH}px`;
+  }
+
+  function bakeLocalEffect(
+    effectId: Exclude<PixelImportEffect, 'standard'>,
+    displayRect: { x: number; y: number; w: number; h: number }
+  ): void {
+    const strength = mix[effectId] ?? 0;
+    if (strength <= 0 || displayRect.w < 1 || displayRect.h < 1) return;
+
+    pushEffectUndo();
+    const mixSans = clonePixelImportMix(mix);
+    mixSans[effectId] = 0;
+    const displaySans = applyPixelImportMixOnDisplay(currentGrid, mixSans);
+    const displayPatched = applyImportEffectLocalOnDisplay(
+      displaySans,
+      effectId,
+      strength,
+      displayRect
+    );
+    currentGrid = displayGridToLogicalGrid(displayPatched);
+    mix[effectId] = 0;
+    sliderByEffect.get(effectId)?.setValue(0, { silent: true });
+    cancelBoxSelect();
+    updateMixLabel();
+    renderPreview();
+  }
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
     const effectId = opt.id as Exclude<PixelImportEffect, 'standard'>;
     const isThreshold = isThresholdImportEffect(effectId);
+    const rowWrap = document.createElement('div');
+    rowWrap.className = `img-import-effect__slider-row range-slider-row${
+      isThreshold ? ' img-import-effect__slider-row--threshold' : ''
+    }`;
+
     const slider = createRangeSliderRow({
       label: opt.label,
       description: opt.description,
       value: 0,
-      className: isThreshold ? 'img-import-effect__slider-row--threshold' : undefined,
       formatValue: (v) => formatImportEffectSliderValue(effectId, v),
       onChange: (v) => {
         mix[effectId] = v;
+        updateBoxButtons();
         updateMixLabel();
         renderPreview();
       },
     });
-    slider.root.classList.add('img-import-effect__slider-row');
-    sliderHandles.push(slider);
-    slidersEl.append(slider.root);
+
+    const boxBtn = document.createElement('button');
+    boxBtn.type = 'button';
+    boxBtn.className = 'btn img-import-effect__box-btn';
+    boxBtn.textContent = '框选';
+    boxBtn.title = '在预览区拉框，按当前滑条值仅对框内立即生效';
+    boxBtn.disabled = true;
+    boxBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if ((mix[effectId] ?? 0) <= 0) return;
+      armedBoxEffect = armedBoxEffect === effectId ? null : effectId;
+      boxSelectStart = null;
+      previewSelBox.hidden = true;
+      updateBoxButtons();
+    });
+
+    const boxRow = document.createElement('div');
+    boxRow.className = 'img-import-effect__box-row';
+    boxRow.append(boxBtn);
+
+    rowWrap.append(slider.root, boxRow);
+    slidersEl.append(rowWrap);
+    sliderByEffect.set(effectId, slider);
+    boxBtnByEffect.set(effectId, boxBtn);
   }
 
   function updateMixLabel(): void {
@@ -186,11 +391,14 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   function resetMix(): void {
+    pushEffectUndo();
     const defaults = createDefaultEffectMix();
     for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
       mix[key] = defaults[key];
     }
-    sliderHandles.forEach((handle) => handle.setValue(0, { silent: true }));
+    sliderByEffect.forEach((handle) => handle.setValue(0, { silent: true }));
+    cancelBoxSelect();
+    updateBoxButtons();
     updateMixLabel();
     renderPreview();
   }
@@ -208,10 +416,6 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
   const changeFileInput = modal.querySelector<HTMLInputElement>('[data-change-file]')!;
 
-  function startChangeImage(): void {
-    changeFileInput.click();
-  }
-
   changeFileInput.addEventListener('change', () => {
     const file = changeFileInput.files?.[0];
     changeFileInput.value = '';
@@ -225,6 +429,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
           cols,
           rows,
           onConfirm: (imported) => {
+            pushEffectUndo();
             currentGrid = imported;
             renderPreview();
           },
@@ -236,10 +441,62 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     })();
   });
 
+  previewSurface.addEventListener('pointerdown', (e) => {
+    if (!armedBoxEffect) return;
+    const cell = displayCellFromPreview(e.clientX, e.clientY);
+    if (!cell) return;
+    e.preventDefault();
+    e.stopPropagation();
+    boxSelectStart = cell;
+    boxPointerId = e.pointerId;
+    previewSurface.setPointerCapture(e.pointerId);
+    updatePreviewSelBox({ x: cell.x, y: cell.y, w: 1, h: 1 });
+  });
+
+  previewSurface.addEventListener('pointermove', (e) => {
+    if (!armedBoxEffect || boxSelectStart === null || boxPointerId !== e.pointerId) return;
+    const cell = displayCellFromPreview(e.clientX, e.clientY);
+    if (!cell) return;
+    e.preventDefault();
+    updatePreviewSelBox(
+      normalizeDisplayRect(boxSelectStart.x, boxSelectStart.y, cell.x, cell.y)
+    );
+  });
+
+  const finishBoxSelect = (e: PointerEvent): void => {
+    if (!armedBoxEffect || boxSelectStart === null || boxPointerId !== e.pointerId) return;
+    const cell = displayCellFromPreview(e.clientX, e.clientY) ?? boxSelectStart;
+    const displayRect = normalizeDisplayRect(
+      boxSelectStart.x,
+      boxSelectStart.y,
+      cell.x,
+      cell.y
+    );
+    const effectId = armedBoxEffect;
+    previewSurface.releasePointerCapture(e.pointerId);
+    boxPointerId = null;
+    boxSelectStart = null;
+    previewSelBox.hidden = true;
+    bakeLocalEffect(effectId, displayRect);
+  };
+
+  previewSurface.addEventListener('pointerup', finishBoxSelect);
+  previewSurface.addEventListener('pointercancel', finishBoxSelect);
+
   modal.querySelector('[data-change-image]')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    startChangeImage();
+    changeFileInput.click();
+  });
+  modal.querySelector('[data-undo]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    effectUndo();
+  });
+  modal.querySelector('[data-redo]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    effectRedo();
   });
   modal.querySelector('[data-reset]')?.addEventListener('click', (e) => {
     e.preventDefault();
@@ -281,6 +538,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
   updateFullscreenBtn();
   updateMixLabel();
+  updateBoxButtons();
+  updateEffectUndoRedo();
   requestAnimationFrame(() => {
     renderPreview();
     requestAnimationFrame(renderPreview);
