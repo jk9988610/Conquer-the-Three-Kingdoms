@@ -98,7 +98,16 @@ const PALETTE_PRESETS = [
   '#e8589a',
 ];
 
-type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'highlight' | 'glow' | 'breath' | 'hand';
+type Tool =
+  | 'paint'
+  | 'fill'
+  | 'eraser'
+  | 'eyedropper'
+  | 'highlight'
+  | 'glow'
+  | 'breath'
+  | 'render-eraser'
+  | 'hand';
 type ClipboardMode = 'copy' | 'cut' | 'paste' | null;
 
 interface Selection {
@@ -144,6 +153,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let paintColor: Pixel = 'rgba(255,255,255,1)';
   let paintArgb = pixelToArgb(paintColor);
   let brushSize = 1;
+  let renderBrushSize = 1;
   let tool: Tool = 'hand';
   let showGrid = false;
   let transparentFlash = false;
@@ -248,11 +258,9 @@ export function openPixelEditor(onApplied: () => void): void {
   function resetHistory(): void {
     pixelUndoStack.length = 0;
     pixelRedoStack.length = 0;
-    renderUndoStack.length = 0;
-    renderRedoStack.length = 0;
     strokeUndoPushed = false;
     patchBatch = null;
-    resetHighlightHistory();
+    resetRenderHistory();
     updateUndoRedoButtons();
   }
 
@@ -583,16 +591,23 @@ export function openPixelEditor(onApplied: () => void): void {
                 <button type="button" class="btn pixel-editor__tool" data-tool="highlight" title="在有色块上标记高亮">高亮</button>
                 <button type="button" class="btn pixel-editor__tool" data-tool="glow" title="为已高亮色块开启/关闭光晕">光晕</button>
                 <button type="button" class="btn pixel-editor__tool" data-tool="breath" title="为已高亮色块开启/关闭呼吸灯">呼吸</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="render-eraser" title="擦除色块上的渲染效果">渲染橡皮</button>
               </div>
               <div class="pixel-editor__tools-grid pixel-editor__tools-grid--render-undo">
                 <button type="button" class="btn" data-render-undo disabled>撤销</button>
                 <button type="button" class="btn" data-render-redo disabled>重做</button>
               </div>
               <label class="pixel-editor__brush-row">
+                渲染粗细
+                <input type="range" min="1" max="12" value="1" data-render-brush-size />
+                <span data-render-brush-size-label>1</span>
+              </label>
+              <label class="pixel-editor__brush-row">
                 呼吸速度
                 <input type="range" min="1" max="100" value="50" data-breath-speed />
                 <span data-breath-speed-label>50</span>
               </label>
+              <button type="button" class="btn pixel-editor__clear-render" data-clear-render>清空渲染层</button>
             </div>
             <div class="pixel-editor__tools-nav" data-alpha-mount></div>
             <div class="pixel-editor__tools-nav">
@@ -642,6 +657,8 @@ export function openPixelEditor(onApplied: () => void): void {
   const editSurface = panel.querySelector<HTMLElement>('[data-edit-surface]')!;
   const brushSizeInput = panel.querySelector<HTMLInputElement>('[data-brush-size]')!;
   const brushSizeLabel = panel.querySelector<HTMLElement>('[data-brush-size-label]')!;
+  const renderBrushSizeInput = panel.querySelector<HTMLInputElement>('[data-render-brush-size]')!;
+  const renderBrushSizeLabel = panel.querySelector<HTMLElement>('[data-render-brush-size-label]')!;
   const toolsScroll = panel.querySelector<HTMLElement>('[data-tools-scroll]')!;
   const debugEl = panel.querySelector<HTMLElement>('[data-pixel-debug]')!;
   const editCanvas = panel.querySelector<HTMLCanvasElement>('[data-edit-canvas]')!;
@@ -732,7 +749,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (!debugEl) return;
     debugEl.textContent = [
       `卡牌: ${currentKey}`,
-      `工具: ${tool} · 笔粗: ${brushSize}`,
+      `工具: ${tool} · 笔粗: ${brushSize} · 渲染粗: ${renderBrushSize}`,
       `视图缩放: ${(viewZoom * 100).toFixed(0)}%`,
       `展示格: ${cellSize}px · 逻辑: ${gridCols}×${gridRows} · 显示: ${ART_DISPLAY_COLS}×${ART_DISPLAY_ROWS}`,
       `画布: ${gridPixelW}×${gridPixelH} · 撤销≤${MAX_UNDO}`,
@@ -1149,13 +1166,49 @@ export function openPixelEditor(onApplied: () => void): void {
     centerDy: number,
     flag: number
   ): void {
-    const r = brushSize - 1;
+    const r = renderBrushSize - 1;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        if (brushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
+        if (renderBrushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
         toggleHighlightFlagAtDisplay(centerDx + dx, centerDy + dy, flag);
       }
     }
+  }
+
+  function clearHighlightAtDisplay(dx: number, dy: number): void {
+    if (dx < 0 || dy < 0 || dx >= ART_DISPLAY_COLS || dy >= ART_DISPLAY_ROWS) return;
+    const idx = displayHighlightIndex(dx, dy);
+    const prev = highlightGrid[idx] ?? 0;
+    if (prev === 0) return;
+    recordHighlightChange(idx, 0);
+  }
+
+  function stampRenderEraserAtDisplay(centerDx: number, centerDy: number): void {
+    const r = renderBrushSize - 1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (renderBrushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
+        clearHighlightAtDisplay(centerDx + dx, centerDy + dy);
+      }
+    }
+  }
+
+  function clearRenderLayer(): void {
+    let any = false;
+    for (let i = 0; i < highlightGrid.length; i++) {
+      if ((highlightGrid[i] ?? 0) !== 0) {
+        any = true;
+        break;
+      }
+    }
+    if (!any) return;
+    beginHighlightUndoBatch();
+    for (let i = 0; i < highlightGrid.length; i++) {
+      if ((highlightGrid[i] ?? 0) !== 0) recordHighlightChange(i, 0);
+    }
+    commitHighlightUndoBatch();
+    syncBreathAnimation();
+    refreshAll();
   }
 
   function highlightToolFlag(): number {
@@ -1169,7 +1222,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (
       lastHighlightCell?.x === dc.dx &&
       lastHighlightCell?.y === dc.dy &&
-      brushSize === 1
+      renderBrushSize === 1
     ) {
       return;
     }
@@ -1184,6 +1237,31 @@ export function openPixelEditor(onApplied: () => void): void {
     if (activeLayer === 'render') refreshEditCanvas();
     redrawGridLayer();
     syncBreathAnimation();
+  }
+
+  function eraseRenderAtDisplay(dc: { dx: number; dy: number }): void {
+    if (
+      lastHighlightCell?.x === dc.dx &&
+      lastHighlightCell?.y === dc.dy &&
+      renderBrushSize === 1
+    ) {
+      return;
+    }
+    if (lastHighlightCell) {
+      forEachDisplayLine(lastHighlightCell.x, lastHighlightCell.y, dc.dx, dc.dy, (px, py) => {
+        stampRenderEraserAtDisplay(px, py);
+      });
+    } else {
+      stampRenderEraserAtDisplay(dc.dx, dc.dy);
+    }
+    lastHighlightCell = { x: dc.dx, y: dc.dy };
+    if (activeLayer === 'render') refreshEditCanvas();
+    redrawGridLayer();
+    syncBreathAnimation();
+  }
+
+  function isRenderPaintTool(t: Tool): boolean {
+    return t === 'highlight' || t === 'glow' || t === 'breath' || t === 'render-eraser';
   }
 
   function paintHighlightMarks(ctx: CanvasRenderingContext2D): void {
@@ -1557,6 +1635,17 @@ export function openPixelEditor(onApplied: () => void): void {
       paintAtDisplay(dc, 0);
       return;
     }
+    if (tool === 'render-eraser') {
+      if (activeLayer !== 'render') return;
+      if (!dc) return;
+      if (!highlightStrokeUndoPushed) {
+        beginHighlightUndoBatch();
+        highlightStrokeUndoPushed = true;
+      }
+      lastHighlightCell = null;
+      eraseRenderAtDisplay(dc);
+      return;
+    }
     if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
       if (activeLayer !== 'render') return;
       if (!dc) return;
@@ -1612,6 +1701,11 @@ export function openPixelEditor(onApplied: () => void): void {
       paintAtDisplay(dc, 0);
       return;
     }
+    if (tool === 'render-eraser') {
+      if (activeLayer !== 'render' || !dc) return;
+      eraseRenderAtDisplay(dc);
+      return;
+    }
     if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
       if (activeLayer !== 'render' || !dc) return;
       highlightAtDisplay(dc);
@@ -1655,10 +1749,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
     }
-    if (
-      highlightStrokeUndoPushed &&
-      (tool === 'highlight' || tool === 'glow' || tool === 'breath')
-    ) {
+    if (highlightStrokeUndoPushed && isRenderPaintTool(tool)) {
       commitHighlightUndoBatch();
     }
     lastPaintCell = null;
@@ -1679,10 +1770,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
     }
-    if (
-      highlightStrokeUndoPushed &&
-      (tool === 'highlight' || tool === 'glow' || tool === 'breath')
-    ) {
+    if (highlightStrokeUndoPushed && isRenderPaintTool(tool)) {
       commitHighlightUndoBatch();
     }
     if (clipboardMode === 'paste' && moveAnchor) {
@@ -1724,6 +1812,14 @@ export function openPixelEditor(onApplied: () => void): void {
     brushSizeLabel.textContent = String(brushSize);
     updateEditorDebug();
   });
+
+  renderBrushSizeInput.addEventListener('input', () => {
+    renderBrushSize = clamp(Number(renderBrushSizeInput.value) || 1, 1, MAX_BRUSH);
+    renderBrushSizeLabel.textContent = String(renderBrushSize);
+    updateEditorDebug();
+  });
+
+  panel.querySelector('[data-clear-render]')?.addEventListener('click', () => clearRenderLayer());
 
   const breathSpeedInput = panel.querySelector<HTMLInputElement>('[data-breath-speed]')!;
   const breathSpeedLabel = panel.querySelector<HTMLElement>('[data-breath-speed-label]')!;
@@ -1873,10 +1969,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
     replaceGrid(makeEmptyGrid());
-    highlightGrid = createEmptyDisplayHighlight();
-    resetRenderHistory();
     selection = null;
-    syncBreathAnimation();
     refreshAll();
   });
 
