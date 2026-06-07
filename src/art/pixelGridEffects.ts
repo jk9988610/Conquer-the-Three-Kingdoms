@@ -320,7 +320,12 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
 }
 
 /** 去背景算法方案（均为综合优化 + 除去最外层变体） */
-export type RemoveBgMode = 'outer' | 'outerSafe' | 'outerDeep' | 'outerCorner' | 'outerFull';
+export type RemoveBgMode =
+  | 'outer'
+  | 'outerSafe'
+  | 'outerFringe'
+  | 'outerCorner'
+  | 'outerFull';
 
 export interface RemoveBgModeOption {
   id: RemoveBgMode;
@@ -329,11 +334,11 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'outer', label: '除去最外层', description: '综合优化后剥离主体最外一圈边缘像素' },
-  { id: 'outerSafe', label: '安全剥离', description: '综合优化 + 仅剥离接近背景色的边缘像素' },
-  { id: 'outerDeep', label: '双层剥离', description: '综合优化 + 连续剥离最外两圈边缘' },
+  { id: 'outer', label: '除去最外层', description: '综合优化后智能剥离最外一圈（保护主体色与细线）' },
+  { id: 'outerSafe', label: '安全剥离', description: '仅剥离接近背景色的边缘像素' },
+  { id: 'outerFringe', label: '残留收束', description: '除去最外层 + 迭代清除边缘残留杂色（非双层）' },
   { id: 'outerCorner', label: '角落剥离', description: '除去最外层 + 四角区域额外清除' },
-  { id: 'outerFull', label: '综合剥离', description: '双层安全剥离 + 角落 + 孔洞填补' },
+  { id: 'outerFull', label: '综合剥离', description: '智能剥离 + 残留收束 + 角落 + 孔洞填补' },
 ];
 
 export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'outer';
@@ -738,16 +743,121 @@ function buildRefinedDetailMask(
   return mask;
 }
 
-interface OutermostPeelOptions {
-  depth?: number;
-  safeOnly?: boolean;
-}
+const NEIGHBOR4_DIRS: [number, number][] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
 
 const OUTER_PEEL_DETAIL_MAX = 0.34;
 
+function countForegroundNeighbors4(mask: boolean[][], x: number, y: number): number {
+  let count = 0;
+  for (const [dx, dy] of NEIGHBOR4_DIRS) {
+    const ny = y + dy;
+    const nx = x + dx;
+    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
+    if (!mask[ny]![nx]) count++;
+  }
+  return count;
+}
+
+function averageInteriorNeighborColor(
+  mask: boolean[][],
+  grid: PixelGrid,
+  x: number,
+  y: number
+): Rgba | null {
+  const colors: Rgba[] = [];
+  for (const [dx, dy] of NEIGHBOR8_DIRS) {
+    const ny = y + dy;
+    const nx = x + dx;
+    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
+    if (mask[ny]![nx]) continue;
+    const px = getPixel(grid, nx, ny);
+    if (px && px.a >= 0.08) colors.push(px);
+  }
+  return averageRgba(colors);
+}
+
+interface PeelBoundaryOptions {
+  safeOnly?: boolean;
+  smart?: boolean;
+}
+
+/** 判断是否应剥离该边缘像素 */
+function shouldPeelBoundaryPixel(
+  mask: boolean[][],
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  bgRefs: Rgba[],
+  tolerance: number,
+  opts: PeelBoundaryOptions
+): boolean {
+  const px = getPixel(grid, x, y);
+  if (!px || px.a < 0.08) return true;
+
+  if (localDetailWeight(grid, x, y) >= OUTER_PEEL_DETAIL_MAX) return false;
+  if (countForegroundNeighbors4(mask, x, y) <= 2) return false;
+
+  const safeTol = tolerance * 1.08;
+  const bgDist = Math.min(...bgRefs.map((ref) => rgbaDistance(px, ref)));
+  const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
+
+  if (opts.safeOnly) {
+    return isSimilarToBgRefs(px, bgRefs, safeTol);
+  }
+
+  if (interiorAvg) {
+    const interiorDist = rgbaDistance(px, interiorAvg);
+    if (interiorDist < bgDist * 0.72) return false;
+    if (bgDist < interiorDist * 0.88) return true;
+  }
+
+  if (opts.smart !== false) {
+    if (bgDist <= tolerance * 1.02) return true;
+    if (interiorAvg && rgbaDistance(px, interiorAvg) > tolerance * 0.55) return false;
+  }
+
+  return true;
+}
+
+/** 单圈边缘剥离 */
+function peelOneBoundaryRing(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRefs: Rgba[],
+  tolerance: number,
+  opts: PeelBoundaryOptions
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const out = cloneMask(mask);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (out[y]![x]) continue;
+      if (countBgNeighbors8(out, x, y) < 1) continue;
+      if (!shouldPeelBoundaryPixel(out, grid, x, y, bgRefs, tolerance, opts)) continue;
+      out[y]![x] = true;
+    }
+  }
+
+  return out;
+}
+
+interface OutermostPeelOptions {
+  safeOnly?: boolean;
+  smart?: boolean;
+  /** 首圈后迭代收束残留边缘（仅 safe 条件），非固定双层 */
+  fringePasses?: number;
+}
+
 /**
- * 除去主体最外圈：与透明区相邻的前景边缘像素标记为背景。
- * safeOnly 时仅剥离接近背景色、且非高细节的边缘。
+ * 除去主体最外圈：与透明区相邻的边缘像素智能剥离。
+ * fringePasses 时多遍收束接近背景色的残留边缘，避免双层硬剥伤主体。
  */
 function peelOutermostForegroundRing(
   mask: boolean[][],
@@ -756,43 +866,41 @@ function peelOutermostForegroundRing(
   tolerance: number,
   opts: OutermostPeelOptions = {}
 ): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const depth = Math.max(1, opts.depth ?? 1);
-  const safeOnly = opts.safeOnly ?? false;
-  const safeTol = tolerance * 1.08;
-  let out = cloneMask(mask);
+  const fringePasses = opts.fringePasses ?? 0;
+  let out = peelOneBoundaryRing(mask, grid, bgRefs, tolerance, {
+    safeOnly: opts.safeOnly ?? false,
+    smart: opts.smart ?? true,
+  });
 
-  for (let ring = 0; ring < depth; ring++) {
-    const next = cloneMask(out);
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        if (out[y]![x]) continue;
-        if (countBgNeighbors8(out, x, y) < 1) continue;
-
-        const px = getPixel(grid, x, y);
-        if (!px || px.a < 0.08) {
-          next[y]![x] = true;
-          continue;
-        }
-
-        if (safeOnly) {
-          if (localDetailWeight(grid, x, y) >= OUTER_PEEL_DETAIL_MAX) continue;
-          if (!isSimilarToBgRefs(px, bgRefs, safeTol)) continue;
-        }
-
-        next[y]![x] = true;
-      }
-    }
+  for (let pass = 0; pass < fringePasses; pass++) {
+    const next = peelOneBoundaryRing(out, grid, bgRefs, tolerance, {
+      safeOnly: true,
+      smart: true,
+    });
+    if (masksEqual(out, next)) break;
     out = next;
   }
 
   return out;
 }
 
+function masksEqual(a: boolean[][], b: boolean[][]): boolean {
+  if (a.length !== b.length) return false;
+  for (let y = 0; y < a.length; y++) {
+    const rowA = a[y] ?? [];
+    const rowB = b[y] ?? [];
+    if (rowA.length !== rowB.length) return false;
+    for (let x = 0; x < rowA.length; x++) {
+      if (rowA[x] !== rowB[x]) return false;
+    }
+  }
+  return true;
+}
+
 interface RefinedOuterVariantOpts {
-  peelDepth?: number;
   peelSafeOnly?: boolean;
+  peelSmart?: boolean;
+  fringePasses?: number;
   extraCorner?: boolean;
   closeAfterPeel?: boolean;
 }
@@ -807,8 +915,9 @@ function buildRefinedOuterMaskVariant(
   const primaryRef = bgRefs[0]!;
   let mask = buildRefinedDetailMask(grid, bgRefs, tolerance);
   mask = peelOutermostForegroundRing(mask, grid, bgRefs, tolerance, {
-    depth: opts.peelDepth ?? 1,
     safeOnly: opts.peelSafeOnly ?? false,
+    smart: opts.peelSmart ?? true,
+    fringePasses: opts.fringePasses ?? 0,
   });
   if (opts.extraCorner) {
     mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
@@ -839,9 +948,9 @@ export function computeRemoveBgMask(
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
         peelSafeOnly: true,
       });
-    case 'outerDeep':
+    case 'outerFringe':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelDepth: 2,
+        fringePasses: 5,
       });
     case 'outerCorner':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
@@ -849,8 +958,7 @@ export function computeRemoveBgMask(
       });
     case 'outerFull':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelDepth: 2,
-        peelSafeOnly: true,
+        fringePasses: 5,
         extraCorner: true,
         closeAfterPeel: true,
       });
