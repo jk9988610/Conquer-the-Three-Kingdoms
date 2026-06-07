@@ -201,8 +201,7 @@ function hasDarkNeighbor8(
 }
 
 function colorBucketKey(rgba: Rgba): string {
-  const q = 4;
-  return `${rgba.r >> q},${rgba.g >> q},${rgba.b >> q}`;
+  return getRemoveBgColorBucketKey(rgba.r, rgba.g, rgba.b);
 }
 
 /** 取八邻域中出现次数最多的色相近组，再求该组均值 */
@@ -384,16 +383,48 @@ export function getRemoveBgModeLabel(mode: RemoveBgModeInput): string {
   return REMOVE_BG_MODES.find((m) => m.id === id)?.label ?? id;
 }
 
+/** 按 16 级色桶的去背景色块规则（保护 / 强制去除） */
+export interface RemoveBgColorRule {
+  key: string;
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface RemoveBgColorRules {
+  whitelist: RemoveBgColorRule[];
+  blacklist: RemoveBgColorRule[];
+}
+
+export function createEmptyRemoveBgColorRules(): RemoveBgColorRules {
+  return { whitelist: [], blacklist: [] };
+}
+
+export function cloneRemoveBgColorRules(rules: RemoveBgColorRules): RemoveBgColorRules {
+  return {
+    whitelist: rules.whitelist.map((r) => ({ ...r })),
+    blacklist: rules.blacklist.map((r) => ({ ...r })),
+  };
+}
+
 export interface PixelImportMixOptions {
   removeBgMode?: RemoveBgModeInput;
+  removeBgRules?: RemoveBgColorRules;
 }
 
 /** 边缘参考色（供 UI 展示） */
 export interface RemoveBgEdgeColor {
+  key: string;
   r: number;
   g: number;
   b: number;
   count: number;
+}
+
+/** 将 RGB 映射为去背景色桶键（与 colorBucketKey 一致） */
+export function getRemoveBgColorBucketKey(r: number, g: number, b: number): string {
+  const q = 4;
+  return `${r >> q},${g >> q},${b >> q}`;
 }
 
 // --- 去背景：Lab 感知距离 + 边缘参考色组 + 连通/剥离混合 ---
@@ -550,8 +581,42 @@ export function getRemoveBgEdgePalette(grid: PixelGrid): RemoveBgEdgeColor[] {
     .sort((a, b) => b.count - a.count)
     .map((b) => {
       const c = bucketCentroid(b.samples);
-      return { r: c.r, g: c.g, b: c.b, count: b.count };
+      return {
+        key: colorBucketKey(c),
+        r: c.r,
+        g: c.g,
+        b: c.b,
+        count: b.count,
+      };
     });
+}
+
+function applyColorRulesToMask(
+  grid: PixelGrid,
+  mask: boolean[][],
+  rules?: RemoveBgColorRules
+): boolean[][] {
+  if (!rules) return mask;
+  const whitelistKeys = new Set(rules.whitelist.map((r) => r.key));
+  const blacklistKeys = new Set(rules.blacklist.map((r) => r.key));
+  if (whitelistKeys.size === 0 && blacklistKeys.size === 0) return mask;
+
+  const rows = mask.length;
+  const cols = mask[0]?.length ?? 0;
+  const out = mask.map((row) => [...row]);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const px = getPixel(grid, x, y);
+      if (!px || px.a < 0.08) {
+        out[y]![x] = false;
+        continue;
+      }
+      const key = colorBucketKey(px);
+      if (whitelistKeys.has(key)) out[y]![x] = false;
+      else if (blacklistKeys.has(key)) out[y]![x] = true;
+    }
+  }
+  return out;
 }
 
 function isInEdgeReferenceGroup(px: Rgba, palette: Rgba[], tolerance: number): boolean {
@@ -665,20 +730,42 @@ function computeRemoveBgMaskForMode(
   }
 }
 
-/** 计算去背景掩码（60×84 展示格） */
+/** 计算去背景掩码（60×84 展示格）；规则在算法掩码上叠加保护色 / 强制去除色 */
 export function computeRemoveBgMask(
   grid: PixelGrid,
   tolerance: number,
-  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
+  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE,
+  rules?: RemoveBgColorRules
 ): boolean[][] | null {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (cols === 0 || rows === 0 || tolerance <= 0) return null;
+  const hasBlacklist = (rules?.blacklist.length ?? 0) > 0;
+  if (cols === 0 || rows === 0 || (tolerance <= 0 && !hasBlacklist)) return null;
 
   const edgePalette = buildEdgeReferencePalette(grid);
-  if (edgePalette.length === 0) return null;
+  if (edgePalette.length === 0 && !hasBlacklist) return null;
 
-  return computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode));
+  let mask = edgePalette.length > 0
+    ? computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode))
+    : createEmptyMask(rows, cols);
+
+  return applyColorRulesToMask(grid, mask, rules);
+}
+
+/** 从展示格取色块规则（用于预览点选） */
+export function pickRemoveBgColorRuleFromGrid(
+  grid: PixelGrid,
+  x: number,
+  y: number
+): RemoveBgColorRule | null {
+  const px = getPixel(grid, x, y);
+  if (!px || px.a < 0.08) return null;
+  return {
+    key: colorBucketKey(px),
+    r: px.r,
+    g: px.g,
+    b: px.b,
+  };
 }
 
 function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
@@ -730,10 +817,11 @@ function applyRemoveBgToLogicalGrid(
   toleranceSlider: number,
   options?: PixelImportMixOptions
 ): PixelGrid {
-  const tolerance = removeBgSliderToTolerance(toleranceSlider);
+  const tolerance =
+    toleranceSlider > 0 ? removeBgSliderToTolerance(toleranceSlider) : 0;
   const mode = options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE;
   const matting = logicalGridToDisplayGridMatting(grid);
-  const displayMask = computeRemoveBgMask(matting, tolerance, mode);
+  const displayMask = computeRemoveBgMask(matting, tolerance, mode, options?.removeBgRules);
   if (!displayMask) return cloneGrid(grid);
 
   const logicalMask = displayMaskToLogicalMask(displayMask);
@@ -752,6 +840,10 @@ function hasNonRemoveBgEffects(mix: PixelImportEffectMix): boolean {
 
 function mixWithoutRemoveBg(mix: PixelImportEffectMix): PixelImportEffectMix {
   return { ...mix, removeBg: 0 };
+}
+
+function shouldApplyRemoveBg(mix: PixelImportEffectMix, options?: PixelImportMixOptions): boolean {
+  return (mix.removeBg ?? 0) > 0 || (options?.removeBgRules?.blacklist.length ?? 0) > 0;
 }
 
 export function clonePixelImportMix(mix: PixelImportEffectMix): PixelImportEffectMix {
@@ -1162,7 +1254,7 @@ export function applyPixelImportMixOnDisplay(
 ): PixelGrid {
   let logical = grid;
   const removeBgStrength = mix.removeBg ?? 0;
-  if (removeBgStrength > 0) {
+  if (shouldApplyRemoveBg(mix, options)) {
     logical = applyRemoveBgToLogicalGrid(grid, removeBgStrength, options);
   }
 
@@ -1183,7 +1275,7 @@ export function applyPixelImportMixForEditor(
 ): PixelGrid {
   let logical = grid;
   const removeBgStrength = mix.removeBg ?? 0;
-  if (removeBgStrength > 0) {
+  if (shouldApplyRemoveBg(mix, options)) {
     logical = applyRemoveBgToLogicalGrid(grid, removeBgStrength, options);
   }
 
