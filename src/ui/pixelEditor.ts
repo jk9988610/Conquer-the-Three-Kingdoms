@@ -45,6 +45,8 @@ import {
   DISPLAY_HIGHLIGHT_GLOW,
   DISPLAY_HIGHLIGHT_MARK,
   displayHighlightIndex,
+  fillDisplayPackedWithHighlight,
+  hasAnyDisplayHighlight,
   paintDisplayHighlightMarks,
   registerHighlightBreathTarget,
   type DisplayHighlightGrid,
@@ -85,10 +87,7 @@ interface HighlightPatch {
   next: number;
 }
 
-interface UndoEntry {
-  cells: CellPatch[];
-  highlights: HighlightPatch[];
-}
+type EditorLayer = 'item' | 'render';
 const PALETTE_PRESETS = [
   '#c44',
   '#6a8',
@@ -131,8 +130,11 @@ export function openPixelEditor(onApplied: () => void): void {
   let gridRows = ART_GRID_ROWS;
   let grid: PackedGrid = createPackedGrid();
   let highlightGrid: DisplayHighlightGrid = createEmptyDisplayHighlight();
-  const undoStack: UndoEntry[] = [];
-  const redoStack: UndoEntry[] = [];
+  let activeLayer: EditorLayer = 'item';
+  const pixelUndoStack: CellPatch[][] = [];
+  const pixelRedoStack: CellPatch[][] = [];
+  const renderUndoStack: HighlightPatch[][] = [];
+  const renderRedoStack: HighlightPatch[][] = [];
   let highlightPatchBatch: Map<number, { prev: number; next: number }> | null = null;
   let highlightStrokeUndoPushed = false;
   let breathSpeed = 50;
@@ -210,26 +212,29 @@ export function openPixelEditor(onApplied: () => void): void {
     for (const [i, { prev, next }] of patchBatch) {
       cells.push({ i, prev, next });
     }
-    undoStack.push({ cells, highlights: [] });
-    if (undoStack.length > MAX_UNDO) undoStack.shift();
-    redoStack.length = 0;
+    pixelUndoStack.push(cells);
+    if (pixelUndoStack.length > MAX_UNDO) pixelUndoStack.shift();
+    pixelRedoStack.length = 0;
     patchBatch = null;
     updateUndoRedoButtons();
   }
 
   function pushPatches(cells: CellPatch[]): void {
     if (cells.length === 0) return;
-    undoStack.push({ cells, highlights: [] });
-    if (undoStack.length > MAX_UNDO) undoStack.shift();
-    redoStack.length = 0;
+    pixelUndoStack.push(cells);
+    if (pixelUndoStack.length > MAX_UNDO) pixelUndoStack.shift();
+    pixelRedoStack.length = 0;
     updateUndoRedoButtons();
   }
 
-  function applyUndoEntry(entry: UndoEntry, useNext: boolean): void {
-    for (const p of entry.cells) {
+  function applyPixelPatches(cells: CellPatch[], useNext: boolean): void {
+    for (const p of cells) {
       grid[p.i] = (useNext ? p.next : p.prev) >>> 0;
     }
-    for (const p of entry.highlights) {
+  }
+
+  function applyRenderPatches(highlights: HighlightPatch[], useNext: boolean): void {
+    for (const p of highlights) {
       highlightGrid[p.idx] = (useNext ? p.next : p.prev) & 0xff;
     }
   }
@@ -241,10 +246,13 @@ export function openPixelEditor(onApplied: () => void): void {
   }
 
   function resetHistory(): void {
-    undoStack.length = 0;
-    redoStack.length = 0;
+    pixelUndoStack.length = 0;
+    pixelRedoStack.length = 0;
+    renderUndoStack.length = 0;
+    renderRedoStack.length = 0;
     strokeUndoPushed = false;
     patchBatch = null;
+    resetHighlightHistory();
     updateUndoRedoButtons();
   }
 
@@ -274,9 +282,9 @@ export function openPixelEditor(onApplied: () => void): void {
     for (const [idx, { prev, next }] of highlightPatchBatch) {
       highlights.push({ idx, prev, next });
     }
-    undoStack.push({ cells: [], highlights });
-    if (undoStack.length > MAX_UNDO) undoStack.shift();
-    redoStack.length = 0;
+    renderUndoStack.push(highlights);
+    if (renderUndoStack.length > MAX_UNDO) renderUndoStack.shift();
+    renderRedoStack.length = 0;
     highlightPatchBatch = null;
     updateUndoRedoButtons();
   }
@@ -286,35 +294,100 @@ export function openPixelEditor(onApplied: () => void): void {
     highlightPatchBatch = null;
   }
 
-  function undo(): void {
-    if (undoStack.length === 0) return;
-    const entry = undoStack.pop()!;
-    redoStack.push(entry);
-    applyUndoEntry(entry, false);
+  function resetRenderHistory(): void {
+    renderUndoStack.length = 0;
+    renderRedoStack.length = 0;
+    resetHighlightHistory();
+  }
+
+  function syncLayerUi(): void {
+    panel.querySelectorAll('[data-editor-layer]').forEach((btn) => {
+      btn.classList.toggle(
+        'pixel-editor__layer-pick--active',
+        (btn as HTMLElement).dataset.editorLayer === activeLayer
+      );
+    });
+    panel.querySelectorAll('[data-layer-panel]').forEach((el) => {
+      const layer = (el as HTMLElement).dataset.layerPanel as EditorLayer;
+      (el as HTMLElement).hidden = layer !== activeLayer;
+    });
+    if (toolsScroll) toolsScroll.hidden = activeLayer === 'render';
+    syncToolbarUi();
+    updateUndoRedoButtons();
+  }
+
+  function setEditorLayer(layer: EditorLayer): void {
+    if (activeLayer === layer) return;
+    activeLayer = layer;
+    exitClipboardModes(true);
+    if (layer === 'render') setTool('highlight');
+    else setTool('hand');
+    syncLayerUi();
+    refreshEditCanvas();
+    redrawGridLayer();
+  }
+
+  function undoPixel(): void {
+    if (pixelUndoStack.length === 0) return;
+    const entry = pixelUndoStack.pop()!;
+    pixelRedoStack.push(entry);
+    applyPixelPatches(entry, false);
     selection = null;
     selectStart = null;
+    refreshAll();
+    updateUndoRedoButtons();
+  }
+
+  function redoPixel(): void {
+    if (pixelRedoStack.length === 0) return;
+    const entry = pixelRedoStack.pop()!;
+    pixelUndoStack.push(entry);
+    applyPixelPatches(entry, true);
+    selection = null;
+    selectStart = null;
+    refreshAll();
+    updateUndoRedoButtons();
+  }
+
+  function undoRender(): void {
+    if (renderUndoStack.length === 0) return;
+    const entry = renderUndoStack.pop()!;
+    renderRedoStack.push(entry);
+    applyRenderPatches(entry, false);
     refreshAll();
     syncBreathAnimation();
     updateUndoRedoButtons();
   }
 
-  function redo(): void {
-    if (redoStack.length === 0) return;
-    const entry = redoStack.pop()!;
-    undoStack.push(entry);
-    applyUndoEntry(entry, true);
-    selection = null;
-    selectStart = null;
+  function redoRender(): void {
+    if (renderRedoStack.length === 0) return;
+    const entry = renderRedoStack.pop()!;
+    renderUndoStack.push(entry);
+    applyRenderPatches(entry, true);
     refreshAll();
     syncBreathAnimation();
     updateUndoRedoButtons();
+  }
+
+  function undoActiveLayer(): void {
+    if (activeLayer === 'render') undoRender();
+    else undoPixel();
+  }
+
+  function redoActiveLayer(): void {
+    if (activeLayer === 'render') redoRender();
+    else redoPixel();
   }
 
   function updateUndoRedoButtons(): void {
     const undoBtn = panel.querySelector<HTMLButtonElement>('[data-undo]');
     const redoBtn = panel.querySelector<HTMLButtonElement>('[data-redo]');
-    if (undoBtn) undoBtn.disabled = undoStack.length === 0;
-    if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+    const renderUndoBtn = panel.querySelector<HTMLButtonElement>('[data-render-undo]');
+    const renderRedoBtn = panel.querySelector<HTMLButtonElement>('[data-render-redo]');
+    if (undoBtn) undoBtn.disabled = pixelUndoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = pixelRedoStack.length === 0;
+    if (renderUndoBtn) renderUndoBtn.disabled = renderUndoStack.length === 0;
+    if (renderRedoBtn) renderRedoBtn.disabled = renderRedoStack.length === 0;
   }
 
   function updateClipboardButtons(): void {
@@ -419,10 +492,10 @@ export function openPixelEditor(onApplied: () => void): void {
     viewPanX = 0;
     viewPanY = 0;
     viewZoom = 1;
+    activeLayer = 'item';
     resetHistory();
-    resetHighlightHistory();
     applyEditViewTransform();
-    syncToolbarUi();
+    syncLayerUi();
     syncBreathAnimation();
   }
 
@@ -474,34 +547,53 @@ export function openPixelEditor(onApplied: () => void): void {
       <div class="pixel-editor__pane-label">工具</div>
       <div class="pixel-editor__pane-fill pixel-editor__pane-fill--tools" data-tools-panel>
           <div class="pixel-editor__tools-fixed">
-            <div class="pixel-editor__tools-grid pixel-editor__tools-grid--primary">
-              <button type="button" class="btn pixel-editor__tool" data-tool="paint">画笔</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
-              <button type="button" class="btn" data-undo disabled>撤销</button>
-              <button type="button" class="btn" data-redo disabled>重做</button>
+            <div class="pixel-editor__layers">
+              <div class="pixel-editor__layers-title">图层</div>
+              <div class="pixel-editor__layer-list">
+                <div class="pixel-editor__layer-row">
+                  <button type="button" class="btn pixel-editor__layer-pick pixel-editor__layer-pick--active" data-editor-layer="item">像素层</button>
+                </div>
+                <div class="pixel-editor__layer-row">
+                  <button type="button" class="btn pixel-editor__layer-pick" data-editor-layer="render">渲染层</button>
+                </div>
+              </div>
             </div>
-            <div class="pixel-editor__clipboard-row">
-              <button type="button" class="btn" data-copy>复制</button>
-              <button type="button" class="btn" data-cut>剪切</button>
-              <button type="button" class="btn" data-paste disabled>粘贴</button>
+            <div class="pixel-editor__layer-panel" data-layer-panel="item">
+              <div class="pixel-editor__tools-grid pixel-editor__tools-grid--primary">
+                <button type="button" class="btn pixel-editor__tool" data-tool="paint">画笔</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
+                <button type="button" class="btn" data-undo disabled>撤销</button>
+                <button type="button" class="btn" data-redo disabled>重做</button>
+              </div>
+              <div class="pixel-editor__clipboard-row">
+                <button type="button" class="btn" data-copy>复制</button>
+                <button type="button" class="btn" data-cut>剪切</button>
+                <button type="button" class="btn" data-paste disabled>粘贴</button>
+              </div>
+              <label class="pixel-editor__brush-row">
+                画笔粗细
+                <input type="range" min="1" max="12" value="1" data-brush-size />
+                <span data-brush-size-label>1</span>
+              </label>
             </div>
-            <label class="pixel-editor__brush-row">
-              画笔粗细
-              <input type="range" min="1" max="12" value="1" data-brush-size />
-              <span data-brush-size-label>1</span>
-            </label>
-            <div class="pixel-editor__tools-grid pixel-editor__tools-grid--effects">
-              <button type="button" class="btn pixel-editor__tool" data-tool="highlight" title="在有色块上标记高亮（不改颜色）">高亮</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="glow" title="为已高亮色块开启/关闭光晕">光晕</button>
-              <button type="button" class="btn pixel-editor__tool" data-tool="breath" title="为已高亮色块开启/关闭呼吸灯">呼吸</button>
+            <div class="pixel-editor__layer-panel" data-layer-panel="render" hidden>
+              <div class="pixel-editor__tools-grid pixel-editor__tools-grid--effects">
+                <button type="button" class="btn pixel-editor__tool" data-tool="highlight" title="在有色块上标记高亮">高亮</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="glow" title="为已高亮色块开启/关闭光晕">光晕</button>
+                <button type="button" class="btn pixel-editor__tool" data-tool="breath" title="为已高亮色块开启/关闭呼吸灯">呼吸</button>
+              </div>
+              <div class="pixel-editor__tools-grid pixel-editor__tools-grid--render-undo">
+                <button type="button" class="btn" data-render-undo disabled>撤销</button>
+                <button type="button" class="btn" data-render-redo disabled>重做</button>
+              </div>
+              <label class="pixel-editor__brush-row">
+                呼吸速度
+                <input type="range" min="1" max="100" value="50" data-breath-speed />
+                <span data-breath-speed-label>50</span>
+              </label>
             </div>
-            <label class="pixel-editor__brush-row">
-              呼吸速度
-              <input type="range" min="1" max="100" value="50" data-breath-speed />
-              <span data-breath-speed-label>50</span>
-            </label>
             <div class="pixel-editor__tools-nav" data-alpha-mount></div>
             <div class="pixel-editor__tools-nav">
               <button type="button" class="btn pixel-editor__tool pixel-editor__tool--active" data-tool="hand" title="单指拖动平移">拖动</button>
@@ -832,15 +924,27 @@ export function openPixelEditor(onApplied: () => void): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    drawDisplayPackedAtCellSize(
-      ctx,
-      gridForDisplay(),
-      cellSize,
-      0,
-      0,
-      gridCols,
-      gridRows
-    );
+    if (activeLayer === 'render' && hasAnyDisplayHighlight(highlightGrid)) {
+      fillDisplayPackedWithHighlight(
+        ctx,
+        displayPackedForView(),
+        highlightGrid,
+        cellSize,
+        0,
+        0,
+        breathSpeed
+      );
+    } else {
+      drawDisplayPackedAtCellSize(
+        ctx,
+        gridForDisplay(),
+        cellSize,
+        0,
+        0,
+        gridCols,
+        gridRows
+      );
+    }
     drawTransparentFlashOverlay(ctx, cellSize, 0, 0);
   }
 
@@ -1077,6 +1181,7 @@ export function openPixelEditor(onApplied: () => void): void {
       stampHighlightBrushAtDisplay(dc.dx, dc.dy, flag);
     }
     lastHighlightCell = { x: dc.dx, y: dc.dy };
+    if (activeLayer === 'render') refreshEditCanvas();
     redrawGridLayer();
     syncBreathAnimation();
   }
@@ -1090,7 +1195,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
     if (showGrid) drawReferenceGridLines(ctx);
-    paintHighlightMarks(ctx);
+    if (activeLayer === 'render') paintHighlightMarks(ctx);
   }
 
   function drawReferenceGridLines(ctx: CanvasRenderingContext2D): void {
@@ -1145,7 +1250,10 @@ export function openPixelEditor(onApplied: () => void): void {
     if (unregisterBreathTarget) return;
     unregisterBreathTarget = registerHighlightBreathTarget({
       hasBreath: () => anyDisplayHighlightBreath(highlightGrid),
-      redraw: () => redrawGridLayer(),
+      redraw: () => {
+        if (activeLayer === 'render') refreshEditCanvas();
+        redrawGridLayer();
+      },
     });
   }
 
@@ -1406,6 +1514,7 @@ export function openPixelEditor(onApplied: () => void): void {
     if (tool === 'hand') return;
 
     if (tool === 'eyedropper') {
+      if (activeLayer !== 'item') return;
       e.preventDefault();
       const dc = displayCellFromPointer(e.clientX, e.clientY);
       if (dc) sampleColorAtDisplay(dc.dx, dc.dy);
@@ -1418,6 +1527,7 @@ export function openPixelEditor(onApplied: () => void): void {
     pointerDrawing = true;
     editSurface.setPointerCapture(e.pointerId);
     if (tool === 'paint') {
+      if (activeLayer !== 'item') return;
       if (!dc) return;
       if (!strokeUndoPushed) {
         beginUndoBatch();
@@ -1428,6 +1538,7 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     if (tool === 'fill') {
+      if (activeLayer !== 'item') return;
       if (!dc) return;
       beginUndoBatch();
       floodFillDisplayCell(dc.dx, dc.dy, paintArgb);
@@ -1436,6 +1547,7 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     if (tool === 'eraser') {
+      if (activeLayer !== 'item') return;
       if (!dc) return;
       if (!strokeUndoPushed) {
         beginUndoBatch();
@@ -1446,6 +1558,7 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
+      if (activeLayer !== 'render') return;
       if (!dc) return;
       if (!highlightStrokeUndoPushed) {
         beginHighlightUndoBatch();
@@ -1490,17 +1603,17 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     if (clipboardMode) return;
     if (tool === 'paint') {
-      if (!dc) return;
+      if (activeLayer !== 'item' || !dc) return;
       paintAtDisplay(dc);
       return;
     }
     if (tool === 'eraser') {
-      if (!dc) return;
+      if (activeLayer !== 'item' || !dc) return;
       paintAtDisplay(dc, 0);
       return;
     }
     if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
-      if (!dc) return;
+      if (activeLayer !== 'render' || !dc) return;
       highlightAtDisplay(dc);
       return;
     }
@@ -1591,8 +1704,17 @@ export function openPixelEditor(onApplied: () => void): void {
     btn.addEventListener('click', () => setTool((btn as HTMLElement).dataset.tool as Tool));
   });
 
-  panel.querySelector('[data-undo]')?.addEventListener('click', () => undo());
-  panel.querySelector('[data-redo]')?.addEventListener('click', () => redo());
+  panel.querySelectorAll('[data-editor-layer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const layer = (btn as HTMLElement).dataset.editorLayer as EditorLayer;
+      setEditorLayer(layer);
+    });
+  });
+
+  panel.querySelector('[data-undo]')?.addEventListener('click', () => undoPixel());
+  panel.querySelector('[data-redo]')?.addEventListener('click', () => redoPixel());
+  panel.querySelector('[data-render-undo]')?.addEventListener('click', () => undoRender());
+  panel.querySelector('[data-render-redo]')?.addEventListener('click', () => redoRender());
   panel.querySelector('[data-copy]')?.addEventListener('click', () => armCopyMode());
   panel.querySelector('[data-cut]')?.addEventListener('click', () => armCutMode());
   panel.querySelector('[data-paste]')?.addEventListener('click', () => handlePasteClick());
@@ -1608,7 +1730,7 @@ export function openPixelEditor(onApplied: () => void): void {
   breathSpeedInput.addEventListener('input', () => {
     breathSpeed = clamp(Number(breathSpeedInput.value) || 50, 1, 100);
     breathSpeedLabel.textContent = String(breathSpeed);
-    if (anyDisplayHighlightBreath(highlightGrid)) refreshAll();
+    if (anyDisplayHighlightBreath(highlightGrid) && activeLayer === 'render') refreshAll();
   });
 
   panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
@@ -1752,7 +1874,7 @@ export function openPixelEditor(onApplied: () => void): void {
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
     replaceGrid(makeEmptyGrid());
     highlightGrid = createEmptyDisplayHighlight();
-    resetHighlightHistory();
+    resetRenderHistory();
     selection = null;
     syncBreathAnimation();
     refreshAll();
@@ -1853,13 +1975,13 @@ export function openPixelEditor(onApplied: () => void): void {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
+      if (e.shiftKey) redoActiveLayer();
+      else undoActiveLayer();
       return;
     }
     if (mod && (e.key === 'y' || e.key === 'Y')) {
       e.preventDefault();
-      redo();
+      redoActiveLayer();
       return;
     }
     if (mod && (e.key === 'c' || e.key === 'C')) {
@@ -1907,7 +2029,7 @@ export function openPixelEditor(onApplied: () => void): void {
   setTool('hand');
   layoutGrid();
   updateClipboardButtons();
-  syncToolbarUi();
+  syncLayerUi();
 
   overlay.append(panel);
   editorOverlay = overlay;

@@ -1500,9 +1500,23 @@ body {
 }
 
 .pixel-editor__layers {
-  border-top: 1px solid var(--tcg-border);
-  padding-top: 4px;
-  margin-top: 2px;
+  border-bottom: 1px solid var(--tcg-border);
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+}
+
+.pixel-editor__layer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pixel-editor__layer-panel[hidden] {
+  display: none !important;
+}
+
+.pixel-editor__tools-grid--render-undo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pixel-editor__layers-title {
