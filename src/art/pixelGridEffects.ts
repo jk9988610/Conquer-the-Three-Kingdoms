@@ -343,7 +343,7 @@ export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
   {
     id: 'peel',
     label: '层层剥离',
-    description: '外层参考色组 + 从外向内逐层只去除该层中落在色组区间内的背景色块',
+    description: '按与画面边缘格距从外向内逐层扫描，只去除落在边缘色组区间内的背景色块',
   },
 ];
 
@@ -369,14 +369,7 @@ function rgbaDistance(a: Rgba, b: Rgba): number {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
-// --- 去背景：外层参考色组 + 从外向内逐层剥离 ---
-
-const NEIGHBOR4_DIRS: [number, number][] = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
+// --- 去背景：外层参考色组 + 按与画面边缘格距从外向内逐层剥离 ---
 
 function createEmptyMask(rows: number, cols: number): boolean[][] {
   return Array.from({ length: rows }, () => Array.from({ length: cols }, () => false));
@@ -392,18 +385,9 @@ function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
   return min;
 }
 
-function isOnImageBorder(x: number, y: number, cols: number, rows: number): boolean {
-  return x === 0 || y === 0 || x === cols - 1 || y === rows - 1;
-}
-
-function hasClearedNeighbor4(mask: boolean[][], x: number, y: number): boolean {
-  for (const [dx, dy] of NEIGHBOR4_DIRS) {
-    const ny = y + dy;
-    const nx = x + dx;
-    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (mask[ny]![nx]) return true;
-  }
-  return false;
+/** 与画面边缘的格距：0=最外圈，越大越靠内（与是否已剥除、主体遮挡无关） */
+function borderDepth(x: number, y: number, cols: number, rows: number): number {
+  return Math.min(x, y, cols - 1 - x, rows - 1 - y);
 }
 
 function* borderCoords(cols: number, rows: number): Generator<[number, number]> {
@@ -451,30 +435,9 @@ function isInEdgeReferenceGroup(px: Rgba, palette: Rgba[], tolerance: number): b
   return nearestPaletteDistance(px, palette) <= tolerance;
 }
 
-/** 当前最外圈待检验像素：贴画面边，或与已剥除区域四邻相接 */
-function collectOutermostPeelRing(
-  mask: boolean[][],
-  grid: PixelGrid,
-  cols: number,
-  rows: number
-): [number, number][] {
-  const ring: [number, number][] = [];
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (mask[y]![x]) continue;
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (isOnImageBorder(x, y, cols, rows) || hasClearedNeighbor4(mask, x, y)) {
-        ring.push([x, y]);
-      }
-    }
-  }
-  return ring;
-}
-
 /**
- * 从外向内逐层剥：每层只去除落在边缘色组区间内的背景色块，本体色块保留。
- * 当某一层已无任何色组区间内色块时停止。
+ * 按与画面边缘的格距从外向内逐层扫描：每层只去除落在边缘色组区间内的背景色块。
+ * 不依赖与已剥除区域相邻，主体内的缝隙背景会在更深格距层被扫到。
  */
 function peelBackgroundLayers(
   grid: PixelGrid,
@@ -484,22 +447,18 @@ function peelBackgroundLayers(
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const mask = createEmptyMask(rows, cols);
-  const maxPasses = Math.max(cols, rows) * 2;
+  const maxDepth = Math.min(cols, rows);
 
-  for (let pass = 0; pass < maxPasses; pass++) {
-    const ring = collectOutermostPeelRing(mask, grid, cols, rows);
-    if (ring.length === 0) break;
-
-    let hasBgPixelInRing = false;
-    for (const [x, y] of ring) {
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      if (!isInEdgeReferenceGroup(px, edgePalette, tolerance)) continue;
-      hasBgPixelInRing = true;
-      mask[y]![x] = true;
+  for (let depth = 0; depth < maxDepth; depth++) {
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (borderDepth(x, y, cols, rows) !== depth) continue;
+        const px = getPixel(grid, x, y);
+        if (!px || px.a < 0.08) continue;
+        if (!isInEdgeReferenceGroup(px, edgePalette, tolerance)) continue;
+        mask[y]![x] = true;
+      }
     }
-
-    if (!hasBgPixelInRing) break;
   }
 
   return mask;
