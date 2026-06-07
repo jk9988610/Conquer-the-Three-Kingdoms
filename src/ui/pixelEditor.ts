@@ -664,7 +664,10 @@ export function openPixelEditor(onApplied: () => void): void {
     const drawV = (c: number, strong: boolean) => {
       if (c < 0 || c > ART_DISPLAY_COLS) return;
       ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const x = (c / ART_DISPLAY_COLS) * gridPixelW + 0.5;
+      const x =
+        c >= ART_DISPLAY_COLS
+          ? gridPixelW - 0.5
+          : (c / ART_DISPLAY_COLS) * gridPixelW + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, gridPixelH);
@@ -673,7 +676,10 @@ export function openPixelEditor(onApplied: () => void): void {
     const drawH = (r: number, strong: boolean) => {
       if (r < 0 || r > ART_DISPLAY_ROWS) return;
       ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const y = (r / ART_DISPLAY_ROWS) * gridPixelH + 0.5;
+      const y =
+        r >= ART_DISPLAY_ROWS
+          ? gridPixelH - 0.5
+          : (r / ART_DISPLAY_ROWS) * gridPixelH + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(gridPixelW, y);
@@ -762,12 +768,17 @@ export function openPixelEditor(onApplied: () => void): void {
     if (canvasX < 0 || canvasY < 0 || canvasX > gridPixelW || canvasY > gridPixelH) {
       return null;
     }
-    const nx = Math.min(Math.max(canvasX / gridPixelW, 0), 1 - 1e-6);
-    const ny = Math.min(Math.max(canvasY / gridPixelH, 0), 1 - 1e-6);
-    return {
-      dx: clamp(Math.floor(nx * ART_DISPLAY_COLS), 0, ART_DISPLAY_COLS - 1),
-      dy: clamp(Math.floor(ny * ART_DISPLAY_ROWS), 0, ART_DISPLAY_ROWS - 1),
-    };
+    const nx = Math.min(Math.max(canvasX / gridPixelW, 0), 1);
+    const ny = Math.min(Math.max(canvasY / gridPixelH, 0), 1);
+    const dx = Math.min(
+      ART_DISPLAY_COLS - 1,
+      Math.max(0, Math.ceil(nx * ART_DISPLAY_COLS) - 1)
+    );
+    const dy = Math.min(
+      ART_DISPLAY_ROWS - 1,
+      Math.max(0, Math.ceil(ny * ART_DISPLAY_ROWS) - 1)
+    );
+    return { dx, dy };
   }
 
   /** 屏幕坐标 → 逻辑像素格（映射到展示块起点） */

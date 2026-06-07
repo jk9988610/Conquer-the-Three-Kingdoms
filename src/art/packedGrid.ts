@@ -234,8 +234,32 @@ export function drawPackedDisplayToCanvas(
   dstRows = ART_DISPLAY_ROWS
 ): void {
   const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const aspectMatch = Math.abs(width / height - dstCols / dstRows) < 1e-4;
+  const cellW = width / dstCols;
+  const cellH = height / dstRows;
+  const uniformCell =
+    aspectMatch && Math.abs(cellW - cellH) < 1e-4 && Math.abs(cellW - Math.round(cellW)) < 1e-4;
+  const cellPx = Math.round(cellW);
+
+  if (mode === 'fit' && uniformCell && dstCols * cellPx === width && dstRows * cellPx === height) {
+    ctx.imageSmoothingEnabled = false;
+    for (let y = 0; y < dstRows; y++) {
+      for (let x = 0; x < dstCols; x++) {
+        const v = display[gridIndex(x, y, dstCols)] ?? 0;
+        if (v === 0) continue;
+        const a = (v >>> 24) / 255;
+        const r = (v >>> 16) & 255;
+        const g = (v >>> 8) & 255;
+        const b = v & 255;
+        ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+        ctx.fillRect(x * cellPx, y * cellPx, cellPx, cellPx);
+      }
+    }
+    return;
+  }
+
   let { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
-  if (mode === 'fit' && Math.abs(width / height - dstCols / dstRows) < 1e-4) {
+  if (mode === 'fit' && aspectMatch) {
     cell = width / dstCols;
     ox = 0;
     oy = 0;
