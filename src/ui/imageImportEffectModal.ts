@@ -396,7 +396,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       removeBgFillBtn.className = 'img-import-effect__remove-bg-mode';
       removeBgFillBtn.textContent = '内洞填色';
       removeBgFillBtn.title =
-        '去背景后，将八邻域均不透明的透明内洞用邻域主色填补（适合黑名单去掉主体内独立背景块）';
+        '去背景后，将不贴边的封闭透明区域用外缘主体色填补（排除黑名单色，适合黑名单去掉主体内独立背景块）';
       removeBgFillBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
