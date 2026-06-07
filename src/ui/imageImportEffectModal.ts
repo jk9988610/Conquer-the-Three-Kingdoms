@@ -342,7 +342,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       const boxHint = document.createElement('div');
       boxHint.className = 'img-import-effect__remove-bg-modes-label';
       boxHint.textContent =
-        '预览切换「框选去除/保护」后拖拽矩形；可与容差、方案组合使用';
+        '预览切换「框选去除/保护」后拖拽矩形；去背景后 3×3 内仅 1 格透明时以周围 8 格均值智能填色';
       section.append(boxHint);
 
       const boxActionsLabel = document.createElement('div');

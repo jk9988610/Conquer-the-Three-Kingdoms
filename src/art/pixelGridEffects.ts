@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: 'Lab 感知容差 + 边缘参考色组，智能混合剥除背景',
+    description: 'Lab 感知容差 + 边缘参考色组；抠图后 3×3 孤立透明格以邻色均值填补',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -805,7 +805,72 @@ function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
   return out;
 }
 
-/** 在 60×84 展示格上应用去背景（算法 + 框选） */
+function isDisplayCellOpaque(grid: PixelGrid, x: number, y: number): boolean {
+  const px = getPixel(grid, x, y);
+  return px !== null && px.a >= 0.08;
+}
+
+/**
+ * 去背景后智能填色：完整 3×3 窗口内恰有 1 个透明格与 8 个非透明格时，
+ * 用 8 格颜色均值填补该透明格（60×84 展示格）。
+ */
+function fillRemoveBgSmartHoles3x3(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (rows < 3 || cols < 3) return cloneGrid(grid);
+
+  const out = cloneGrid(grid);
+  const fills = new Map<string, Rgba>();
+
+  for (let y0 = 0; y0 <= rows - 3; y0++) {
+    for (let x0 = 0; x0 <= cols - 3; x0++) {
+      let transparent: { x: number; y: number } | null = null;
+      const opaqueSamples: Rgba[] = [];
+
+      for (let dy = 0; dy < 3; dy++) {
+        for (let dx = 0; dx < 3; dx++) {
+          const x = x0 + dx;
+          const y = y0 + dy;
+          if (isDisplayCellOpaque(out, x, y)) {
+            const px = getPixel(out, x, y);
+            if (px) opaqueSamples.push(px);
+            continue;
+          }
+          if (transparent) {
+            transparent = null;
+            opaqueSamples.length = 0;
+            break;
+          }
+          transparent = { x, y };
+        }
+        if (!transparent) break;
+      }
+
+      if (!transparent || opaqueSamples.length !== 8) continue;
+      const avg = averageRgba(opaqueSamples);
+      if (!avg) continue;
+      fills.set(`${transparent.x},${transparent.y}`, {
+        r: clampByte(avg.r),
+        g: clampByte(avg.g),
+        b: clampByte(avg.b),
+        a: clampByte(avg.a),
+      });
+    }
+  }
+
+  if (fills.size === 0) return out;
+
+  for (const [key, color] of fills) {
+    const [xs, ys] = key.split(',');
+    const x = Number(xs);
+    const y = Number(ys);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out[y]![x] = toPixel(color);
+  }
+  return out;
+}
+
+/** 在 60×84 展示格上应用去背景（算法 + 框选 + 3×3 智能填色） */
 function applyRemoveBgToDisplayGrid(
   displayGrid: PixelGrid,
   toleranceSlider: number,
@@ -813,7 +878,7 @@ function applyRemoveBgToDisplayGrid(
 ): PixelGrid {
   const mask = computeRemoveBgDisplayMask(displayGrid, toleranceSlider, options);
   if (!mask) return cloneGrid(displayGrid);
-  return applyRemoveBgMask(displayGrid, mask);
+  return fillRemoveBgSmartHoles3x3(applyRemoveBgMask(displayGrid, mask));
 }
 
 function hasNonRemoveBgEffects(mix: PixelImportEffectMix): boolean {
@@ -1108,7 +1173,7 @@ export function applyPixelImportMix(
         ...options,
         removeBgMode,
       });
-      if (mask) result = applyRemoveBgMask(result, mask);
+      if (mask) result = fillRemoveBgSmartHoles3x3(applyRemoveBgMask(result, mask));
       continue;
     }
     if (id === 'deblack') {
