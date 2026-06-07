@@ -2184,6 +2184,12 @@ body {
   padding: 0.28rem 0.55rem;
 }
 
+.img-import-effect__topbar-btn.is-active {
+  background: rgba(255, 48, 140, 0.2);
+  border-color: rgba(255, 80, 160, 0.55);
+  color: #ffb8d8;
+}
+
 .img-import-effect__close {
   width: 32px;
   height: 32px;
