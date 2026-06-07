@@ -319,8 +319,8 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
   return `容差${removeBgSliderToTolerance(sliderValue)}`;
 }
 
-/** 去背景算法方案 */
-export type RemoveBgMode = 'flood' | 'pocket' | 'global' | 'corner' | 'hybrid';
+/** 去背景算法方案（均为全局色差变体） */
+export type RemoveBgMode = 'global' | 'protect' | 'corner' | 'detail' | 'refined';
 
 export interface RemoveBgModeOption {
   id: RemoveBgMode;
@@ -329,14 +329,14 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'flood', label: '边缘泛洪', description: '从四边扩展，稳定保护主体边缘' },
-  { id: 'pocket', label: '镂空填充', description: '泛洪后清除肢体包裹的内部背景' },
-  { id: 'global', label: '全局色差', description: '按容差清除全图相近色，力度较大' },
-  { id: 'corner', label: '角落强化', description: '额外清除四角残留背景色' },
-  { id: 'hybrid', label: '综合强化', description: '泛洪+镂空+角落，推荐默认' },
+  { id: 'global', label: '全局色差', description: '按容差清除全图与背景相近的像素' },
+  { id: 'protect', label: '主体保护', description: '全局色差 + 强化主体保护，容差可开更大' },
+  { id: 'corner', label: '角落强化', description: '全局色差 + 四角区域额外清除' },
+  { id: 'detail', label: '细节保护', description: '全局色差 + 保留肢体纹理与边缘细节' },
+  { id: 'refined', label: '综合优化', description: '全局色差 + 角落 + 细节保护 + 孔洞填补' },
 ];
 
-export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'hybrid';
+export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'global';
 
 export function getRemoveBgModeLabel(mode: RemoveBgMode): string {
   return REMOVE_BG_MODES.find((m) => m.id === mode)?.label ?? mode;
@@ -421,56 +421,40 @@ function isSimilarToBg(px: Rgba, bgRef: Rgba, tolerance: number): boolean {
   return rgbaDistance(px, bgRef) <= tolerance;
 }
 
-/** 八连通泛洪：与父格或参考背景色接近则继续扩展 */
-function floodBgMaskFromEdges(
-  grid: PixelGrid,
-  bgRef: Rgba,
-  tolerance: number
-): boolean[][] {
+function isSimilarToBgRefs(px: Rgba, refs: Rgba[], tolerance: number): boolean {
+  for (const ref of refs) {
+    if (isSimilarToBg(px, ref, tolerance)) return true;
+  }
+  return false;
+}
+
+/** 四角分别采样，得到 1–4 个背景参考色 */
+function collectCornerBackgroundRefs(grid: PixelGrid): Rgba[] {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
-  const isBg: boolean[][] = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => false)
-  );
-  const queue: [number, number][] = [];
-  const linkTol = tolerance * 0.72;
+  if (cols === 0 || rows === 0) return [];
 
-  function trySeed(x: number, y: number): void {
-    const px = getPixel(grid, x, y);
-    if (!px || px.a < 0.08 || isBg[y]![x]!) return;
-    if (rgbaDistance(px, bgRef) > tolerance) return;
-    isBg[y]![x] = true;
-    queue.push([x, y]);
+  const corners: [number, number][] = [
+    [0, 0],
+    [cols - 1, 0],
+    [0, rows - 1],
+    [cols - 1, rows - 1],
+  ];
+  const refs: Rgba[] = [];
+  const seen = new Set<string>();
+
+  for (const [cx, cy] of corners) {
+    const local = estimateLocalCornerBackground(grid, cx, cy);
+    if (!local) continue;
+    const key = colorBucketKey(local);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push(local);
   }
 
-  for (let x = 0; x < cols; x++) {
-    trySeed(x, 0);
-    trySeed(x, rows - 1);
-  }
-  for (let y = 0; y < rows; y++) {
-    trySeed(0, y);
-    trySeed(cols - 1, y);
-  }
-
-  while (queue.length > 0) {
-    const [x, y] = queue.shift()!;
-    const cur = getPixel(grid, x, y);
-    if (!cur) continue;
-
-    for (const [dx, dy] of NEIGHBOR8_DIRS) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
-      const npx = getPixel(grid, nx, ny);
-      if (!npx || npx.a < 0.08) continue;
-      if (rgbaDistance(npx, cur) <= linkTol || rgbaDistance(npx, bgRef) <= tolerance) {
-        isBg[ny]![nx] = true;
-        queue.push([nx, ny]);
-      }
-    }
-  }
-
-  return isBg;
+  if (refs.length > 0) return refs;
+  const fallback = estimateCornerBackgroundColor(grid);
+  return fallback ? [fallback] : [];
 }
 
 /** 形态学闭运算：填补背景区域内的小孔，避免斑马线式间断 */
@@ -506,25 +490,43 @@ function closeBgMask(
   return closed;
 }
 
+interface ProtectSubjectOptions {
+  strength?: 'normal' | 'strong';
+  protectDetail?: boolean;
+}
+
 /** 撤销明显非背景色、且被主体紧密包围的误标记 */
 function protectSubjectInMask(
   mask: boolean[][],
   grid: PixelGrid,
-  bgRef: Rgba,
-  tolerance: number
+  bgRefs: Rgba[],
+  tolerance: number,
+  opts: ProtectSubjectOptions = {}
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
   const out = cloneMask(mask);
-  const guardDist = Math.max(8, tolerance * 0.68);
+  const strong = opts.strength === 'strong';
+  const guardDist = strong
+    ? Math.max(6, tolerance * 0.5)
+    : Math.max(8, tolerance * 0.68);
+  const minNeighbors = strong ? 4 : 5;
+  const detailThreshold = 0.26;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       if (!out[y]![x]) continue;
       const px = getPixel(grid, x, y);
       if (!px || px.a < 0.08) continue;
-      if (rgbaDistance(px, bgRef) <= guardDist) continue;
-      if (countNonBgNeighbors8(out, x, y) < 5) continue;
+
+      if (opts.protectDetail && localDetailWeight(grid, x, y) >= detailThreshold) {
+        out[y]![x] = false;
+        continue;
+      }
+
+      const nearestBgDist = Math.min(...bgRefs.map((ref) => rgbaDistance(px, ref)));
+      if (nearestBgDist <= guardDist) continue;
+      if (countNonBgNeighbors8(out, x, y) < minNeighbors) continue;
       out[y]![x] = false;
     }
   }
@@ -556,42 +558,11 @@ function estimateLocalCornerBackground(
   return best?.color ?? null;
 }
 
-/** 清除被肢体包裹、颜色接近背景的内部区域 */
-function fillInteriorBgPockets(
-  mask: boolean[][],
-  grid: PixelGrid,
-  bgRef: Rgba,
-  tolerance: number
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
-  const pocketTol = tolerance * 0.94;
-
-  for (let pass = 0; pass < 6; pass++) {
-    let changed = false;
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        if (out[y]![x]) continue;
-        const px = getPixel(grid, x, y);
-        if (!px || px.a < 0.08) continue;
-        if (!isSimilarToBg(px, bgRef, pocketTol)) continue;
-        if (countNonBgNeighbors8(out, x, y) < 5) continue;
-        out[y]![x] = true;
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-
-  return out;
-}
-
 /** 强制清除四角区域内接近背景色的像素 */
 function forceClearCornerBackground(
   mask: boolean[][],
   grid: PixelGrid,
-  bgRef: Rgba,
+  bgRefs: Rgba[],
   tolerance: number
 ): boolean[][] {
   const rows = mask.length;
@@ -607,7 +578,8 @@ function forceClearCornerBackground(
   ];
 
   for (const [cx, cy] of corners) {
-    const localRef = estimateLocalCornerBackground(grid, cx, cy) ?? bgRef;
+    const localRef = estimateLocalCornerBackground(grid, cx, cy);
+    const cornerRefs = localRef ? [localRef, ...bgRefs] : bgRefs;
     for (let dy = 0; dy < cornerSpan; dy++) {
       for (let dx = 0; dx < cornerSpan; dx++) {
         const x = cx === 0 ? dx : cols - 1 - dx;
@@ -616,8 +588,8 @@ function forceClearCornerBackground(
         const px = getPixel(grid, x, y);
         if (!px || px.a < 0.08) continue;
         if (
-          isSimilarToBg(px, localRef, cornerTol) ||
-          isSimilarToBg(px, bgRef, tolerance)
+          isSimilarToBgRefs(px, cornerRefs, cornerTol) ||
+          isSimilarToBgRefs(px, bgRefs, tolerance)
         ) {
           out[y]![x] = true;
         }
@@ -628,10 +600,10 @@ function forceClearCornerBackground(
   return out;
 }
 
-/** 全局色差：凡接近背景参考色的像素均标记为背景 */
+/** 全局色差：凡接近任一背景参考色的像素均标记为背景 */
 function buildGlobalBgMask(
   grid: PixelGrid,
-  bgRef: Rgba,
+  bgRefs: Rgba[],
   tolerance: number
 ): boolean[][] {
   const rows = grid.length;
@@ -644,33 +616,38 @@ function buildGlobalBgMask(
     for (let x = 0; x < cols; x++) {
       const px = getPixel(grid, x, y);
       if (!px || px.a < 0.08) continue;
-      if (isSimilarToBg(px, bgRef, tolerance)) mask[y]![x] = true;
+      if (isSimilarToBgRefs(px, bgRefs, tolerance)) mask[y]![x] = true;
     }
   }
 
   return mask;
 }
 
-function buildFloodBgMask(
+interface GlobalBgVariantOpts {
+  corner?: boolean;
+  close?: boolean;
+  protectStrength?: 'normal' | 'strong';
+  protectDetail?: boolean;
+}
+
+function buildGlobalBgMaskVariant(
   grid: PixelGrid,
-  bgRef: Rgba,
+  bgRefs: Rgba[],
   tolerance: number,
-  opts: { pocket: boolean; corner: boolean }
+  opts: GlobalBgVariantOpts
 ): boolean[][] {
-  let mask = floodBgMaskFromEdges(grid, bgRef, tolerance);
-  mask = closeBgMask(mask, grid, bgRef, tolerance);
-  if (opts.pocket) mask = fillInteriorBgPockets(mask, grid, bgRef, tolerance);
-  if (opts.corner) mask = forceClearCornerBackground(mask, grid, bgRef, tolerance);
-  return protectSubjectInMask(mask, grid, bgRef, tolerance);
+  const primaryRef = bgRefs[0]!;
+  let mask = buildGlobalBgMask(grid, bgRefs, tolerance);
+  if (opts.close) mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  if (opts.corner) mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
+  return protectSubjectInMask(mask, grid, bgRefs, tolerance, {
+    strength: opts.protectStrength ?? 'normal',
+    protectDetail: opts.protectDetail ?? false,
+  });
 }
 
 /**
- * 去背景掩码：按方案生成背景区域标记。
- * - flood: 边缘泛洪 + 闭运算
- * - pocket: 泛洪 + 镂空填充
- * - global: 全局色差
- * - corner: 泛洪 + 角落强化
- * - hybrid: 泛洪 + 镂空 + 角落（推荐）
+ * 去背景掩码：均为全局色差变体，按方案叠加不同后处理。
  */
 export function computeRemoveBgMask(
   grid: PixelGrid,
@@ -681,23 +658,28 @@ export function computeRemoveBgMask(
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0 || tolerance <= 0) return null;
 
-  const bgEst = estimateCornerBackgroundColor(grid);
-  if (!bgEst) return null;
+  const bgRefs = collectCornerBackgroundRefs(grid);
+  if (bgRefs.length === 0) return null;
 
   switch (mode) {
-    case 'global': {
-      const globalMask = buildGlobalBgMask(grid, bgEst, tolerance);
-      return protectSubjectInMask(globalMask, grid, bgEst, tolerance);
-    }
-    case 'pocket':
-      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: true, corner: false });
+    case 'protect':
+      return buildGlobalBgMaskVariant(grid, bgRefs, tolerance, {
+        protectStrength: 'strong',
+      });
     case 'corner':
-      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: false, corner: true });
-    case 'hybrid':
-      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: true, corner: true });
-    case 'flood':
+      return buildGlobalBgMaskVariant(grid, bgRefs, tolerance, { corner: true });
+    case 'detail':
+      return buildGlobalBgMaskVariant(grid, bgRefs, tolerance, { protectDetail: true });
+    case 'refined':
+      return buildGlobalBgMaskVariant(grid, bgRefs, tolerance, {
+        corner: true,
+        close: true,
+        protectStrength: 'strong',
+        protectDetail: true,
+      });
+    case 'global':
     default:
-      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: false, corner: false });
+      return buildGlobalBgMaskVariant(grid, bgRefs, tolerance, {});
   }
 }
 
