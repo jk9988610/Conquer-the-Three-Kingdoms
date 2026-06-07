@@ -1313,6 +1313,51 @@ body {
   margin-top: 2px;
 }
 
+.img-import-effect__remove-bg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.img-import-effect__remove-bg-modes-label {
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--tcg-muted, #8a8a8a);
+  letter-spacing: 0.02em;
+}
+
+.img-import-effect__remove-bg-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 4px;
+}
+
+.img-import-effect__remove-bg-mode {
+  flex: 1 1 calc(33.33% - 6px);
+  min-width: 72px;
+  padding: 6px 4px;
+  border: 1px solid var(--tcg-border, #3a3a3a);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--tcg-text, #e8e8e8);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.img-import-effect__remove-bg-mode:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.img-import-effect__remove-bg-mode.is-active {
+  background: rgba(80, 140, 255, 0.22);
+  border-color: rgba(100, 160, 255, 0.65);
+  color: #fff;
+}
+
 .pixel-editor__view-hint {
   margin: 0 0 6px;
   font-size: 0.58rem;
@@ -2194,7 +2239,7 @@ body {
   flex-shrink: 0;
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #353535 0% 50%) 50% / 10px 10px;
   border: 1px solid var(--tcg-border);
-  border-radius: 6px;
+  border-radius: 0;
   box-sizing: border-box;
   overflow: hidden;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);

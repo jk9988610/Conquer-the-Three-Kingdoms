@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '四边泛洪去背景，滑条为颜色容差',
+    description: '选择下方方案并调节容差滑条',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -319,6 +319,33 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
   return `容差${removeBgSliderToTolerance(sliderValue)}`;
 }
 
+/** 去背景算法方案 */
+export type RemoveBgMode = 'flood' | 'pocket' | 'global' | 'corner' | 'hybrid';
+
+export interface RemoveBgModeOption {
+  id: RemoveBgMode;
+  label: string;
+  description: string;
+}
+
+export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
+  { id: 'flood', label: '边缘泛洪', description: '从四边扩展，稳定保护主体边缘' },
+  { id: 'pocket', label: '镂空填充', description: '泛洪后清除肢体包裹的内部背景' },
+  { id: 'global', label: '全局色差', description: '按容差清除全图相近色，力度较大' },
+  { id: 'corner', label: '角落强化', description: '额外清除四角残留背景色' },
+  { id: 'hybrid', label: '综合强化', description: '泛洪+镂空+角落，推荐默认' },
+];
+
+export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'hybrid';
+
+export function getRemoveBgModeLabel(mode: RemoveBgMode): string {
+  return REMOVE_BG_MODES.find((m) => m.id === mode)?.label ?? mode;
+}
+
+export interface PixelImportMixOptions {
+  removeBgMode?: RemoveBgMode;
+}
+
 function rgbaDistance(a: Rgba, b: Rgba): number {
   const dr = a.r - b.r;
   const dg = a.g - b.g;
@@ -505,13 +532,150 @@ function protectSubjectInMask(
   return out;
 }
 
+/** 单角 3×3 采样背景参考色 */
+function estimateLocalCornerBackground(
+  grid: PixelGrid,
+  cx: number,
+  cy: number
+): Rgba | null {
+  const buckets = new Map<string, { color: Rgba; count: number }>();
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const px = getPixel(grid, cx + dx, cy + dy);
+      if (!px || px.a < 0.08) continue;
+      const key = colorBucketKey(px);
+      const entry = buckets.get(key);
+      if (entry) entry.count++;
+      else buckets.set(key, { color: px, count: 1 });
+    }
+  }
+  let best: { color: Rgba; count: number } | null = null;
+  for (const entry of buckets.values()) {
+    if (!best || entry.count > best.count) best = entry;
+  }
+  return best?.color ?? null;
+}
+
+/** 清除被肢体包裹、颜色接近背景的内部区域 */
+function fillInteriorBgPockets(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const out = cloneMask(mask);
+  const pocketTol = tolerance * 0.94;
+
+  for (let pass = 0; pass < 6; pass++) {
+    let changed = false;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (out[y]![x]) continue;
+        const px = getPixel(grid, x, y);
+        if (!px || px.a < 0.08) continue;
+        if (!isSimilarToBg(px, bgRef, pocketTol)) continue;
+        if (countNonBgNeighbors8(out, x, y) < 5) continue;
+        out[y]![x] = true;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  return out;
+}
+
+/** 强制清除四角区域内接近背景色的像素 */
+function forceClearCornerBackground(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const out = cloneMask(mask);
+  const cornerSpan = Math.max(4, Math.min(8, Math.floor(Math.min(cols, rows) / 10)));
+  const cornerTol = tolerance * 1.1;
+  const corners: [number, number][] = [
+    [0, 0],
+    [cols - 1, 0],
+    [0, rows - 1],
+    [cols - 1, rows - 1],
+  ];
+
+  for (const [cx, cy] of corners) {
+    const localRef = estimateLocalCornerBackground(grid, cx, cy) ?? bgRef;
+    for (let dy = 0; dy < cornerSpan; dy++) {
+      for (let dx = 0; dx < cornerSpan; dx++) {
+        const x = cx === 0 ? dx : cols - 1 - dx;
+        const y = cy === 0 ? dy : rows - 1 - dy;
+        if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+        const px = getPixel(grid, x, y);
+        if (!px || px.a < 0.08) continue;
+        if (
+          isSimilarToBg(px, localRef, cornerTol) ||
+          isSimilarToBg(px, bgRef, tolerance)
+        ) {
+          out[y]![x] = true;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/** 全局色差：凡接近背景参考色的像素均标记为背景 */
+function buildGlobalBgMask(
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number
+): boolean[][] {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const mask: boolean[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => false)
+  );
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const px = getPixel(grid, x, y);
+      if (!px || px.a < 0.08) continue;
+      if (isSimilarToBg(px, bgRef, tolerance)) mask[y]![x] = true;
+    }
+  }
+
+  return mask;
+}
+
+function buildFloodBgMask(
+  grid: PixelGrid,
+  bgRef: Rgba,
+  tolerance: number,
+  opts: { pocket: boolean; corner: boolean }
+): boolean[][] {
+  let mask = floodBgMaskFromEdges(grid, bgRef, tolerance);
+  mask = closeBgMask(mask, grid, bgRef, tolerance);
+  if (opts.pocket) mask = fillInteriorBgPockets(mask, grid, bgRef, tolerance);
+  if (opts.corner) mask = forceClearCornerBackground(mask, grid, bgRef, tolerance);
+  return protectSubjectInMask(mask, grid, bgRef, tolerance);
+}
+
 /**
- * 去背景掩码：从四边八连通泛洪，邻格颜色接近则视为背景。
- * 闭运算填补背景孔洞；明显非背景色且被主体包围的格予以保护。
+ * 去背景掩码：按方案生成背景区域标记。
+ * - flood: 边缘泛洪 + 闭运算
+ * - pocket: 泛洪 + 镂空填充
+ * - global: 全局色差
+ * - corner: 泛洪 + 角落强化
+ * - hybrid: 泛洪 + 镂空 + 角落（推荐）
  */
 export function computeRemoveBgMask(
   grid: PixelGrid,
-  tolerance: number
+  tolerance: number,
+  mode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE
 ): boolean[][] | null {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
@@ -520,9 +684,21 @@ export function computeRemoveBgMask(
   const bgEst = estimateCornerBackgroundColor(grid);
   if (!bgEst) return null;
 
-  const flooded = floodBgMaskFromEdges(grid, bgEst, tolerance);
-  const closed = closeBgMask(flooded, grid, bgEst, tolerance);
-  return protectSubjectInMask(closed, grid, bgEst, tolerance);
+  switch (mode) {
+    case 'global': {
+      const globalMask = buildGlobalBgMask(grid, bgEst, tolerance);
+      return protectSubjectInMask(globalMask, grid, bgEst, tolerance);
+    }
+    case 'pocket':
+      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: true, corner: false });
+    case 'corner':
+      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: false, corner: true });
+    case 'hybrid':
+      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: true, corner: true });
+    case 'flood':
+    default:
+      return buildFloodBgMask(grid, bgEst, tolerance, { pocket: false, corner: false });
+  }
 }
 
 function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
@@ -538,10 +714,11 @@ function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
 function removeBgGrid(
   grid: PixelGrid,
   tolerance: number,
-  maskSource?: PixelGrid
+  maskSource?: PixelGrid,
+  mode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE
 ): PixelGrid {
   const source = maskSource ?? grid;
-  const mask = computeRemoveBgMask(source, tolerance);
+  const mask = computeRemoveBgMask(source, tolerance, mode);
   if (!mask) return cloneGrid(grid);
   return applyRemoveBgMask(grid, mask);
 }
@@ -811,8 +988,10 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
 export function applyPixelImportMix(
   display: PixelGrid,
   mix: PixelImportEffectMix,
-  mattingGrid?: PixelGrid | null
+  mattingGrid?: PixelGrid | null,
+  options?: PixelImportMixOptions
 ): PixelGrid {
+  const removeBgMode = options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE;
   let result = cloneGrid(display);
   for (const id of MIX_EFFECT_ORDER) {
     const strength = mix[id] ?? 0;
@@ -821,7 +1000,8 @@ export function applyPixelImportMix(
       result = removeBgGrid(
         result,
         removeBgSliderToTolerance(strength),
-        mattingGrid ?? undefined
+        mattingGrid ?? undefined,
+        removeBgMode
       );
       continue;
     }
@@ -839,13 +1019,19 @@ export function applyPixelImportMix(
   return result;
 }
 
-export function describeEffectMix(mix: PixelImportEffectMix): string {
+export function describeEffectMix(
+  mix: PixelImportEffectMix,
+  options?: PixelImportMixOptions
+): string {
+  const removeBgMode = options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE;
   const parts: string[] = [];
   for (const o of PIXEL_IMPORT_EFFECTS) {
     const v = mix[o.id as keyof PixelImportEffectMix] ?? 0;
     if (v <= 0) continue;
     if (o.id === 'removeBg') {
-      parts.push(`${o.label} 容差${removeBgSliderToTolerance(v)}`);
+      parts.push(
+        `${o.label} ${getRemoveBgModeLabel(removeBgMode)} 容差${removeBgSliderToTolerance(v)}`
+      );
     } else if (o.id === 'deblack') {
       parts.push(`${o.label} 深度${deblackSliderToLuminanceThreshold(v)}`);
     } else {
@@ -936,19 +1122,21 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
 /** 在 60×84 展示网格上按混合参数处理，供预览与落盘 */
 export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
-  mix: PixelImportEffectMix
+  mix: PixelImportEffectMix,
+  options?: PixelImportMixOptions
 ): PixelGrid {
   const display = logicalGridToDisplayGrid(grid);
   const matting =
     (mix.removeBg ?? 0) > 0 ? logicalGridToDisplayGridMatting(grid) : null;
-  return applyPixelImportMix(display, mix, matting);
+  return applyPixelImportMix(display, mix, matting, options);
 }
 
 /** 导入落盘：展示级混合效果 → 展开为 500×700 逻辑网格 */
 export function applyPixelImportMixForEditor(
   grid: PixelGrid,
-  mix: PixelImportEffectMix
+  mix: PixelImportEffectMix,
+  options?: PixelImportMixOptions
 ): PixelGrid {
-  const processed = applyPixelImportMixOnDisplay(grid, mix);
+  const processed = applyPixelImportMixOnDisplay(grid, mix, options);
   return displayGridToLogicalGrid(processed);
 }
