@@ -8,12 +8,15 @@ import {
   applyPixelImportMixOnDisplay,
   clonePixelImportMix,
   createDefaultEffectMix,
+  DEFAULT_REMOVE_BG_MODE,
   describeEffectMix,
   formatImportEffectSliderValue,
   isThresholdImportEffect,
   PIXEL_IMPORT_EFFECTS,
+  REMOVE_BG_MODES,
   type PixelImportEffect,
   type PixelImportEffectMix,
+  type RemoveBgMode,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
 import { loadImageFromFile } from '../art/imageToGrid';
@@ -39,6 +42,7 @@ type EffectOverlay = HTMLElement & {
 interface EffectHistoryEntry {
   grid: PixelGrid;
   mix: PixelImportEffectMix;
+  removeBgMode: RemoveBgMode;
 }
 
 function clonePixelGrid(grid: PixelGrid): PixelGrid {
@@ -65,6 +69,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const { cols, rows, onConfirm, onCancel } = options;
   let currentGrid = options.grid;
   const mix = createDefaultEffectMix();
+  let removeBgMode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE;
   const undoStack: EffectHistoryEntry[] = [];
   const redoStack: EffectHistoryEntry[] = [];
 
@@ -132,6 +137,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     undoStack.push({
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
+      removeBgMode,
     });
     if (undoStack.length > MAX_EFFECT_UNDO) undoStack.shift();
     redoStack.length = 0;
@@ -144,9 +150,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
       mix[key] = entry.mix[key] ?? 0;
     }
+    removeBgMode = entry.removeBgMode;
     for (const [id, slider] of sliderByEffect) {
       slider.setValue(mix[id] ?? 0, { silent: true });
     }
+    updateRemoveBgModeButtons();
     updateMixLabel();
     renderPreview();
   }
@@ -156,6 +164,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     redoStack.push({
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
+      removeBgMode,
     });
     const entry = undoStack.pop()!;
     restoreEffectHistory(entry);
@@ -167,10 +176,19 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     undoStack.push({
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
+      removeBgMode,
     });
     const entry = redoStack.pop()!;
     restoreEffectHistory(entry);
     updateEffectUndoRedo();
+  }
+
+  const removeBgModeButtons = new Map<RemoveBgMode, HTMLButtonElement>();
+
+  function updateRemoveBgModeButtons(): void {
+    for (const [mode, btn] of removeBgModeButtons) {
+      btn.classList.toggle('is-active', mode === removeBgMode);
+    }
   }
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
@@ -190,12 +208,52 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         renderPreview();
       },
     });
-    slidersEl.append(slider.root);
     sliderByEffect.set(effectId, slider);
+
+    if (effectId === 'removeBg') {
+      const section = document.createElement('div');
+      section.className = 'img-import-effect__remove-bg-section';
+      section.append(slider.root);
+
+      const modesLabel = document.createElement('div');
+      modesLabel.className = 'img-import-effect__remove-bg-modes-label';
+      modesLabel.textContent = '去背景方案';
+      section.append(modesLabel);
+
+      const modesEl = document.createElement('div');
+      modesEl.className = 'img-import-effect__remove-bg-modes';
+      for (const modeOpt of REMOVE_BG_MODES) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'img-import-effect__remove-bg-mode';
+        btn.dataset.mode = modeOpt.id;
+        btn.textContent = modeOpt.label;
+        btn.title = modeOpt.description;
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (removeBgMode === modeOpt.id) return;
+          pushEffectUndo();
+          removeBgMode = modeOpt.id;
+          updateRemoveBgModeButtons();
+          updateMixLabel();
+          renderPreview();
+        });
+        removeBgModeButtons.set(modeOpt.id, btn);
+        modesEl.append(btn);
+      }
+      section.append(modesEl);
+      slidersEl.append(section);
+      updateRemoveBgModeButtons();
+    } else {
+      slidersEl.append(slider.root);
+    }
   }
 
   function updateMixLabel(): void {
-    if (effectNameEl) effectNameEl.textContent = describeEffectMix(mix);
+    if (effectNameEl) {
+      effectNameEl.textContent = describeEffectMix(mix, { removeBgMode });
+    }
   }
 
   function updateFullscreenBtn(): void {
@@ -248,7 +306,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     previewCanvas.style.width = `${cssW}px`;
     previewCanvas.style.height = `${cssH}px`;
     ctx.clearRect(0, 0, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
-    const display = applyPixelImportMixOnDisplay(currentGrid, mix);
+    const display = applyPixelImportMixOnDisplay(currentGrid, mix, { removeBgMode });
     drawGridToCanvas(
       ctx,
       display,
@@ -264,13 +322,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
       mix[key] = defaults[key];
     }
+    removeBgMode = DEFAULT_REMOVE_BG_MODE;
     sliderByEffect.forEach((handle) => handle.setValue(0, { silent: true }));
+    updateRemoveBgModeButtons();
     updateMixLabel();
     renderPreview();
   }
 
   function finishConfirm(): void {
-    const processed = applyPixelImportMixForEditor(currentGrid, mix);
+    const processed = applyPixelImportMixForEditor(currentGrid, mix, { removeBgMode });
     closeImageImportEffectModal();
     onConfirm(processed);
   }
