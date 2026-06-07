@@ -705,20 +705,19 @@ export function openPixelEditor(onApplied: () => void): void {
     panel.style.setProperty('--pe-art-h', `${gridPixelH}px`);
   }
 
-  /** 预览区：按卡面展示分辨率（60×84）适配面板，扣除内框后分配像素区 */
+  /** 预览区：按卡面展示分辨率（60×84）适配面板，无额外内框 */
   function layoutPreview(): void {
-    const frame = ART_INNER_FRAME_PX * 2;
     const avail = availSizeInPane(previewPanel);
     const aspect = gridCols / gridRows;
-    let pw = Math.min(avail.w - frame, ART_PREVIEW_WIDTH);
+    let pw = Math.min(avail.w, ART_PREVIEW_WIDTH);
     let ph = Math.round(pw / aspect);
-    if (ph > avail.h - frame) {
-      ph = Math.min(avail.h - frame, ART_PREVIEW_HEIGHT);
+    if (ph > avail.h) {
+      ph = Math.min(avail.h, ART_PREVIEW_HEIGHT);
       pw = Math.round(ph * aspect);
     }
     previewPixelW = Math.max(1, Math.floor(pw));
     previewPixelH = Math.max(1, Math.floor(ph));
-    setElementBoxSize(previewSurface, previewPixelW + frame, previewPixelH + frame);
+    setElementBoxSize(previewSurface, previewPixelW, previewPixelH);
     previewSurface.style.boxSizing = 'border-box';
     const dpr = window.devicePixelRatio || 1;
     setupCanvas(previewGridArt, previewPixelW, previewPixelH, dpr, { fillParent: true });
