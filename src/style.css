@@ -2260,43 +2260,6 @@ body {
   margin-right: auto;
 }
 
-.img-import-effect__art-surface {
-  position: relative;
-}
-
-.img-import-effect__art-surface--box-armed {
-  cursor: crosshair;
-}
-
-.img-import-effect__art-surface--box-armed canvas[data-preview-canvas] {
-  cursor: crosshair;
-}
-
-.img-import-effect__sel-box {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px dashed #ec4;
-  background: rgba(236, 196, 68, 0.18);
-  pointer-events: none;
-  z-index: 3;
-}
-
-.img-import-effect__box-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 2px;
-}
-
-.img-import-effect__box-btn {
-  font-size: 0.62rem;
-  padding: 0.16rem 0.5rem;
-}
-
-.img-import-effect__box-btn--armed {
-  border-color: var(--tcg-accent) !important;
-  color: var(--tcg-accent);
-}
-
 .img-import-effect__actions [data-confirm] {
   border-color: var(--tcg-accent);
   color: var(--tcg-accent);
