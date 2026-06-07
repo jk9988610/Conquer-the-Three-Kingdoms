@@ -274,59 +274,125 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
-/** 八邻域（不含自身）；若 8 格均不透明则返回，否则返回空 */
-function neighbor8OpaqueRgba(grid: PixelGrid, x: number, y: number): Rgba[] {
-  const out: Rgba[] = [];
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const px = getPixel(grid, x + dx, y + dy);
-      if (!px || px.a < 0.08) return [];
-      out.push(px);
+function isTransparentCell(grid: PixelGrid, x: number, y: number): boolean {
+  const px = getPixel(grid, x, y);
+  return !px || px.a < 0.08;
+}
+
+const FILL_REGION_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0, -1],
+  [1, 0],
+  [-1, 0],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+const FILL_REGION_FLOOD: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0, -1],
+  [1, 0],
+  [-1, 0],
+];
+
+function collectBorderFillColors(
+  grid: PixelGrid,
+  component: ReadonlySet<string>,
+  rules?: RemoveBgColorRules
+): Rgba[] {
+  const colors: Rgba[] = [];
+  for (const key of component) {
+    const [xs, ys] = key.split(',');
+    const x = Number(xs);
+    const y = Number(ys);
+    for (const [dx, dy] of FILL_REGION_NEIGHBORS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const nKey = `${nx},${ny}`;
+      if (component.has(nKey)) continue;
+      const px = getPixel(grid, nx, ny);
+      if (!px || px.a < 0.08) continue;
+      if (rules && pixelMatchesRuleList(px, rules.blacklist)) continue;
+      colors.push(px);
     }
   }
-  return out.length === 8 ? out : [];
+  return colors;
 }
 
 /**
- * 单遍内洞填色：透明格且八邻域均不透明时，用邻域主色组均值填补（与去深色点策略一致）。
+ * 填补不贴边的封闭透明区域（黑名单去除的多格内洞）。
+ * 用区域外缘非黑名单色主色组均值填色，避免与强制去除色冲突。
  */
-function fillEnclosedHolesPass(grid: PixelGrid): PixelGrid {
+export function fillEnclosedTransparentHoles(
+  grid: PixelGrid,
+  rules?: RemoveBgColorRules
+): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0) return cloneGrid(grid);
+
+  const visited = createEmptyMask(rows, cols);
   const out = cloneGrid(grid);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      const center = getPixel(grid, x, y);
-      if (center && center.a >= 0.08) continue;
+      if (visited[y]![x] || !isTransparentCell(grid, x, y)) continue;
 
-      const neighbors = neighbor8OpaqueRgba(grid, x, y);
-      if (neighbors.length !== 8) continue;
+      const component = new Set<string>();
+      const queue: [number, number][] = [[x, y]];
+      let touchesBorder = false;
 
-      const replacement = majorityNeighborAverage(neighbors) ?? averageRgba(neighbors);
+      while (queue.length > 0) {
+        const [cx, cy] = queue.pop()!;
+        if (visited[cy]?.[cx]) continue;
+        if (!isTransparentCell(grid, cx, cy)) continue;
+
+        visited[cy]![cx] = true;
+        component.add(`${cx},${cy}`);
+
+        if (cx === 0 || cy === 0 || cx === cols - 1 || cy === rows - 1) {
+          touchesBorder = true;
+        }
+
+        for (const [dx, dy] of FILL_REGION_FLOOD) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          if (visited[ny]?.[nx]) continue;
+          if (!isTransparentCell(grid, nx, ny)) continue;
+          queue.push([nx, ny]);
+        }
+      }
+
+      if (touchesBorder || component.size === 0) continue;
+
+      const borderColors = collectBorderFillColors(grid, component, rules);
+      if (borderColors.length === 0) continue;
+
+      const replacement =
+        majorityNeighborAverage(borderColors) ?? averageRgba(borderColors);
       if (!replacement) continue;
+      if (rules && pixelMatchesRuleList(replacement, rules.blacklist)) continue;
 
-      out[y]![x] = toPixel({
+      const pixel = toPixel({
         r: clampByte(replacement.r),
         g: clampByte(replacement.g),
         b: clampByte(replacement.b),
         a: 1,
       });
+
+      for (const key of component) {
+        const [xs, ys] = key.split(',');
+        const fx = Number(xs);
+        const fy = Number(ys);
+        out[fy]![fx] = pixel;
+      }
     }
   }
-  return out;
-}
 
-/** 多遍自外向内填补封闭透明内洞（如黑名单去除的独立背景色块） */
-export function fillEnclosedTransparentHoles(grid: PixelGrid, maxPasses = 12): PixelGrid {
-  let result = cloneGrid(grid);
-  for (let pass = 0; pass < maxPasses; pass++) {
-    const next = fillEnclosedHolesPass(result);
-    if (gridsEqual(result, next)) break;
-    result = next;
-  }
-  return result;
+  return out;
 }
 
 /**
@@ -986,7 +1052,7 @@ function applyRemoveBgToLogicalGrid(
     }
   }
   if (options?.removeBgFillEnclosed) {
-    out = fillEnclosedTransparentHoles(out);
+    out = fillEnclosedTransparentHoles(out, options.removeBgRules);
   }
   return out;
 }
