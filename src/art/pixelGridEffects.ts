@@ -703,6 +703,57 @@ function removeBgGrid(
   return applyRemoveBgMask(grid, mask);
 }
 
+/** 将 60×84 展示掩码映射到 500×700 逻辑格（与 displayGridToLogicalGrid 块划分一致） */
+function displayMaskToLogicalMask(displayMask: boolean[][]): boolean[][] {
+  const mask = createEmptyMask(ART_GRID_ROWS, ART_GRID_COLS);
+  for (let y = 0; y < ART_GRID_ROWS; y++) {
+    const dy = Math.min(
+      ART_DISPLAY_ROWS - 1,
+      Math.floor((y * ART_DISPLAY_ROWS) / ART_GRID_ROWS)
+    );
+    for (let x = 0; x < ART_GRID_COLS; x++) {
+      const dx = Math.min(
+        ART_DISPLAY_COLS - 1,
+        Math.floor((x * ART_DISPLAY_COLS) / ART_GRID_COLS)
+      );
+      if (displayMask[dy]?.[dx]) mask[y]![x] = true;
+    }
+  }
+  return mask;
+}
+
+/**
+ * 在 500×700 原像素画上仅打透明洞：掩码在 60×84 色桶下采样格上计算，落盘不重写保留色。
+ */
+function applyRemoveBgToLogicalGrid(
+  grid: PixelGrid,
+  toleranceSlider: number,
+  options?: PixelImportMixOptions
+): PixelGrid {
+  const tolerance = removeBgSliderToTolerance(toleranceSlider);
+  const mode = options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE;
+  const matting = logicalGridToDisplayGridMatting(grid);
+  const displayMask = computeRemoveBgMask(matting, tolerance, mode);
+  if (!displayMask) return cloneGrid(grid);
+
+  const logicalMask = displayMaskToLogicalMask(displayMask);
+  const out = cloneGrid(grid);
+  for (let y = 0; y < logicalMask.length; y++) {
+    for (let x = 0; x < (logicalMask[y]?.length ?? 0); x++) {
+      if (logicalMask[y]![x]) out[y]![x] = null;
+    }
+  }
+  return out;
+}
+
+function hasNonRemoveBgEffects(mix: PixelImportEffectMix): boolean {
+  return MIX_EFFECT_ORDER.some((id) => id !== 'removeBg' && (mix[id] ?? 0) > 0);
+}
+
+function mixWithoutRemoveBg(mix: PixelImportEffectMix): PixelImportEffectMix {
+  return { ...mix, removeBg: 0 };
+}
+
 export function clonePixelImportMix(mix: PixelImportEffectMix): PixelImportEffectMix {
   return { ...createDefaultEffectMix(), ...mix };
 }
@@ -1101,27 +1152,46 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
 }
 
 /**
- * 在 60×84 展示网格上按混合参数处理，供预览与落盘。
- * 去背景时掩码与上色必须在同一网格上计算（块内多数色），否则会出现「像背景却保留 / 不像却清除」。
+ * 在 60×84 展示网格上预览效果。
+ * 去背景：先在 500×700 原网格打透明洞，再中心下采样预览，保留主体色块原色。
  */
 export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
   mix: PixelImportEffectMix,
   options?: PixelImportMixOptions
 ): PixelGrid {
-  const removeBgOn = (mix.removeBg ?? 0) > 0;
-  const display = removeBgOn
-    ? logicalGridToDisplayGridMatting(grid)
-    : logicalGridToDisplayGrid(grid);
-  return applyPixelImportMix(display, mix, removeBgOn ? display : null, options);
+  let logical = grid;
+  const removeBgStrength = mix.removeBg ?? 0;
+  if (removeBgStrength > 0) {
+    logical = applyRemoveBgToLogicalGrid(grid, removeBgStrength, options);
+  }
+
+  const display = logicalGridToDisplayGrid(logical);
+  if (!hasNonRemoveBgEffects(mix)) {
+    return display;
+  }
+  return applyPixelImportMix(display, mixWithoutRemoveBg(mix), null, options);
 }
 
-/** 导入落盘：展示级混合效果 → 展开为 500×700 逻辑网格 */
+/**
+ * 导入落盘：去背景仅写透明格不重采样颜色；其余效果仍在展示格处理后展开。
+ */
 export function applyPixelImportMixForEditor(
   grid: PixelGrid,
   mix: PixelImportEffectMix,
   options?: PixelImportMixOptions
 ): PixelGrid {
-  const processed = applyPixelImportMixOnDisplay(grid, mix, options);
+  let logical = grid;
+  const removeBgStrength = mix.removeBg ?? 0;
+  if (removeBgStrength > 0) {
+    logical = applyRemoveBgToLogicalGrid(grid, removeBgStrength, options);
+  }
+
+  if (!hasNonRemoveBgEffects(mix)) {
+    return logical;
+  }
+
+  const display = logicalGridToDisplayGrid(logical);
+  const processed = applyPixelImportMix(display, mixWithoutRemoveBg(mix), null, options);
   return displayGridToLogicalGrid(processed);
 }
