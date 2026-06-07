@@ -13,6 +13,7 @@ import type { Pixel, PixelGrid } from './pixelArt';
 
 export type PixelImportEffect =
   | 'standard'
+  | 'removeBg'
   | 'sharpen'
   | 'deblack'
   | 'vivid'
@@ -32,6 +33,7 @@ export interface PixelImportEffectOption {
 }
 
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
+  { id: 'removeBg', label: '去背景', description: '四角取色 + 边缘泛洪，滑条为颜色容差' },
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
@@ -43,6 +45,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
 ];
 
 const MIX_EFFECT_ORDER: Exclude<PixelImportEffect, 'standard'>[] = [
+  'removeBg',
   'deblack',
   'soft',
   'sharpen',
@@ -55,6 +58,7 @@ const MIX_EFFECT_ORDER: Exclude<PixelImportEffect, 'standard'>[] = [
 
 export function createDefaultEffectMix(): PixelImportEffectMix {
   return {
+    removeBg: 0,
     sharpen: 0,
     deblack: 0,
     vivid: 0,
@@ -279,6 +283,123 @@ function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_DEFAULT):
         b: clampByte(replacement.b),
         a: center.a * 0.25 + replacement.a * 0.75,
       });
+    }
+  }
+  return out;
+}
+
+/** 滑条 1–100 → RGB 欧氏容差（约 10–82，越大越易判定为背景） */
+export function removeBgSliderToTolerance(sliderValue: number): number {
+  if (sliderValue <= 0) return 0;
+  return Math.max(10, Math.round(10 + (sliderValue / 100) * 72));
+}
+
+function rgbaDistance(a: Rgba, b: Rgba): number {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+/** 四角 3×3 采样，取出现最多的色相近组作为背景参考色 */
+function estimateCornerBackgroundColor(grid: PixelGrid): Rgba | null {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0) return null;
+
+  const buckets = new Map<string, { color: Rgba; count: number }>();
+  const corners: [number, number][] = [
+    [0, 0],
+    [cols - 1, 0],
+    [0, rows - 1],
+    [cols - 1, rows - 1],
+  ];
+
+  for (const [cx, cy] of corners) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const px = getPixel(grid, cx + dx, cy + dy);
+        if (!px || px.a < 0.08) continue;
+        const key = colorBucketKey(px);
+        const entry = buckets.get(key);
+        if (entry) entry.count++;
+        else buckets.set(key, { color: px, count: 1 });
+      }
+    }
+  }
+
+  let best: { color: Rgba; count: number } | null = null;
+  for (const entry of buckets.values()) {
+    if (!best || entry.count > best.count) best = entry;
+  }
+  return best?.color ?? null;
+}
+
+/**
+ * 去背景：从四边泛洪，邻格颜色接近则视为背景。
+ * 支持纯色底与轻微渐变（与父格比较 + 与角点参考色比较）。
+ */
+function removeBgGrid(grid: PixelGrid, tolerance: number): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0 || tolerance <= 0) return cloneGrid(grid);
+
+  const bgEst = estimateCornerBackgroundColor(grid);
+  if (!bgEst) return cloneGrid(grid);
+  const bgRef: Rgba = bgEst;
+
+  const isBg: boolean[][] = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => false)
+  );
+  const queue: [number, number][] = [];
+  const linkTol = tolerance * 0.72;
+
+  function trySeed(x: number, y: number): void {
+    const px = getPixel(grid, x, y);
+    if (!px || px.a < 0.08 || isBg[y]![x]!) return;
+    if (rgbaDistance(px, bgRef) > tolerance) return;
+    isBg[y]![x] = true;
+    queue.push([x, y]);
+  }
+
+  for (let x = 0; x < cols; x++) {
+    trySeed(x, 0);
+    trySeed(x, rows - 1);
+  }
+  for (let y = 0; y < rows; y++) {
+    trySeed(0, y);
+    trySeed(cols - 1, y);
+  }
+
+  const dirs: [number, number][] = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ];
+
+  while (queue.length > 0) {
+    const [x, y] = queue.shift()!;
+    const cur = getPixel(grid, x, y);
+    if (!cur) continue;
+
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
+      const npx = getPixel(grid, nx, ny);
+      if (!npx || npx.a < 0.08) continue;
+      if (rgbaDistance(npx, cur) <= linkTol || rgbaDistance(npx, bgRef) <= tolerance) {
+        isBg[ny]![nx] = true;
+        queue.push([nx, ny]);
+      }
+    }
+  }
+
+  const out = cloneGrid(grid);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (isBg[y]![x]) out[y]![x] = null;
     }
   }
   return out;
@@ -513,6 +634,8 @@ function lerpGrids(base: PixelGrid, target: PixelGrid, t: number): PixelGrid {
 
 export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffect): PixelGrid {
   switch (effect) {
+    case 'removeBg':
+      return removeBgGrid(grid, removeBgSliderToTolerance(50));
     case 'sharpen':
       return sharpenGrid(grid);
     case 'deblack':
@@ -541,6 +664,10 @@ export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMi
   for (const id of MIX_EFFECT_ORDER) {
     const strength = mix[id] ?? 0;
     if (strength <= 0) continue;
+    if (id === 'removeBg') {
+      result = removeBgGrid(result, removeBgSliderToTolerance(strength));
+      continue;
+    }
     if (id === 'deblack') {
       result = deblackGrid(result, deblackSliderToLuminanceThreshold(strength));
       continue;
@@ -560,7 +687,9 @@ export function describeEffectMix(mix: PixelImportEffectMix): string {
   for (const o of PIXEL_IMPORT_EFFECTS) {
     const v = mix[o.id as keyof PixelImportEffectMix] ?? 0;
     if (v <= 0) continue;
-    if (o.id === 'deblack') {
+    if (o.id === 'removeBg') {
+      parts.push(`${o.label} 容差${removeBgSliderToTolerance(v)}`);
+    } else if (o.id === 'deblack') {
       parts.push(`${o.label} 深度${deblackSliderToLuminanceThreshold(v)}`);
     } else {
       parts.push(`${o.label} ${v}%`);
@@ -569,9 +698,35 @@ export function describeEffectMix(mix: PixelImportEffectMix): string {
   return parts.length === 0 ? '原图' : parts.join(' · ');
 }
 
+const THRESHOLD_SLIDER_EFFECTS = new Set<Exclude<PixelImportEffect, 'standard'>>([
+  'removeBg',
+  'deblack',
+]);
+
+export function isThresholdImportEffect(
+  id: Exclude<PixelImportEffect, 'standard'>
+): boolean {
+  return THRESHOLD_SLIDER_EFFECTS.has(id);
+}
+
+export function formatImportEffectSliderValue(
+  effect: Exclude<PixelImportEffect, 'standard'>,
+  sliderValue: number
+): string {
+  if (sliderValue <= 0 && isThresholdImportEffect(effect)) return '关';
+  switch (effect) {
+    case 'removeBg':
+      return `容差${removeBgSliderToTolerance(sliderValue)}`;
+    case 'deblack':
+      return `深度${deblackSliderToLuminanceThreshold(sliderValue)}`;
+    default:
+      return String(sliderValue);
+  }
+}
+
+/** @deprecated 使用 formatImportEffectSliderValue */
 export function formatDeblackSliderValue(sliderValue: number): string {
-  if (sliderValue <= 0) return '关';
-  return `深度${deblackSliderToLuminanceThreshold(sliderValue)}`;
+  return formatImportEffectSliderValue('deblack', sliderValue);
 }
 
 /** 逻辑网格 → 卡面展示网格（60×84） */

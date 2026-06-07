@@ -9,8 +9,10 @@ import {
   applyPixelImportMixOnDisplay,
   createDefaultEffectMix,
   describeEffectMix,
-  formatDeblackSliderValue,
+  formatImportEffectSliderValue,
+  isThresholdImportEffect,
   PIXEL_IMPORT_EFFECTS,
+  type PixelImportEffect,
   type PixelImportEffectMix,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
@@ -98,13 +100,14 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
-    const isDeblack = opt.id === 'deblack';
+    const effectId = opt.id as Exclude<PixelImportEffect, 'standard'>;
+    const isThreshold = isThresholdImportEffect(effectId);
     const row = document.createElement('label');
-    row.className = `img-import-effect__slider-row${isDeblack ? ' img-import-effect__slider-row--threshold' : ''}`;
+    row.className = `img-import-effect__slider-row${isThreshold ? ' img-import-effect__slider-row--threshold' : ''}`;
     row.innerHTML = `
       <span class="img-import-effect__slider-head">
         <span class="img-import-effect__option-label">${opt.label}</span>
-        <span class="img-import-effect__slider-val" data-val>${isDeblack ? '关' : '0'}</span>
+        <span class="img-import-effect__slider-val" data-val>${isThreshold ? '关' : '0'}</span>
       </span>
       <span class="img-import-effect__option-desc">${opt.description}</span>
       <input type="range" min="0" max="100" value="0" step="1" data-effect="${opt.id}" />
@@ -113,10 +116,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     const valEl = row.querySelector<HTMLElement>('[data-val]')!;
     range.addEventListener('input', () => {
       const v = Number(range.value) || 0;
-      mix[opt.id as keyof PixelImportEffectMix] = v;
-      if (valEl) {
-        valEl.textContent = isDeblack ? formatDeblackSliderValue(v) : String(v);
-      }
+      mix[effectId] = v;
+      if (valEl) valEl.textContent = formatImportEffectSliderValue(effectId, v);
       updateMixLabel();
       renderPreview();
     });
@@ -196,8 +197,13 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       range.value = '0';
       const row = range.closest('.img-import-effect__slider-row');
       const valEl = row?.querySelector<HTMLElement>('[data-val]');
-      const isDeblack = range.dataset.effect === 'deblack';
-      if (valEl) valEl.textContent = isDeblack ? '关' : '0';
+      const effectId = range.dataset.effect as Exclude<PixelImportEffect, 'standard'> | undefined;
+      if (valEl) {
+        valEl.textContent =
+          effectId && isThresholdImportEffect(effectId)
+            ? '关'
+            : '0';
+      }
     });
     updateMixLabel();
     renderPreview();
