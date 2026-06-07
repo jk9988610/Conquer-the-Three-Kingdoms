@@ -37,6 +37,7 @@ export interface ImageImportEffectModalOptions {
 type EffectOverlay = HTMLElement & {
   __effectRo?: ResizeObserver;
   __onFullscreenChange?: () => void;
+  __flashTimer?: ReturnType<typeof setInterval>;
 };
 
 interface EffectHistoryEntry {
@@ -53,6 +54,10 @@ export function closeImageImportEffectModal(): void {
   const overlay = document.querySelector<EffectOverlay>('[data-modal="image-import-effect"]');
   if (overlay) {
     overlay.__effectRo?.disconnect();
+    if (overlay.__flashTimer !== undefined) {
+      clearInterval(overlay.__flashTimer);
+      overlay.__flashTimer = undefined;
+    }
     if (overlay.__onFullscreenChange) {
       document.removeEventListener('fullscreenchange', overlay.__onFullscreenChange);
     }
@@ -86,6 +91,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         <p class="img-import-effect__subtitle">拖动右侧滑条组合全图效果，算法已针对边缘与局部细节优化</p>
       </div>
       <div class="img-import-effect__topbar-actions">
+        <button type="button" class="btn img-import-effect__topbar-btn" data-transparent-flash title="高亮闪烁已透明区域，便于检查抠图">透明闪烁</button>
         <button type="button" class="btn img-import-effect__topbar-btn" data-fullscreen>全屏</button>
         <button type="button" class="img-import-effect__close" data-close aria-label="关闭">×</button>
       </div>
@@ -119,9 +125,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const previewCanvas = modal.querySelector<HTMLCanvasElement>('[data-preview-canvas]')!;
   const effectNameEl = modal.querySelector<HTMLElement>('[data-effect-name]')!;
   const slidersEl = modal.querySelector<HTMLElement>('[data-effect-sliders]')!;
+  const transparentFlashBtn = modal.querySelector<HTMLButtonElement>(
+    '[data-transparent-flash]'
+  )!;
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
   const undoBtn = modal.querySelector<HTMLButtonElement>('[data-undo]')!;
   const redoBtn = modal.querySelector<HTMLButtonElement>('[data-redo]')!;
+
+  let transparentFlash = false;
+  let flashHighlight = false;
 
   const sliderByEffect = new Map<
     Exclude<PixelImportEffect, 'standard'>,
@@ -278,6 +290,41 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     }
   });
 
+  function updateTransparentFlashBtn(): void {
+    transparentFlashBtn.classList.toggle('is-active', transparentFlash);
+    transparentFlashBtn.textContent = transparentFlash ? '停止闪烁' : '透明闪烁';
+  }
+
+  function stopTransparentFlash(): void {
+    if (overlay.__flashTimer !== undefined) {
+      clearInterval(overlay.__flashTimer);
+      overlay.__flashTimer = undefined;
+    }
+    flashHighlight = false;
+  }
+
+  function startTransparentFlash(): void {
+    stopTransparentFlash();
+    flashHighlight = true;
+    overlay.__flashTimer = setInterval(() => {
+      flashHighlight = !flashHighlight;
+      renderPreview();
+    }, 480);
+  }
+
+  transparentFlashBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    transparentFlash = !transparentFlash;
+    if (transparentFlash) {
+      startTransparentFlash();
+    } else {
+      stopTransparentFlash();
+      renderPreview();
+    }
+    updateTransparentFlashBtn();
+  });
+
   function renderPreview(): void {
     const rect = previewWrap.getBoundingClientRect();
     const availW = Math.max(1, Math.floor(rect.width));
@@ -314,6 +361,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       ART_DISPLAY_ROWS,
       'fit'
     );
+
+    if (transparentFlash && flashHighlight) {
+      ctx.fillStyle = 'rgba(255, 48, 140, 0.72)';
+      for (let y = 0; y < display.length; y++) {
+        const row = display[y] ?? [];
+        for (let x = 0; x < row.length; x++) {
+          if (row[x] !== null) continue;
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
   }
 
   function resetMix(): void {
@@ -421,6 +479,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   overlay.__effectRo = ro;
 
   updateFullscreenBtn();
+  updateTransparentFlashBtn();
   updateMixLabel();
   updateEffectUndoRedo();
   requestAnimationFrame(() => {
