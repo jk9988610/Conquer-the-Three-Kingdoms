@@ -896,10 +896,11 @@ export function applyPixelImportMix(
     const strength = mix[id] ?? 0;
     if (strength <= 0) continue;
     if (id === 'removeBg') {
+      const mattingSource = mattingGrid ?? result;
       result = removeBgGrid(
         result,
         removeBgSliderToTolerance(strength),
-        mattingGrid ?? undefined,
+        mattingSource,
         removeBgMode
       );
       continue;
@@ -1018,16 +1019,20 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
   return out;
 }
 
-/** 在 60×84 展示网格上按混合参数处理，供预览与落盘 */
+/**
+ * 在 60×84 展示网格上按混合参数处理，供预览与落盘。
+ * 去背景时掩码与上色必须在同一网格上计算（块内多数色），否则会出现「像背景却保留 / 不像却清除」。
+ */
 export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
   mix: PixelImportEffectMix,
   options?: PixelImportMixOptions
 ): PixelGrid {
-  const display = logicalGridToDisplayGrid(grid);
-  const matting =
-    (mix.removeBg ?? 0) > 0 ? logicalGridToDisplayGridMatting(grid) : null;
-  return applyPixelImportMix(display, mix, matting, options);
+  const removeBgOn = (mix.removeBg ?? 0) > 0;
+  const display = removeBgOn
+    ? logicalGridToDisplayGridMatting(grid)
+    : logicalGridToDisplayGrid(grid);
+  return applyPixelImportMix(display, mix, removeBgOn ? display : null, options);
 }
 
 /** 导入落盘：展示级混合效果 → 展开为 500×700 逻辑网格 */
