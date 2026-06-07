@@ -25,6 +25,7 @@ import {
   drawDisplayPackedAtCellSize,
   flattenPackedToDisplayBlocks,
   getPackedPixel,
+  gridDrawLayout,
   gridIndex,
   gridToPacked,
   packedToGrid,
@@ -114,6 +115,9 @@ export function openPixelEditor(onApplied: () => void): void {
   let brushSize = 1;
   let tool: Tool = 'hand';
   let showGrid = false;
+  let transparentFlash = false;
+  let flashHighlight = false;
+  let flashTimer: ReturnType<typeof setInterval> | undefined;
   let viewPanX = 0;
   let viewPanY = 0;
   let viewZoom = 1;
@@ -357,6 +361,7 @@ export function openPixelEditor(onApplied: () => void): void {
         <select data-select class="pixel-editor__topbar-select"></select>
       </label>
       <div class="pixel-editor__topbar-actions">
+        <button type="button" class="btn pixel-editor__topbar-btn" data-transparent-flash title="高亮闪烁已透明区域，便于检查抠图">透明闪烁</button>
         <button type="button" class="btn pixel-editor__topbar-btn" data-open-debug>调试</button>
         <button type="button" class="btn pixel-editor__topbar-btn" data-fullscreen>全屏</button>
         <button type="button" class="pixel-editor__close" aria-label="关闭">×</button>
@@ -445,6 +450,9 @@ export function openPixelEditor(onApplied: () => void): void {
   const debugBackdrop = panel.querySelector<HTMLElement>('[data-debug-backdrop]')!;
   const debugDrawer = panel.querySelector<HTMLElement>('[data-debug-drawer]')!;
   const openDebugBtn = panel.querySelector<HTMLElement>('[data-open-debug]')!;
+  const transparentFlashBtn = panel.querySelector<HTMLButtonElement>(
+    '[data-transparent-flash]'
+  )!;
   const previewPanel = panel.querySelector<HTMLElement>('[data-preview-panel]')!;
   const previewSurface = panel.querySelector<HTMLElement>('[data-preview-surface]')!;
   const editPanel = panel.querySelector<HTMLElement>('[data-edit-panel]')!;
@@ -758,6 +766,28 @@ export function openPixelEditor(onApplied: () => void): void {
     return grid;
   }
 
+  function drawTransparentFlashOverlay(
+    ctx: CanvasRenderingContext2D,
+    cellPx: number,
+    originX: number,
+    originY: number
+  ): void {
+    if (!transparentFlash || !flashHighlight) return;
+    const display = displayPackedForView();
+    ctx.fillStyle = 'rgba(255, 48, 140, 0.72)';
+    for (let dy = 0; dy < ART_DISPLAY_ROWS; dy++) {
+      for (let dx = 0; dx < ART_DISPLAY_COLS; dx++) {
+        if ((display[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) !== 0) continue;
+        ctx.fillRect(
+          originX + dx * cellPx,
+          originY + dy * cellPx,
+          cellPx,
+          cellPx
+        );
+      }
+    }
+  }
+
   function refreshEditCanvas(): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
@@ -771,6 +801,7 @@ export function openPixelEditor(onApplied: () => void): void {
       gridCols,
       gridRows
     );
+    drawTransparentFlashOverlay(ctx, cellSize, 0, 0);
   }
 
   function refreshPreview(): void {
@@ -778,6 +809,15 @@ export function openPixelEditor(onApplied: () => void): void {
     if (!sq) return;
     sq.clearRect(0, 0, previewPixelW, previewPixelH);
     drawPackedPreview(sq, gridForDisplay(), previewPixelW, previewPixelH, gridCols, gridRows);
+    const layout = gridDrawLayout(
+      ART_DISPLAY_COLS,
+      ART_DISPLAY_ROWS,
+      previewPixelW,
+      previewPixelH,
+      'fit'
+    );
+    const previewCellPx = Math.max(1, Math.floor(layout.cell));
+    drawTransparentFlashOverlay(sq, previewCellPx, layout.ox, layout.oy);
   }
 
   function refreshAll(): void {
@@ -1516,6 +1556,42 @@ export function openPixelEditor(onApplied: () => void): void {
     downloadPackedPng(grid, `${currentKey}.png`);
   });
 
+  function updateTransparentFlashBtn(): void {
+    transparentFlashBtn.classList.toggle('pixel-editor__topbar-btn--active', transparentFlash);
+    transparentFlashBtn.textContent = transparentFlash ? '停止闪烁' : '透明闪烁';
+  }
+
+  function stopTransparentFlash(): void {
+    if (flashTimer !== undefined) {
+      clearInterval(flashTimer);
+      flashTimer = undefined;
+    }
+    flashHighlight = false;
+  }
+
+  function startTransparentFlash(): void {
+    stopTransparentFlash();
+    flashHighlight = true;
+    flashTimer = setInterval(() => {
+      flashHighlight = !flashHighlight;
+      refreshEditCanvas();
+      refreshPreview();
+    }, 480);
+  }
+
+  transparentFlashBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    transparentFlash = !transparentFlash;
+    if (transparentFlash) {
+      startTransparentFlash();
+    } else {
+      stopTransparentFlash();
+      refreshAll();
+    }
+    updateTransparentFlashBtn();
+  });
+
   const fullscreenBtn = panel.querySelector<HTMLElement>('[data-fullscreen]')!;
 
   const updateFullscreenBtn = (): void => {
@@ -1620,6 +1696,7 @@ export function openPixelEditor(onApplied: () => void): void {
   overlay.append(panel);
   editorOverlay = overlay;
   editorTeardown = () => {
+    stopTransparentFlash();
     persistDraft();
     ro.disconnect();
     document.removeEventListener('keydown', onEditorKey);
