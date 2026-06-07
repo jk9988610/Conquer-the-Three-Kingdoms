@@ -14,15 +14,16 @@ import {
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
 import {
+  argbEquals,
   argbToPixel,
   clonePackedGrid,
   collectPackedDiff,
   copyPackedRegion,
   createPackedGrid,
+  downsamplePackedGrid,
   downloadPackedPng,
   drawDisplayPackedAtCellSize,
   flattenPackedToDisplayBlocks,
-  floodFillPacked,
   getPackedPixel,
   gridIndex,
   gridToPacked,
@@ -927,6 +928,38 @@ export function openPixelEditor(onApplied: () => void): void {
     }
   }
 
+  /** 与画布绘制一致：逻辑格下采样为 60×84 展示格 */
+  function displayPackedForView(): PackedGrid {
+    return downsamplePackedGrid(
+      gridForDisplay(),
+      gridCols,
+      gridRows,
+      ART_DISPLAY_COLS,
+      ART_DISPLAY_ROWS
+    );
+  }
+
+  /** 按展示格（60×84）泛洪填充，与所见色块一致 */
+  function floodFillDisplayCell(dx: number, dy: number, fillArgb: number): void {
+    const display = displayPackedForView();
+    const target = getPackedPixel(display, dx, dy, ART_DISPLAY_COLS);
+    if (argbEquals(target, fillArgb)) return;
+
+    const stack: [number, number][] = [[dx, dy]];
+    const seen = new Set<number>();
+
+    while (stack.length > 0) {
+      const [cx, cy] = stack.pop()!;
+      const idx = gridIndex(cx, cy, ART_DISPLAY_COLS);
+      if (seen.has(idx)) continue;
+      if (cx < 0 || cy < 0 || cx >= ART_DISPLAY_COLS || cy >= ART_DISPLAY_ROWS) continue;
+      if (!argbEquals(display[idx] ?? 0, target)) continue;
+      seen.add(idx);
+      fillDisplayCell(cx, cy, fillArgb);
+      stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+    }
+  }
+
   function forEachDisplayLine(
     x0: number,
     y0: number,
@@ -984,14 +1017,13 @@ export function openPixelEditor(onApplied: () => void): void {
     refreshAll();
   }
 
-  function sampleColor(x: number, y: number): void {
-    const v = getPackedPixel(grid, x, y, gridCols);
+  function sampleColorAtDisplay(dx: number, dy: number): void {
+    const v = getPackedPixel(displayPackedForView(), dx, dy, ART_DISPLAY_COLS);
     const c = argbToPixel(v);
-    if (c) {
-      paintColor = c;
-      paintArgb = v;
-      picker.setFromCss(c);
-    }
+    if (!c) return;
+    paintColor = c;
+    paintArgb = v;
+    picker.setFromCss(c);
   }
 
   /** 复制/剪切框选完成：保留选区，待点击粘贴写入剪贴板 */
@@ -1162,6 +1194,14 @@ export function openPixelEditor(onApplied: () => void): void {
     if (clipboardMode) return;
 
     if (tool === 'hand') return;
+
+    if (tool === 'eyedropper') {
+      e.preventDefault();
+      const dc = displayCellFromPointer(e.clientX, e.clientY);
+      if (dc) sampleColorAtDisplay(dc.dx, dc.dy);
+      return;
+    }
+
     e.preventDefault();
     const dc = displayCellFromPointer(e.clientX, e.clientY);
     if (!dc && !cell) return;
@@ -1178,18 +1218,9 @@ export function openPixelEditor(onApplied: () => void): void {
       return;
     }
     if (tool === 'fill') {
-      if (!cell) return;
-      const { x, y } = cell;
+      if (!dc) return;
       beginUndoBatch();
-      floodFillPacked(
-        grid,
-        gridCols,
-        gridRows,
-        x,
-        y,
-        paintArgb,
-        packedCellChange
-      );
+      floodFillDisplayCell(dc.dx, dc.dy, paintArgb);
       commitUndoBatch();
       refreshAll();
       return;
@@ -1202,12 +1233,6 @@ export function openPixelEditor(onApplied: () => void): void {
       }
       lastPaintCell = null;
       paintAtDisplay(dc, 0);
-      return;
-    }
-    if (tool === 'eyedropper') {
-      if (!cell) return;
-      sampleColor(cell.x, cell.y);
-      setTool('paint');
       return;
     }
   };
