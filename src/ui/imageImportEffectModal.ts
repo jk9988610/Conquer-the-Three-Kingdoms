@@ -3,19 +3,24 @@ import {
   ART_DISPLAY_ROWS,
 } from '../art/gridConfig';
 import { gridDrawLayout } from '../art/packedGrid';
+import { loadImageFromFile } from '../art/imageToGrid';
 import {
   applyPixelImportMixForEditor,
   applyPixelImportMixOnDisplay,
   createDefaultEffectMix,
   describeEffectMix,
+  formatDeblackSliderValue,
   PIXEL_IMPORT_EFFECTS,
   type PixelImportEffectMix,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
+import { openImageImportModal } from './imageImportModal';
 import { getModalOverlayMount } from './overlayRoot';
 
 export interface ImageImportEffectModalOptions {
   grid: PixelGrid;
+  cols: number;
+  rows: number;
   onConfirm: (grid: PixelGrid) => void;
   onCancel?: () => void;
 }
@@ -42,7 +47,8 @@ export function closeImageImportEffectModal(): void {
 export function openImageImportEffectModal(options: ImageImportEffectModalOptions): void {
   closeImageImportEffectModal();
 
-  const { grid, onConfirm, onCancel } = options;
+  const { cols, rows, onConfirm, onCancel } = options;
+  let currentGrid = options.grid;
   const mix = createDefaultEffectMix();
 
   const overlay = document.createElement('div') as EffectOverlay;
@@ -74,9 +80,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       <aside class="img-import-effect__sidebar">
         <div class="img-import-effect__sliders" data-effect-sliders></div>
         <footer class="img-import-effect__actions">
+          <button type="button" class="btn" data-change-image>换图</button>
           <button type="button" class="btn" data-reset>重置</button>
           <button type="button" class="btn" data-cancel>取消</button>
           <button type="button" class="btn" data-confirm>确定</button>
+          <input type="file" accept="image/*" hidden data-change-file />
         </footer>
       </aside>
     </div>
@@ -90,12 +98,13 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
+    const isDeblack = opt.id === 'deblack';
     const row = document.createElement('label');
-    row.className = 'img-import-effect__slider-row';
+    row.className = `img-import-effect__slider-row${isDeblack ? ' img-import-effect__slider-row--threshold' : ''}`;
     row.innerHTML = `
       <span class="img-import-effect__slider-head">
         <span class="img-import-effect__option-label">${opt.label}</span>
-        <span class="img-import-effect__slider-val" data-val>0</span>
+        <span class="img-import-effect__slider-val" data-val>${isDeblack ? '关' : '0'}</span>
       </span>
       <span class="img-import-effect__option-desc">${opt.description}</span>
       <input type="range" min="0" max="100" value="0" step="1" data-effect="${opt.id}" />
@@ -105,7 +114,9 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     range.addEventListener('input', () => {
       const v = Number(range.value) || 0;
       mix[opt.id as keyof PixelImportEffectMix] = v;
-      if (valEl) valEl.textContent = String(v);
+      if (valEl) {
+        valEl.textContent = isDeblack ? formatDeblackSliderValue(v) : String(v);
+      }
       updateMixLabel();
       renderPreview();
     });
@@ -166,7 +177,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     previewCanvas.style.width = `${cssW}px`;
     previewCanvas.style.height = `${cssH}px`;
     ctx.clearRect(0, 0, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
-    const display = applyPixelImportMixOnDisplay(grid, mix);
+    const display = applyPixelImportMixOnDisplay(currentGrid, mix);
     drawGridToCanvas(
       ctx,
       display,
@@ -183,26 +194,61 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     }
     slidersEl.querySelectorAll<HTMLInputElement>('[data-effect]').forEach((range) => {
       range.value = '0';
-      const valEl = range
-        .closest('.img-import-effect__slider-row')
-        ?.querySelector<HTMLElement>('[data-val]');
-      if (valEl) valEl.textContent = '0';
+      const row = range.closest('.img-import-effect__slider-row');
+      const valEl = row?.querySelector<HTMLElement>('[data-val]');
+      const isDeblack = range.dataset.effect === 'deblack';
+      if (valEl) valEl.textContent = isDeblack ? '关' : '0';
     });
     updateMixLabel();
     renderPreview();
   }
 
   function finishConfirm(): void {
-    const processed = applyPixelImportMixForEditor(grid, mix);
+    const processed = applyPixelImportMixForEditor(currentGrid, mix);
     closeImageImportEffectModal();
     onConfirm(processed);
   }
+
+  const changeFileInput = modal.querySelector<HTMLInputElement>('[data-change-file]')!;
+
+  function startChangeImage(): void {
+    changeFileInput.click();
+  }
+
+  changeFileInput.addEventListener('change', () => {
+    const file = changeFileInput.files?.[0];
+    changeFileInput.value = '';
+    if (!file) return;
+
+    void (async () => {
+      try {
+        const img = await loadImageFromFile(file);
+        openImageImportModal({
+          image: img,
+          cols,
+          rows,
+          onConfirm: (imported) => {
+            currentGrid = imported;
+            renderPreview();
+          },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : '导入失败';
+        window.alert(msg);
+      }
+    })();
+  });
 
   function finishCancel(): void {
     onCancel?.();
     closeImageImportEffectModal();
   }
 
+  modal.querySelector('[data-change-image]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startChangeImage();
+  });
   modal.querySelector('[data-reset]')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();

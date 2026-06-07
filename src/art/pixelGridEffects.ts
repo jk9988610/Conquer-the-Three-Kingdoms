@@ -33,7 +33,7 @@ export interface PixelImportEffectOption {
 
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
-  { id: 'deblack', label: '去黑点', description: '扫雷式去除孤立深色点，融入邻域主色' },
+  { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
   { id: 'soft', label: '柔化', description: '轻微混合邻色，更平滑' },
   { id: 'contrast', label: '高对比', description: '拉开明暗层次' },
@@ -156,15 +156,21 @@ function averageRgba(colors: Rgba[]): Rgba | null {
   return { r: sr / n, g: sg / n, b: sb / n, a: sa / n };
 }
 
-/** 深色判定阈值（亮度，0–255）；略宽以覆盖压缩噪点 */
-const DARK_PIXEL_LUMINANCE_THRESHOLD = 54;
+/** 深色判定默认阈值（亮度，0–255） */
+const DARK_PIXEL_LUMINANCE_DEFAULT = 54;
+
+/** 滑条 1–100 → 亮度阈值（约 16–200，越高越易判定为深色） */
+export function deblackSliderToLuminanceThreshold(sliderValue: number): number {
+  if (sliderValue <= 0) return 0;
+  return Math.max(16, Math.round(16 + (sliderValue / 100) * 184));
+}
 
 function pixelLuminance(rgba: Rgba): number {
   return 0.299 * rgba.r + 0.587 * rgba.g + 0.114 * rgba.b;
 }
 
 /** 深色像素：亮度低于阈值且有一定不透明度 */
-function isDarkPixel(rgba: Rgba, threshold = DARK_PIXEL_LUMINANCE_THRESHOLD): boolean {
+function isDarkPixel(rgba: Rgba, threshold = DARK_PIXEL_LUMINANCE_DEFAULT): boolean {
   return rgba.a > 0.08 && pixelLuminance(rgba) <= threshold;
 }
 
@@ -177,7 +183,7 @@ function hasDarkNeighbor8(
   grid: PixelGrid,
   x: number,
   y: number,
-  threshold = DARK_PIXEL_LUMINANCE_THRESHOLD
+  threshold = DARK_PIXEL_LUMINANCE_DEFAULT
 ): boolean {
   for (const px of neighbor8Rgba(grid, x, y)) {
     if (isDarkPixel(px, threshold)) return true;
@@ -249,7 +255,7 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
  * 去黑点（单遍）：扫雷式检查八邻域。
  * 若当前为深色且周围 8 格均无深色，则用邻域主色组的平均值替换。
  */
-function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_THRESHOLD): PixelGrid {
+function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_DEFAULT): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const out = cloneGrid(grid);
@@ -278,12 +284,12 @@ function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_THRESHOLD
   return out;
 }
 
-/** 去黑点：多遍二次处理，清除连锁孤立深色噪点 */
-function deblackGrid(grid: PixelGrid): PixelGrid {
+/** 去深色点：多遍二次处理，清除连锁孤立深色噪点 */
+function deblackGrid(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_DEFAULT): PixelGrid {
   let result = cloneGrid(grid);
   const maxPasses = 4;
   for (let pass = 0; pass < maxPasses; pass++) {
-    const next = deblackPass(result);
+    const next = deblackPass(result, threshold);
     if (gridsEqual(result, next)) break;
     result = next;
   }
@@ -529,12 +535,16 @@ export function applyPixelImportEffect(grid: PixelGrid, effect: PixelImportEffec
   }
 }
 
-/** 按滑条强度叠加多种效果（0=原图，可自由组合） */
+/** 按滑条强度叠加多种效果（0=原图，可自由组合；去深色点为深度阈值） */
 export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMix): PixelGrid {
   let result = cloneGrid(display);
   for (const id of MIX_EFFECT_ORDER) {
     const strength = mix[id] ?? 0;
     if (strength <= 0) continue;
+    if (id === 'deblack') {
+      result = deblackGrid(result, deblackSliderToLuminanceThreshold(strength));
+      continue;
+    }
     const t = strength / 100;
     const next =
       id === 'brightness'
@@ -546,11 +556,22 @@ export function applyPixelImportMix(display: PixelGrid, mix: PixelImportEffectMi
 }
 
 export function describeEffectMix(mix: PixelImportEffectMix): string {
-  const active = PIXEL_IMPORT_EFFECTS.filter((o) => (mix[o.id as keyof PixelImportEffectMix] ?? 0) > 0);
-  if (active.length === 0) return '原图';
-  return active
-    .map((o) => `${o.label} ${mix[o.id as keyof PixelImportEffectMix]}%`)
-    .join(' · ');
+  const parts: string[] = [];
+  for (const o of PIXEL_IMPORT_EFFECTS) {
+    const v = mix[o.id as keyof PixelImportEffectMix] ?? 0;
+    if (v <= 0) continue;
+    if (o.id === 'deblack') {
+      parts.push(`${o.label} 深度${deblackSliderToLuminanceThreshold(v)}`);
+    } else {
+      parts.push(`${o.label} ${v}%`);
+    }
+  }
+  return parts.length === 0 ? '原图' : parts.join(' · ');
+}
+
+export function formatDeblackSliderValue(sliderValue: number): string {
+  if (sliderValue <= 0) return '关';
+  return `深度${deblackSliderToLuminanceThreshold(sliderValue)}`;
 }
 
 /** 逻辑网格 → 卡面展示网格（60×84） */
