@@ -47,6 +47,10 @@ import { getModalOverlayMount } from './overlayRoot';
 
 const MIN_CELL_PX = 1;
 const PANE_INSET_PX = 4;
+/** 绘制区内框（art-surface 单边边框），像素区在其内侧 */
+const ART_INNER_FRAME_PX = 1;
+/** 绘制区外框（edit-stage 单边边框），包裹 art-surface */
+const EDIT_STAGE_FRAME_PX = 1;
 const MAX_UNDO = 5;
 const MAX_BRUSH = 12;
 const MIN_VIEW_ZOOM = 0.15;
@@ -494,17 +498,25 @@ export function openPixelEditor(onApplied: () => void): void {
     canvas: HTMLCanvasElement,
     w: number,
     h: number,
-    dpr: number
+    dpr: number,
+    options: { fillParent?: boolean } = {}
   ): CanvasRenderingContext2D | null {
     const cssW = Math.max(1, Math.floor(w));
     const cssH = Math.max(1, Math.floor(h));
     const ratio = Math.max(1, dpr);
     canvas.width = Math.max(1, Math.floor(cssW * ratio));
     canvas.height = Math.max(1, Math.floor(cssH * ratio));
-    canvas.style.width = `${cssW}px`;
-    canvas.style.height = `${cssH}px`;
-    canvas.style.maxWidth = `${cssW}px`;
-    canvas.style.maxHeight = `${cssH}px`;
+    if (options.fillParent) {
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.maxWidth = '100%';
+      canvas.style.maxHeight = '100%';
+    } else {
+      canvas.style.width = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+      canvas.style.maxWidth = `${cssW}px`;
+      canvas.style.maxHeight = `${cssH}px`;
+    }
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -563,67 +575,80 @@ export function openPixelEditor(onApplied: () => void): void {
     };
   }
 
+  function editSurfaceOuterSize(): { w: number; h: number } {
+    const frame = ART_INNER_FRAME_PX * 2;
+    return { w: gridPixelW + frame, h: gridPixelH + frame };
+  }
+
+  function editStageOuterSize(): { w: number; h: number } {
+    const inner = editSurfaceOuterSize();
+    const frame = EDIT_STAGE_FRAME_PX * 2;
+    return { w: inner.w + frame, h: inner.h + frame };
+  }
+
+  function editFrameTotalPx(): number {
+    return 2 * (ART_INNER_FRAME_PX + EDIT_STAGE_FRAME_PX);
+  }
+
+  function setElementBoxSize(el: HTMLElement, w: number, h: number): void {
+    const ws = `${w}px`;
+    const hs = `${h}px`;
+    el.style.width = ws;
+    el.style.height = hs;
+    el.style.minWidth = ws;
+    el.style.minHeight = hs;
+    el.style.maxWidth = ws;
+    el.style.maxHeight = hs;
+  }
+
   function syncEditSurfaceSize(): void {
-    const size = `${gridPixelW}px`;
-    const sizeH = `${gridPixelH}px`;
-    editStage.style.width = size;
-    editStage.style.height = sizeH;
-    editStage.style.minWidth = size;
-    editStage.style.minHeight = sizeH;
-    editStage.style.maxWidth = size;
-    editStage.style.maxHeight = sizeH;
-    editSurface.style.width = size;
-    editSurface.style.height = sizeH;
-    editSurface.style.minWidth = size;
-    editSurface.style.minHeight = sizeH;
-    editSurface.style.maxWidth = size;
-    editSurface.style.maxHeight = sizeH;
-    panel.style.setProperty('--pe-art-w', size);
-    panel.style.setProperty('--pe-art-h', sizeH);
+    const stageOuter = editStageOuterSize();
+    const surfaceOuter = editSurfaceOuterSize();
+    setElementBoxSize(editStage, stageOuter.w, stageOuter.h);
+    setElementBoxSize(editSurface, surfaceOuter.w, surfaceOuter.h);
+    panel.style.setProperty('--pe-art-w', `${gridPixelW}px`);
+    panel.style.setProperty('--pe-art-h', `${gridPixelH}px`);
   }
 
-  function syncPreviewSurfaceSize(): void {
-    const w = `${previewPixelW}px`;
-    const h = `${previewPixelH}px`;
-    previewSurface.style.width = w;
-    previewSurface.style.height = h;
-    previewSurface.style.minWidth = w;
-    previewSurface.style.minHeight = h;
-    previewSurface.style.maxWidth = w;
-    previewSurface.style.maxHeight = h;
-  }
-
-  /** 预览区：按卡面展示分辨率（60×84）适配面板，与主页卡图一致 */
+  /** 预览区：按卡面展示分辨率（60×84）适配面板，扣除内框后分配像素区 */
   function layoutPreview(): void {
+    const frame = ART_INNER_FRAME_PX * 2;
     const avail = availSizeInPane(previewPanel);
     const aspect = gridCols / gridRows;
-    let pw = Math.min(avail.w, ART_PREVIEW_WIDTH);
+    let pw = Math.min(avail.w - frame, ART_PREVIEW_WIDTH);
     let ph = Math.round(pw / aspect);
-    if (ph > avail.h) {
-      ph = Math.min(avail.h, ART_PREVIEW_HEIGHT);
+    if (ph > avail.h - frame) {
+      ph = Math.min(avail.h - frame, ART_PREVIEW_HEIGHT);
       pw = Math.round(ph * aspect);
     }
     previewPixelW = Math.max(1, Math.floor(pw));
     previewPixelH = Math.max(1, Math.floor(ph));
-    syncPreviewSurfaceSize();
+    setElementBoxSize(previewSurface, previewPixelW + frame, previewPixelH + frame);
+    previewSurface.style.boxSizing = 'border-box';
     const dpr = window.devicePixelRatio || 1;
-    setupCanvas(previewGridArt, previewPixelW, previewPixelH, dpr);
+    setupCanvas(previewGridArt, previewPixelW, previewPixelH, dpr, { fillParent: true });
     refreshPreview();
   }
 
-  /** 绘制区：按可用空间计算格宽（完整 500×700 逻辑网格） */
+  /** 绘制区：按视口扣除内外框后计算格宽，stage 外框尺寸由 syncEditSurfaceSize 提供 */
   function layoutViewport(): void {
     if (canvasRow.clientWidth < 24 || canvasRow.clientHeight < 24) {
       requestAnimationFrame(layoutViewport);
       return;
     }
 
-    const editAvail = availSizeInPane(editPanel);
+    const frame = editFrameTotalPx();
+    const availW = Math.max(
+      ART_DISPLAY_COLS,
+      Math.floor(editViewport.clientWidth) - frame
+    );
+    const availH = Math.max(
+      ART_DISPLAY_ROWS,
+      Math.floor(editViewport.clientHeight) - frame
+    );
     cellSize = Math.max(
       MIN_CELL_PX,
-      Math.floor(
-        Math.min(editAvail.w / ART_DISPLAY_COLS, editAvail.h / ART_DISPLAY_ROWS)
-      )
+      Math.floor(Math.min(availW / ART_DISPLAY_COLS, availH / ART_DISPLAY_ROWS))
     );
     gridPixelW = ART_DISPLAY_COLS * cellSize;
     gridPixelH = ART_DISPLAY_ROWS * cellSize;
@@ -654,8 +679,8 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function layoutGrid(): void {
     const dpr = window.devicePixelRatio || 1;
-    setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr);
-    setupCanvas(gridLayerCanvas, gridPixelW, gridPixelH, dpr);
+    setupCanvas(editCanvas, gridPixelW, gridPixelH, dpr, { fillParent: true });
+    setupCanvas(gridLayerCanvas, gridPixelW, gridPixelH, dpr, { fillParent: true });
     syncEditSurfaceSize();
     refreshAll();
     updateSelectionBox();
