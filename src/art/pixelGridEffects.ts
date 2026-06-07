@@ -334,8 +334,8 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'outer', label: '除去最外层', description: '综合优化后剥离最外一圈光晕/杂色边缘' },
-  { id: 'outerSafe', label: '安全剥离', description: '更积极剥离边缘杂色，保留明确主体色' },
+  { id: 'outer', label: '除去最外层', description: '剥离最外一圈中的背景色块，保留主体色边缘' },
+  { id: 'outerSafe', label: '安全剥离', description: '仅剥离最外圈明确接近背景色的像素' },
   { id: 'outerFringe', label: '残留收束', description: '除去最外层 + 迭代清除边缘残留杂色（非双层）' },
   { id: 'outerCorner', label: '角落剥离', description: '除去最外层 + 四角区域额外清除' },
   { id: 'outerFull', label: '综合剥离', description: '智能剥离 + 残留收束 + 角落 + 孔洞填补' },
@@ -750,8 +750,6 @@ const NEIGHBOR4_DIRS: [number, number][] = [
   [0, -1],
 ];
 
-const OUTER_PEEL_DETAIL_MAX = 0.34;
-
 function countForegroundNeighbors4(mask: boolean[][], x: number, y: number): number {
   let count = 0;
   for (const [dx, dy] of NEIGHBOR4_DIRS) {
@@ -781,10 +779,79 @@ function averageInteriorNeighborColor(
   return averageRgba(colors);
 }
 
-type PeelBoundaryStyle = 'fringe' | 'safe';
+/** 已清除邻域（掩码为背景）的平均色，用于判断最外圈是否仍为背景色 */
+function averageAdjacentClearedColor(
+  mask: boolean[][],
+  grid: PixelGrid,
+  x: number,
+  y: number
+): Rgba | null {
+  const colors: Rgba[] = [];
+  for (const [dx, dy] of NEIGHBOR8_DIRS) {
+    const ny = y + dy;
+    const nx = x + dx;
+    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
+    if (!mask[ny]![nx]) continue;
+    const px = getPixel(grid, nx, ny);
+    if (px && px.a >= 0.08) colors.push(px);
+  }
+  return averageRgba(colors);
+}
+
+function collectPeelBgRefs(
+  mask: boolean[][],
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  bgRefs: Rgba[]
+): Rgba[] {
+  const refs = [...bgRefs];
+  const cleared = averageAdjacentClearedColor(mask, grid, x, y);
+  if (cleared) refs.push(cleared);
+  return refs;
+}
+
+type PeelBoundaryStyle = 'outer' | 'safe';
 
 interface PeelBoundaryOptions {
   style?: PeelBoundaryStyle;
+}
+
+/**
+ * 最外圈像素是否为背景色块：与参考背景/已清除邻色接近，且不像内侧主体。
+ */
+function isOutermostBgColoredPixel(
+  mask: boolean[][],
+  grid: PixelGrid,
+  x: number,
+  y: number,
+  bgRefs: Rgba[],
+  tolerance: number,
+  style: PeelBoundaryStyle
+): boolean {
+  const px = getPixel(grid, x, y);
+  if (!px || px.a < 0.08) return true;
+
+  const peelRefs = collectPeelBgRefs(mask, grid, x, y, bgRefs);
+  const bgDist = Math.min(...peelRefs.map((ref) => rgbaDistance(px, ref)));
+  const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
+  const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
+
+  if (interiorAvg && interiorDist < bgDist * 0.72) return false;
+
+  if (countForegroundNeighbors4(mask, x, y) <= 2) {
+    if (!interiorAvg || interiorDist < bgDist * 0.82) return false;
+  }
+
+  const bgTol = tolerance * (style === 'safe' ? 1.05 : 1.14);
+
+  if (isSimilarToBgRefs(px, peelRefs, bgTol)) return true;
+
+  if (style === 'outer' && interiorAvg && bgDist < interiorDist * 0.98) {
+    return true;
+  }
+
+  return false;
 }
 
 /** 判断是否应剥离该边缘像素（仅处理与透明区相邻的一圈） */
@@ -797,26 +864,15 @@ function shouldPeelBoundaryPixel(
   tolerance: number,
   opts: PeelBoundaryOptions
 ): boolean {
-  const px = getPixel(grid, x, y);
-  if (!px || px.a < 0.08) return true;
-
-  if (localDetailWeight(grid, x, y) >= OUTER_PEEL_DETAIL_MAX) return false;
-  if (countForegroundNeighbors4(mask, x, y) <= 2) return false;
-
-  const style = opts.style ?? 'fringe';
-  const bgDist = Math.min(...bgRefs.map((ref) => rgbaDistance(px, ref)));
-  const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
-  const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
-
-  if (interiorAvg && interiorDist < bgDist * 0.66) return false;
-
-  const bgTol = tolerance * (style === 'safe' ? 1.14 : 1.06);
-  const fringeRatio = style === 'safe' ? 0.96 : 0.9;
-
-  if (isSimilarToBgRefs(px, bgRefs, bgTol)) return true;
-  if (interiorAvg && bgDist < interiorDist * fringeRatio) return true;
-
-  return false;
+  return isOutermostBgColoredPixel(
+    mask,
+    grid,
+    x,
+    y,
+    bgRefs,
+    tolerance,
+    opts.style ?? 'outer'
+  );
 }
 
 /**
@@ -852,7 +908,7 @@ interface OutermostPeelOptions {
 }
 
 /**
- * 除去主体最外圈：与透明区相邻的边缘像素按色差/光晕判定剥离。
+ * 除去主体最外圈中的背景色块：每遍仅剥一圈，且只去除背景色像素。
  */
 function peelOutermostForegroundRing(
   mask: boolean[][],
@@ -862,12 +918,11 @@ function peelOutermostForegroundRing(
   opts: OutermostPeelOptions = {}
 ): boolean[][] {
   const fringePasses = opts.fringePasses ?? 0;
-  let out = peelOneBoundaryRing(mask, grid, bgRefs, tolerance, {
-    style: opts.style ?? 'fringe',
-  });
+  const style = opts.style ?? 'outer';
+  let out = peelOneBoundaryRing(mask, grid, bgRefs, tolerance, { style });
 
   for (let pass = 0; pass < fringePasses; pass++) {
-    const next = peelOneBoundaryRing(out, grid, bgRefs, tolerance, { style: 'safe' });
+    const next = peelOneBoundaryRing(out, grid, bgRefs, tolerance, { style });
     if (masksEqual(out, next)) break;
     out = next;
   }
@@ -905,7 +960,7 @@ function buildRefinedOuterMaskVariant(
   const primaryRef = bgRefs[0]!;
   let mask = buildRefinedDetailMask(grid, bgRefs, tolerance);
   mask = peelOutermostForegroundRing(mask, grid, bgRefs, tolerance, {
-    style: opts.peelStyle ?? 'fringe',
+    style: opts.peelStyle ?? 'outer',
     fringePasses: opts.fringePasses ?? 0,
   });
   if (opts.extraCorner) {
@@ -939,12 +994,12 @@ export function computeRemoveBgMask(
       });
     case 'outerFringe':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelStyle: 'fringe',
+        peelStyle: 'outer',
         fringePasses: 5,
       });
     case 'outerCorner':
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelStyle: 'fringe',
+        peelStyle: 'outer',
         extraCorner: true,
       });
     case 'outerFull':
@@ -957,7 +1012,7 @@ export function computeRemoveBgMask(
     case 'outer':
     default:
       return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
-        peelStyle: 'fringe',
+        peelStyle: 'outer',
       });
   }
 }
