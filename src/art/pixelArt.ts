@@ -1,8 +1,22 @@
 import type { PixelArtKey } from '../game/types';
-import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
+import {
+  anyDisplayHighlightBreath,
+  cloneDisplayHighlight,
+  createEmptyDisplayHighlight,
+  hasAnyDisplayHighlight,
+  paintDisplayHighlightOverlay,
+  type DisplayHighlightGrid,
+} from './displayHighlight';
+import {
+  ART_DISPLAY_COLS,
+  ART_DISPLAY_ROWS,
+  ART_GRID_COLS,
+  ART_GRID_ROWS,
+} from './gridConfig';
 import {
   clonePackedGrid,
   createDefaultCardArtPacked,
+  downsamplePackedGrid,
   drawPackedDisplayToCanvas,
   gridDrawLayout,
   gridToPacked,
@@ -37,6 +51,8 @@ const PIXEL_ART_KEYS_LIST = [
 ] as const satisfies readonly PixelArtKey[];
 
 const customOverrides: Partial<Record<PixelArtKey, PackedGrid>> = {};
+const customHighlightOverrides: Partial<Record<PixelArtKey, DisplayHighlightGrid>> = {};
+const customHighlightBreathSpeed: Partial<Record<PixelArtKey, number>> = {};
 const packedArtCache = new Map<PixelArtKey, PackedGrid>();
 let defaultArtPacked: PackedGrid | null = null;
 
@@ -89,6 +105,25 @@ export function getArtGrid(key: PixelArtKey): PixelGrid {
 export function setCustomArtGrid(key: PixelArtKey, grid: PixelGrid): void {
   customOverrides[key] = gridToPacked(upscaleGridToArtSize(grid.map((row) => [...row])));
   packedArtCache.delete(key);
+}
+
+export function getArtHighlight(key: PixelArtKey): DisplayHighlightGrid {
+  const custom = customHighlightOverrides[key];
+  if (custom) return custom;
+  return createEmptyDisplayHighlight();
+}
+
+export function getArtHighlightBreathSpeed(key: PixelArtKey): number {
+  return customHighlightBreathSpeed[key] ?? 50;
+}
+
+export function setCustomArtHighlight(
+  key: PixelArtKey,
+  highlight: DisplayHighlightGrid,
+  breathSpeed = 50
+): void {
+  customHighlightOverrides[key] = cloneDisplayHighlight(highlight);
+  customHighlightBreathSpeed[key] = Math.max(1, Math.min(100, Math.round(breathSpeed)));
 }
 
 export function gridToExportCode(key: string, grid: PixelGrid): string {
@@ -233,6 +268,8 @@ export function drawGridToCanvas(
 export interface DrawPixelArtOptions {
   transparent?: boolean;
   mode?: GridDrawMode;
+  highlight?: DisplayHighlightGrid;
+  highlightBreathSpeed?: number;
 }
 
 export function drawPixelArt(
@@ -253,7 +290,40 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  drawPackedDisplayToCanvas(ctx, getArtPacked(key), width, height, mode);
+  const packed = getArtPacked(key);
+  drawPackedDisplayToCanvas(ctx, packed, width, height, mode);
+
+  const highlight = options.highlight ?? getArtHighlight(key);
+  if (!hasAnyDisplayHighlight(highlight)) return;
+
+  const layout = gridDrawLayout(
+    ART_DISPLAY_COLS,
+    ART_DISPLAY_ROWS,
+    width,
+    height,
+    mode
+  );
+  const cellPx = Math.max(1, Math.floor(layout.cell));
+  const display = downsamplePackedGrid(
+    packed,
+    ART_GRID_COLS,
+    ART_GRID_ROWS,
+    ART_DISPLAY_COLS,
+    ART_DISPLAY_ROWS
+  );
+  paintDisplayHighlightOverlay(
+    ctx,
+    display,
+    highlight,
+    cellPx,
+    layout.ox,
+    layout.oy,
+    options.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key)
+  );
+}
+
+export function artHasHighlightBreath(key: PixelArtKey): boolean {
+  return anyDisplayHighlightBreath(getArtHighlight(key));
 }
 
 /** 编辑器预览：与卡面相同的 60×84 展示网格 */

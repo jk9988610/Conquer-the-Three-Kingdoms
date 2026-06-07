@@ -1,4 +1,5 @@
-import { drawPixelArt, prepareSharpCanvas } from '../art/pixelArt';
+import { artHasHighlightBreath, drawPixelArt, prepareSharpCanvas } from '../art/pixelArt';
+import { registerHighlightBreathTarget } from '../art/displayHighlight';
 import type { CardInstance, PixelArtKey } from '../game/types';
 import type { TcgScaledSize } from '../tcg/dimensions';
 
@@ -16,11 +17,19 @@ export function createPixelArtCanvas(
   height: number
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
-  const prep = prepareSharpCanvas(canvas, width, height);
-  if (prep) {
+  const redraw = (): void => {
+    const prep = prepareSharpCanvas(canvas, width, height);
+    if (!prep) return;
     drawPixelArt(prep.ctx, artKey, prep.cssWidth, prep.cssHeight, {
       transparent: true,
       mode: 'cover',
+    });
+  };
+  redraw();
+  if (artHasHighlightBreath(artKey)) {
+    registerHighlightBreathTarget({
+      hasBreath: () => artHasHighlightBreath(artKey),
+      redraw,
     });
   }
   return canvas;

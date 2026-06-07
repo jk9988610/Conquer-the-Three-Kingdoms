@@ -8,8 +8,11 @@ import {
 } from '../art/gridConfig';
 import {
   drawPackedPreview,
+  getArtHighlight,
+  getArtHighlightBreathSpeed,
   getArtPacked,
   setCustomArtGrid,
+  setCustomArtHighlight,
   type Pixel,
   PIXEL_ART_KEYS,
 } from '../art/pixelArt';
@@ -36,15 +39,14 @@ import {
 } from '../art/packedGrid';
 import {
   anyDisplayHighlightBreath,
+  cloneDisplayHighlight,
   createEmptyDisplayHighlight,
   DISPLAY_HIGHLIGHT_BREATH,
   DISPLAY_HIGHLIGHT_GLOW,
   DISPLAY_HIGHLIGHT_MARK,
   displayHighlightIndex,
-  getDisplayHighlightFlags,
-  hasDisplayHighlightBreath,
-  hasDisplayHighlightGlow,
-  hasDisplayHighlightMark,
+  paintDisplayHighlightOverlay,
+  registerHighlightBreathTarget,
   type DisplayHighlightGrid,
 } from '../art/displayHighlight';
 import {
@@ -134,7 +136,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let highlightPatchBatch: Map<number, { prev: number; next: number }> | null = null;
   let highlightStrokeUndoPushed = false;
   let breathSpeed = 50;
-  let breathRafId = 0;
+  let unregisterBreathTarget: (() => void) | null = null;
   let patchBatch: Map<number, { prev: number; next: number }> | null = null;
   let strokeUndoPushed = false;
   let paintColor: Pixel = 'rgba(255,255,255,1)';
@@ -292,7 +294,7 @@ export function openPixelEditor(onApplied: () => void): void {
     selection = null;
     selectStart = null;
     refreshAll();
-    scheduleBreathAnimation();
+    syncBreathAnimation();
     updateUndoRedoButtons();
   }
 
@@ -304,7 +306,7 @@ export function openPixelEditor(onApplied: () => void): void {
     selection = null;
     selectStart = null;
     refreshAll();
-    scheduleBreathAnimation();
+    syncBreathAnimation();
     updateUndoRedoButtons();
   }
 
@@ -394,7 +396,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function persistDraft(): void {
     flattenEditorGrid();
-    savePixelEditorDraft(currentKey, grid, highlightGrid);
+    savePixelEditorDraft(currentKey, grid, highlightGrid, breathSpeed);
   }
 
   /** 优先恢复本地草稿，否则从已应用美术加载 */
@@ -405,7 +407,8 @@ export function openPixelEditor(onApplied: () => void): void {
     grid = draft ? clonePackedGrid(draft.grid) : clonePackedGrid(getArtPacked(key));
     highlightGrid = draft
       ? new Uint8Array(draft.highlight)
-      : createEmptyDisplayHighlight();
+      : cloneDisplayHighlight(getArtHighlight(key));
+    breathSpeed = draft?.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key);
     selection = null;
     selectStart = null;
     selectionFloating = false;
@@ -420,7 +423,7 @@ export function openPixelEditor(onApplied: () => void): void {
     resetHighlightHistory();
     applyEditViewTransform();
     syncToolbarUi();
-    scheduleBreathAnimation();
+    syncBreathAnimation();
   }
 
   const overlay = document.createElement('div');
@@ -856,6 +859,15 @@ export function openPixelEditor(onApplied: () => void): void {
     );
     const previewCellPx = Math.max(1, Math.floor(layout.cell));
     drawTransparentFlashOverlay(sq, previewCellPx, layout.ox, layout.oy);
+    paintDisplayHighlightOverlay(
+      sq,
+      displayPackedForView(),
+      highlightGrid,
+      previewCellPx,
+      layout.ox,
+      layout.oy,
+      breathSpeed
+    );
   }
 
   function refreshAll(): void {
@@ -1021,11 +1033,6 @@ export function openPixelEditor(onApplied: () => void): void {
     return (displayPackedForView()[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) !== 0;
   }
 
-  function breathPulsePhase(nowMs: number): number {
-    const periodMs = 3200 - ((breathSpeed - 1) / 99) * 2700;
-    return 0.5 + 0.5 * Math.sin((nowMs / periodMs) * Math.PI * 2);
-  }
-
   function toggleHighlightFlagAtDisplay(dx: number, dy: number, flag: number): void {
     if (dx < 0 || dy < 0 || dx >= ART_DISPLAY_COLS || dy >= ART_DISPLAY_ROWS) return;
     const idx = displayHighlightIndex(dx, dy);
@@ -1081,50 +1088,19 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     lastHighlightCell = { x: dc.dx, y: dc.dy };
     redrawGridLayer();
-    scheduleBreathAnimation();
+    syncBreathAnimation();
   }
 
   function paintHighlightOverlay(ctx: CanvasRenderingContext2D): void {
-    const display = displayPackedForView();
-    const pulse = breathPulsePhase(performance.now());
-
-    for (let dy = 0; dy < ART_DISPLAY_ROWS; dy++) {
-      for (let dx = 0; dx < ART_DISPLAY_COLS; dx++) {
-        const flags = getDisplayHighlightFlags(highlightGrid, dx, dy);
-        if (!hasDisplayHighlightMark(flags)) continue;
-        if ((display[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) === 0) continue;
-
-        const x = dx * cellSize;
-        const y = dy * cellSize;
-        const w = cellSize;
-        const h = cellSize;
-        const v = display[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0;
-        const cr = (v >>> 16) & 255;
-        const cg = (v >>> 8) & 255;
-        const cb = v & 255;
-
-        let outlineAlpha = 0.88;
-        if (hasDisplayHighlightBreath(flags)) {
-          outlineAlpha = 0.28 + 0.62 * pulse;
-        }
-
-        ctx.strokeStyle = `rgba(255, 220, 64, ${outlineAlpha})`;
-        ctx.lineWidth = Math.max(1, cellSize * 0.14);
-        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-
-        if (hasDisplayHighlightGlow(flags) || hasDisplayHighlightBreath(flags)) {
-          const glowAlpha = hasDisplayHighlightBreath(flags)
-            ? 0.18 + 0.42 * pulse
-            : 0.5;
-          const pad = Math.max(1, cellSize * 0.22);
-          ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha})`;
-          ctx.lineWidth = pad;
-          ctx.strokeRect(x + pad * 0.5, y + pad * 0.5, w - pad, h - pad);
-          ctx.fillStyle = `rgba(255, 255, 255, ${glowAlpha * 0.22})`;
-          ctx.fillRect(x, y, w, h);
-        }
-      }
-    }
+    paintDisplayHighlightOverlay(
+      ctx,
+      displayPackedForView(),
+      highlightGrid,
+      cellSize,
+      0,
+      0,
+      breathSpeed
+    );
   }
 
   function redrawGridLayer(): void {
@@ -1178,29 +1154,41 @@ export function openPixelEditor(onApplied: () => void): void {
     ctx.globalAlpha = 1;
   }
 
-  function stopBreathAnimation(): void {
-    if (breathRafId) {
-      cancelAnimationFrame(breathRafId);
-      breathRafId = 0;
-    }
-  }
-
-  function scheduleBreathAnimation(): void {
+  function syncBreathAnimation(): void {
     if (!anyDisplayHighlightBreath(highlightGrid)) {
-      stopBreathAnimation();
+      unregisterBreathTarget?.();
+      unregisterBreathTarget = null;
       return;
     }
-    if (breathRafId) return;
-    const tick = (): void => {
-      if (!anyDisplayHighlightBreath(highlightGrid)) {
-        stopBreathAnimation();
+    if (unregisterBreathTarget) return;
+    unregisterBreathTarget = registerHighlightBreathTarget({
+      hasBreath: () => anyDisplayHighlightBreath(highlightGrid),
+      redraw: () => {
         redrawGridLayer();
-        return;
-      }
-      redrawGridLayer();
-      breathRafId = requestAnimationFrame(tick);
-    };
-    breathRafId = requestAnimationFrame(tick);
+        const sq = previewGridArt.getContext('2d');
+        if (!sq) return;
+        const layout = gridDrawLayout(
+          ART_DISPLAY_COLS,
+          ART_DISPLAY_ROWS,
+          previewPixelW,
+          previewPixelH,
+          'fit'
+        );
+        const previewCellPx = Math.max(1, Math.floor(layout.cell));
+        sq.clearRect(0, 0, previewPixelW, previewPixelH);
+        drawPackedPreview(sq, gridForDisplay(), previewPixelW, previewPixelH, gridCols, gridRows);
+        drawTransparentFlashOverlay(sq, previewCellPx, layout.ox, layout.oy);
+        paintDisplayHighlightOverlay(
+          sq,
+          displayPackedForView(),
+          highlightGrid,
+          previewCellPx,
+          layout.ox,
+          layout.oy,
+          breathSpeed
+        );
+      },
+    });
   }
 
   /** 按展示格（60×84）泛洪填充，与所见色块一致 */
@@ -1662,7 +1650,7 @@ export function openPixelEditor(onApplied: () => void): void {
   breathSpeedInput.addEventListener('input', () => {
     breathSpeed = clamp(Number(breathSpeedInput.value) || 50, 1, 100);
     breathSpeedLabel.textContent = String(breathSpeed);
-    if (anyDisplayHighlightBreath(highlightGrid)) redrawGridLayer();
+    if (anyDisplayHighlightBreath(highlightGrid)) refreshAll();
   });
 
   panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
@@ -1790,7 +1778,7 @@ export function openPixelEditor(onApplied: () => void): void {
                 applyEditViewTransform();
                 flattenEditorGrid();
                 refreshAll();
-                savePixelEditorDraft(currentKey, grid, highlightGrid);
+                savePixelEditorDraft(currentKey, grid, highlightGrid, breathSpeed);
                 requestAnimationFrame(() => layoutViewport());
               },
             });
@@ -1808,14 +1796,15 @@ export function openPixelEditor(onApplied: () => void): void {
     highlightGrid = createEmptyDisplayHighlight();
     resetHighlightHistory();
     selection = null;
-    scheduleBreathAnimation();
+    syncBreathAnimation();
     refreshAll();
   });
 
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
     flattenEditorGrid();
     setCustomArtGrid(currentKey, packedToGrid(grid));
-    savePixelEditorDraft(currentKey, grid, highlightGrid);
+    setCustomArtHighlight(currentKey, highlightGrid, breathSpeed);
+    savePixelEditorDraft(currentKey, grid, highlightGrid, breathSpeed);
     onApplied();
   });
 
@@ -1966,7 +1955,8 @@ export function openPixelEditor(onApplied: () => void): void {
   editorOverlay = overlay;
   editorTeardown = () => {
     stopTransparentFlash();
-    stopBreathAnimation();
+    unregisterBreathTarget?.();
+    unregisterBreathTarget = null;
     persistDraft();
     ro.disconnect();
     document.removeEventListener('keydown', onEditorKey);
