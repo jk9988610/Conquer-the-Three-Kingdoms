@@ -12,11 +12,13 @@ import {
   describeEffectMix,
   formatImportEffectSliderValue,
   isThresholdImportEffect,
+  normalizeRemoveBgMode,
   PIXEL_IMPORT_EFFECTS,
   REMOVE_BG_MODES,
   type PixelImportEffect,
   type PixelImportEffectMix,
   type RemoveBgMode,
+  type RemoveBgModeInput,
 } from '../art/pixelGridEffects';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
 import { loadImageFromFile } from '../art/imageToGrid';
@@ -43,7 +45,7 @@ type EffectOverlay = HTMLElement & {
 interface EffectHistoryEntry {
   grid: PixelGrid;
   mix: PixelImportEffectMix;
-  removeBgMode: RemoveBgMode;
+  removeBgMode: RemoveBgModeInput;
 }
 
 function clonePixelGrid(grid: PixelGrid): PixelGrid {
@@ -162,7 +164,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     for (const key of Object.keys(defaults) as (keyof PixelImportEffectMix)[]) {
       mix[key] = entry.mix[key] ?? 0;
     }
-    removeBgMode = entry.removeBgMode;
+    removeBgMode = normalizeRemoveBgMode(entry.removeBgMode);
     for (const [id, slider] of sliderByEffect) {
       slider.setValue(mix[id] ?? 0, { silent: true });
     }
