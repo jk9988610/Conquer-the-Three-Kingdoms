@@ -33,7 +33,7 @@ export interface PixelImportEffectOption {
 
 export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   { id: 'sharpen', label: '锐化', description: '强化边缘与对比' },
-  { id: 'deblack', label: '去黑点', description: '去除孤立黑色噪点' },
+  { id: 'deblack', label: '去黑点', description: '扫雷式去除孤立深色点，融入邻域主色' },
   { id: 'vivid', label: '鲜明', description: '提升饱和度与层次' },
   { id: 'soft', label: '柔化', description: '轻微混合邻色，更平滑' },
   { id: 'contrast', label: '高对比', description: '拉开明暗层次' },
@@ -156,25 +156,68 @@ function averageRgba(colors: Rgba[]): Rgba | null {
   return { r: sr / n, g: sg / n, b: sb / n, a: sa / n };
 }
 
-/** 近黑像素：RGB 均很低，专指黑点而非深灰/深色 */
-function isBlackPixel(rgba: Rgba): boolean {
-  return rgba.a > 0.08 && rgba.r <= 42 && rgba.g <= 42 && rgba.b <= 42;
+/** 深色判定阈值（亮度，0–255）；略宽以覆盖压缩噪点 */
+const DARK_PIXEL_LUMINANCE_THRESHOLD = 54;
+
+function pixelLuminance(rgba: Rgba): number {
+  return 0.299 * rgba.r + 0.587 * rgba.g + 0.114 * rgba.b;
 }
 
-function countBlackInWindow(
+/** 深色像素：亮度低于阈值且有一定不透明度 */
+function isDarkPixel(rgba: Rgba, threshold = DARK_PIXEL_LUMINANCE_THRESHOLD): boolean {
+  return rgba.a > 0.08 && pixelLuminance(rgba) <= threshold;
+}
+
+/** 八邻域（扫雷式，不含自身） */
+function neighbor8Rgba(grid: PixelGrid, x: number, y: number): Rgba[] {
+  return neighborRgba(grid, x, y, 1);
+}
+
+function hasDarkNeighbor8(
   grid: PixelGrid,
   x: number,
   y: number,
-  radius: number
-): number {
-  let count = 0;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      const px = getPixel(grid, x + dx, y + dy);
-      if (px && isBlackPixel(px)) count++;
+  threshold = DARK_PIXEL_LUMINANCE_THRESHOLD
+): boolean {
+  for (const px of neighbor8Rgba(grid, x, y)) {
+    if (isDarkPixel(px, threshold)) return true;
+  }
+  return false;
+}
+
+function colorBucketKey(rgba: Rgba): string {
+  const q = 4;
+  return `${rgba.r >> q},${rgba.g >> q},${rgba.b >> q}`;
+}
+
+/** 取八邻域中出现次数最多的色相近组，再求该组均值 */
+function majorityNeighborAverage(neighbors: Rgba[]): Rgba | null {
+  if (neighbors.length === 0) return null;
+  const buckets = new Map<string, Rgba[]>();
+  for (const px of neighbors) {
+    const key = colorBucketKey(px);
+    const group = buckets.get(key) ?? [];
+    group.push(px);
+    buckets.set(key, group);
+  }
+  let best: Rgba[] | null = null;
+  for (const group of buckets.values()) {
+    if (!best || group.length > best.length) best = group;
+  }
+  return averageRgba(best ?? neighbors);
+}
+
+function gridsEqual(a: PixelGrid, b: PixelGrid): boolean {
+  if (a.length !== b.length) return false;
+  for (let y = 0; y < a.length; y++) {
+    const rowA = a[y] ?? [];
+    const rowB = b[y] ?? [];
+    if (rowA.length !== rowB.length) return false;
+    for (let x = 0; x < rowA.length; x++) {
+      if (rowA[x] !== rowB[x]) return false;
     }
   }
-  return count;
+  return true;
 }
 
 function sharpenGrid(grid: PixelGrid): PixelGrid {
@@ -202,35 +245,49 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
-/** 去黑点：邻域内仅有一颗黑色像素时，用周围非黑色像素均值替换 */
-function deblackGrid(grid: PixelGrid): PixelGrid {
+/**
+ * 去黑点（单遍）：扫雷式检查八邻域。
+ * 若当前为深色且周围 8 格均无深色，则用邻域主色组的平均值替换。
+ */
+function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_THRESHOLD): PixelGrid {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const out = cloneGrid(grid);
-  const radius = 2;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const center = getPixel(grid, x, y);
-      if (!center || !isBlackPixel(center)) continue;
-      if (countBlackInWindow(grid, x, y, radius) !== 1) continue;
+      if (!center || !isDarkPixel(center, threshold)) continue;
+      if (hasDarkNeighbor8(grid, x, y, threshold)) continue;
 
-      const neighbors = neighborRgba(grid, x, y, radius).filter((n) => !isBlackPixel(n));
-      const avg = averageRgba(neighbors);
-      if (!avg) {
+      const neighbors = neighbor8Rgba(grid, x, y).filter((n) => !isDarkPixel(n, threshold));
+      const replacement = majorityNeighborAverage(neighbors) ?? averageRgba(neighbor8Rgba(grid, x, y));
+      if (!replacement) {
         out[y]![x] = null;
         continue;
       }
 
       out[y]![x] = toPixel({
-        r: clampByte(avg.r),
-        g: clampByte(avg.g),
-        b: clampByte(avg.b),
-        a: center.a * 0.35 + avg.a * 0.65,
+        r: clampByte(replacement.r),
+        g: clampByte(replacement.g),
+        b: clampByte(replacement.b),
+        a: center.a * 0.25 + replacement.a * 0.75,
       });
     }
   }
   return out;
+}
+
+/** 去黑点：多遍二次处理，清除连锁孤立深色噪点 */
+function deblackGrid(grid: PixelGrid): PixelGrid {
+  let result = cloneGrid(grid);
+  const maxPasses = 4;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const next = deblackPass(result);
+    if (gridsEqual(result, next)) break;
+    result = next;
+  }
+  return result;
 }
 
 function rgbToHsv(r: number, g: number, b: number): [number, number, number] {

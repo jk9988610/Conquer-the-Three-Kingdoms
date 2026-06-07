@@ -392,6 +392,7 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn pixel-editor__tool" data-tool="paint">画笔</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eraser">橡皮</button>
               <button type="button" class="btn pixel-editor__tool" data-tool="eyedropper">取色</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
               <button type="button" class="btn" data-undo disabled>撤销</button>
               <button type="button" class="btn" data-redo disabled>重做</button>
             </div>
@@ -399,9 +400,6 @@ export function openPixelEditor(onApplied: () => void): void {
               <button type="button" class="btn" data-copy>复制</button>
               <button type="button" class="btn" data-cut>剪切</button>
               <button type="button" class="btn" data-paste disabled>粘贴</button>
-            </div>
-            <div class="pixel-editor__tools-nav">
-              <button type="button" class="btn pixel-editor__tool" data-tool="fill">填充</button>
             </div>
             <label class="pixel-editor__brush-row">
               画笔粗细
