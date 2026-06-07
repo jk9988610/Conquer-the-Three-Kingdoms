@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '边缘三层色块组统计 + 连通至边缘判定背景，选择下方方案并调节容差',
+    description: '边缘三层色组 + 连通至边缘判定背景，调节容差与方案',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -319,13 +319,11 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
   return `容差${removeBgSliderToTolerance(sliderValue)}`;
 }
 
-/** 去背景算法方案（均为综合优化 + 除去最外层变体） */
-export type RemoveBgMode =
-  | 'outer'
-  | 'outerSafe'
-  | 'outerFringe'
-  | 'outerCorner'
-  | 'outerFull';
+/** 去背景方案 */
+export type RemoveBgMode = 'edge' | 'gapFill';
+
+/** 兼容历史撤销记录中的旧方案名 */
+export type RemoveBgModeInput = RemoveBgMode | 'outer' | 'outerSafe' | 'outerFringe' | 'outerCorner' | 'outerFull';
 
 export interface RemoveBgModeOption {
   id: RemoveBgMode;
@@ -335,40 +333,31 @@ export interface RemoveBgModeOption {
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
   {
-    id: 'outer',
-    label: '除去最外层',
-    description: '边缘三层色组内且可连通至边缘的像素视为背景，并剥离最外一圈',
+    id: 'edge',
+    label: '边缘连通',
+    description: '属于边缘三层色组、且可沿相似色连通至画面边缘的像素视为背景',
   },
   {
-    id: 'outerSafe',
-    label: '安全剥离',
-    description: '边缘连通背景 + 保守剥离最外圈，减少误删本体',
-  },
-  {
-    id: 'outerFringe',
-    label: '残留收束',
-    description: '除去最外层后迭代收束边缘残留杂色',
-  },
-  {
-    id: 'outerCorner',
+    id: 'gapFill',
     label: '缝隙填充',
-    description: '边缘连通背景 + 填充肢体缝隙内与边缘色板一致的小片',
-  },
-  {
-    id: 'outerFull',
-    label: '综合剥离',
-    description: '安全剥离 + 残留收束 + 强化缝隙填充',
+    description: '边缘连通基础上，填充肢体缝隙内同属边缘色组的小片',
   },
 ];
 
-export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'outer';
+export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'edge';
 
-export function getRemoveBgModeLabel(mode: RemoveBgMode): string {
-  return REMOVE_BG_MODES.find((m) => m.id === mode)?.label ?? mode;
+export function normalizeRemoveBgMode(mode: RemoveBgModeInput): RemoveBgMode {
+  if (mode === 'gapFill' || mode === 'outerCorner' || mode === 'outerFull') return 'gapFill';
+  return 'edge';
+}
+
+export function getRemoveBgModeLabel(mode: RemoveBgModeInput): string {
+  const id = normalizeRemoveBgMode(mode);
+  return REMOVE_BG_MODES.find((m) => m.id === id)?.label ?? id;
 }
 
 export interface PixelImportMixOptions {
-  removeBgMode?: RemoveBgMode;
+  removeBgMode?: RemoveBgModeInput;
 }
 
 function rgbaDistance(a: Rgba, b: Rgba): number {
@@ -376,40 +365,6 @@ function rgbaDistance(a: Rgba, b: Rgba): number {
   const dg = a.g - b.g;
   const db = a.b - b.b;
   return Math.sqrt(dr * dr + dg * dg + db * db);
-}
-
-/** 四角 3×3 采样，取出现最多的色相近组作为背景参考色 */
-function estimateCornerBackgroundColor(grid: PixelGrid): Rgba | null {
-  const rows = grid.length;
-  const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (cols === 0 || rows === 0) return null;
-
-  const buckets = new Map<string, { color: Rgba; count: number }>();
-  const corners: [number, number][] = [
-    [0, 0],
-    [cols - 1, 0],
-    [0, rows - 1],
-    [cols - 1, rows - 1],
-  ];
-
-  for (const [cx, cy] of corners) {
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const px = getPixel(grid, cx + dx, cy + dy);
-        if (!px || px.a < 0.08) continue;
-        const key = colorBucketKey(px);
-        const entry = buckets.get(key);
-        if (entry) entry.count++;
-        else buckets.set(key, { color: px, count: 1 });
-      }
-    }
-  }
-
-  let best: { color: Rgba; count: number } | null = null;
-  for (const entry of buckets.values()) {
-    if (!best || entry.count > best.count) best = entry;
-  }
-  return best?.color ?? null;
 }
 
 const NEIGHBOR8_DIRS: [number, number][] = [
@@ -423,23 +378,28 @@ const NEIGHBOR8_DIRS: [number, number][] = [
   [-1, -1],
 ];
 
+// --- 去背景：边缘三层色组 + 边缘连通泛洪（精简管线）---
+
+const EDGE_SAMPLE_LAYERS = 3;
+
+interface BgColorModel {
+  edgePalette: Rgba[];
+  interiorPalette: Rgba[];
+}
+
 function cloneMask(mask: boolean[][]): boolean[][] {
   return mask.map((row) => [...row]);
 }
 
-function countBgNeighbors8(mask: boolean[][], x: number, y: number): number {
+function countNonBgNeighbors8(mask: boolean[][], x: number, y: number): number {
   let count = 0;
   for (const [dx, dy] of NEIGHBOR8_DIRS) {
     const ny = y + dy;
     const nx = x + dx;
     if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (mask[ny]![nx]) count++;
+    if (!mask[ny]![nx]) count++;
   }
   return count;
-}
-
-function countNonBgNeighbors8(mask: boolean[][], x: number, y: number): number {
-  return NEIGHBOR8_DIRS.length - countBgNeighbors8(mask, x, y);
 }
 
 function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
@@ -452,247 +412,113 @@ function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
   return min;
 }
 
-const EDGE_SAMPLE_LAYERS = 3;
-
-interface ColorCountBucket {
-  color: Rgba;
-  count: number;
-}
-
-/** 边缘三层采样按数量统计的色块组 */
-interface EdgeColorGroup {
-  buckets: ColorCountBucket[];
-  palette: Rgba[];
-  totalSamples: number;
-}
-
-interface RemoveBgColorContext {
-  edgeGroup: EdgeColorGroup;
-  interiorPalette: Rgba[];
-  palette: Rgba[];
-}
-
-interface EdgeGroupMatchOptions {
-  /** 与主体内侧色组对比时的优势系数，越小越保守 */
-  interiorAdvantage?: number;
-  matchScale?: number;
-}
-
-/**
- * 判定像素是否属于边缘三层色块组：须接近组内代表色，且不比主体内侧色组更接近。
- */
-function isInEdgeColorGroup(
-  px: Rgba,
-  edgeGroup: EdgeColorGroup,
-  interiorPalette: Rgba[],
-  tolerance: number,
-  opts: EdgeGroupMatchOptions = {}
-): boolean {
-  const matchTol = tolerance * (opts.matchScale ?? 1);
-  const edgeDist = nearestPaletteDistance(px, edgeGroup.palette);
-  if (edgeDist > matchTol) return false;
-
-  if (interiorPalette.length === 0) return true;
-
-  const interiorDist = nearestPaletteDistance(px, interiorPalette);
-  const advantage = opts.interiorAdvantage ?? 0.88;
-
-  if (interiorDist < edgeDist * advantage) return false;
-  if (interiorDist <= matchTol * 0.92 && edgeDist >= interiorDist) return false;
-
-  return true;
-}
-
-/** 从四边向内三层采样，按色块数量统计得到边缘色组 */
-function collectEdgeThreeLayerColorGroup(
+function sampleColorBuckets(
   grid: PixelGrid,
-  layers = EDGE_SAMPLE_LAYERS,
-  maxColors = 18
-): EdgeColorGroup {
-  const rows = grid.length;
-  const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (cols === 0 || rows === 0) {
-    return { buckets: [], palette: [], totalSamples: 0 };
-  }
-
-  const bucketMap = new Map<string, ColorCountBucket>();
-
-  function addSample(x: number, y: number): void {
-    if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+  coords: Iterable<[number, number]>
+): Map<string, { color: Rgba; count: number }> {
+  const buckets = new Map<string, { color: Rgba; count: number }>();
+  for (const [x, y] of coords) {
     const px = getPixel(grid, x, y);
-    if (!px || px.a < 0.08) return;
+    if (!px || px.a < 0.08) continue;
     const key = colorBucketKey(px);
-    const entry = bucketMap.get(key);
+    const entry = buckets.get(key);
     if (entry) entry.count++;
-    else bucketMap.set(key, { color: px, count: 1 });
+    else buckets.set(key, { color: px, count: 1 });
   }
-
-  for (let layer = 0; layer < layers; layer++) {
-    for (let x = 0; x < cols; x++) {
-      addSample(x, layer);
-      addSample(x, rows - 1 - layer);
-    }
-    for (let y = 0; y < rows; y++) {
-      addSample(layer, y);
-      addSample(cols - 1 - layer, y);
-    }
-  }
-
-  const buckets = [...bucketMap.values()].sort((a, b) => b.count - a.count);
-  if (buckets.length > 0) {
-    const palette = buckets.slice(0, maxColors).map((b) => b.color);
-    const totalSamples = buckets.reduce((sum, b) => sum + b.count, 0);
-    return { buckets, palette, totalSamples };
-  }
-
-  const fallback = estimateCornerBackgroundColor(grid);
-  if (!fallback) return { buckets: [], palette: [], totalSamples: 0 };
-  return {
-    buckets: [{ color: fallback, count: 1 }],
-    palette: [fallback],
-    totalSamples: 1,
-  };
+  return buckets;
 }
 
-/** 画面中心区域按数量统计的主体内侧色组，用于与边缘色组对比 */
-function collectInteriorColorGroup(grid: PixelGrid, maxColors = 12): Rgba[] {
-  const rows = grid.length;
-  const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (cols === 0 || rows === 0) return [];
-
-  const bucketMap = new Map<string, ColorCountBucket>();
-  const cx0 = Math.floor(cols * 0.25);
-  const cx1 = Math.ceil(cols * 0.75);
-  const cy0 = Math.floor(rows * 0.25);
-  const cy1 = Math.ceil(rows * 0.75);
-
-  for (let y = cy0; y < cy1; y++) {
-    for (let x = cx0; x < cx1; x++) {
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-      const key = colorBucketKey(px);
-      const entry = bucketMap.get(key);
-      if (entry) entry.count++;
-      else bucketMap.set(key, { color: px, count: 1 });
-    }
-  }
-
-  return [...bucketMap.values()]
+function bucketsToPalette(
+  buckets: Map<string, { color: Rgba; count: number }>,
+  maxColors: number
+): Rgba[] {
+  return [...buckets.values()]
     .sort((a, b) => b.count - a.count)
     .slice(0, maxColors)
     .map((b) => b.color);
 }
 
-function buildRemoveBgColorContext(
-  grid: PixelGrid,
-  tolerance: number
-): RemoveBgColorContext | null {
-  const edgeGroup = collectEdgeThreeLayerColorGroup(grid);
-  const interiorPalette = collectInteriorColorGroup(grid);
-  let palette = filterPaletteExcludingSubject(grid, edgeGroup.palette, tolerance);
-  if (palette.length === 0) palette = edgeGroup.palette;
-  if (palette.length === 0) return null;
-
-  return {
-    edgeGroup: { ...edgeGroup, palette },
-    interiorPalette,
-    palette,
-  };
-}
-
-/** 从色板中剔除更像主体中心色的条目，避免泛洪误侵本体 */
-function filterPaletteExcludingSubject(
-  grid: PixelGrid,
-  palette: Rgba[],
-  tolerance: number
-): Rgba[] {
-  const rows = grid.length;
-  const cols = Math.max(0, ...grid.map((r) => r.length));
-  if (palette.length <= 1 || cols === 0 || rows === 0) return palette;
-
-  const matchTol = tolerance * 1.04;
-  const cx0 = Math.floor(cols * 0.28);
-  const cx1 = Math.ceil(cols * 0.72);
-  const cy0 = Math.floor(rows * 0.28);
-  const cy1 = Math.ceil(rows * 0.72);
-
-  function regionMatchCount(
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-    ref: Rgba
-  ): number {
-    let count = 0;
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        const px = getPixel(grid, x, y);
-        if (!px || px.a < 0.08) continue;
-        if (rgbaDistance(px, ref) <= matchTol) count++;
-      }
-    }
-    return count;
-  }
-
-  return palette.filter((ref) => {
-    let edgeCount = 0;
+function* edgeLayerCoords(cols: number, rows: number, layers: number): Generator<[number, number]> {
+  for (let layer = 0; layer < layers; layer++) {
     for (let x = 0; x < cols; x++) {
-      const top = getPixel(grid, x, 0);
-      const bottom = getPixel(grid, x, rows - 1);
-      if (top && top.a >= 0.08 && rgbaDistance(top, ref) <= matchTol) edgeCount++;
-      if (bottom && bottom.a >= 0.08 && rgbaDistance(bottom, ref) <= matchTol) edgeCount++;
+      yield [x, layer];
+      yield [x, rows - 1 - layer];
     }
     for (let y = 0; y < rows; y++) {
-      const left = getPixel(grid, 0, y);
-      const right = getPixel(grid, cols - 1, y);
-      if (left && left.a >= 0.08 && rgbaDistance(left, ref) <= matchTol) edgeCount++;
-      if (right && right.a >= 0.08 && rgbaDistance(right, ref) <= matchTol) edgeCount++;
+      yield [layer, y];
+      yield [cols - 1 - layer, y];
     }
-    const centerCount = regionMatchCount(cx0, cy0, cx1, cy1, ref);
-    return edgeCount >= centerCount || edgeCount >= 2;
-  });
+  }
+}
+
+function* centerRegionCoords(cols: number, rows: number): Generator<[number, number]> {
+  const x0 = Math.floor(cols * 0.28);
+  const x1 = Math.ceil(cols * 0.72);
+  const y0 = Math.floor(rows * 0.28);
+  const y1 = Math.ceil(rows * 0.72);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      yield [x, y];
+    }
+  }
+}
+
+/** 构建边缘三层色组与主体内侧色组 */
+function buildBgColorModel(grid: PixelGrid): BgColorModel | null {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0) return null;
+
+  const edgeBuckets = sampleColorBuckets(grid, edgeLayerCoords(cols, rows, EDGE_SAMPLE_LAYERS));
+  const edgePalette = bucketsToPalette(edgeBuckets, 16);
+  if (edgePalette.length === 0) return null;
+
+  const interiorBuckets = sampleColorBuckets(grid, centerRegionCoords(cols, rows));
+  const interiorPalette = bucketsToPalette(interiorBuckets, 12);
+
+  return { edgePalette, interiorPalette };
 }
 
 /**
- * 边缘连通背景：从四边三层且属于边缘色组的像素出发，沿相邻色差在容差内扩展。
- * 能到达画面边缘的像素才视为背景；局部与邻居相似但无法连通至边缘的不算背景。
+ * 像素是否属于背景色：接近边缘色组，且不比主体内侧色组更接近。
  */
-function floodBgMaskFromEdges(
+function isBackgroundColor(px: Rgba, model: BgColorModel, tolerance: number): boolean {
+  const edgeDist = nearestPaletteDistance(px, model.edgePalette);
+  if (edgeDist > tolerance) return false;
+  if (model.interiorPalette.length === 0) return true;
+
+  const interiorDist = nearestPaletteDistance(px, model.interiorPalette);
+  return edgeDist <= interiorDist;
+}
+
+function createEmptyMask(rows: number, cols: number): boolean[][] {
+  return Array.from({ length: rows }, () => Array.from({ length: cols }, () => false));
+}
+
+/**
+ * 从四边三层、属于边缘色组的像素出发，仅沿相邻色差与色组约束扩展至连通区域。
+ */
+function floodEdgeConnectedBackground(
   grid: PixelGrid,
-  ctx: RemoveBgColorContext,
+  model: BgColorModel,
   tolerance: number
 ): boolean[][] {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
-  const isBg: boolean[][] = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => false)
-  );
+  const mask = createEmptyMask(rows, cols);
   const queue: [number, number][] = [];
-  const linkTol = tolerance * 0.72;
+  const linkTol = tolerance * 0.75;
 
-  function trySeed(x: number, y: number): void {
+  function seed(x: number, y: number): void {
     const px = getPixel(grid, x, y);
-    if (!px || px.a < 0.08 || isBg[y]![x]!) return;
-    if (
-      !isInEdgeColorGroup(px, ctx.edgeGroup, ctx.interiorPalette, tolerance, {
-        matchScale: 1.04,
-      })
-    ) {
-      return;
-    }
-    isBg[y]![x] = true;
+    if (!px || px.a < 0.08 || mask[y]![x]) return;
+    if (!isBackgroundColor(px, model, tolerance)) return;
+    mask[y]![x] = true;
     queue.push([x, y]);
   }
 
-  for (let layer = 0; layer < EDGE_SAMPLE_LAYERS; layer++) {
-    for (let x = 0; x < cols; x++) {
-      trySeed(x, layer);
-      trySeed(x, rows - 1 - layer);
-    }
-    for (let y = 0; y < rows; y++) {
-      trySeed(layer, y);
-      trySeed(cols - 1 - layer, y);
-    }
+  for (const [x, y] of edgeLayerCoords(cols, rows, EDGE_SAMPLE_LAYERS)) {
+    seed(x, y);
   }
 
   while (queue.length > 0) {
@@ -703,128 +529,32 @@ function floodBgMaskFromEdges(
     for (const [dx, dy] of NEIGHBOR8_DIRS) {
       const nx = x + dx;
       const ny = y + dy;
-      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || isBg[ny]![nx]!) continue;
+      if (ny < 0 || ny >= rows || nx < 0 || nx >= cols || mask[ny]![nx]) continue;
       const npx = getPixel(grid, nx, ny);
       if (!npx || npx.a < 0.08) continue;
       if (rgbaDistance(npx, cur) > linkTol) continue;
-      if (
-        !isInEdgeColorGroup(npx, ctx.edgeGroup, ctx.interiorPalette, tolerance, {
-          matchScale: 1.08,
-        })
-      ) {
-        continue;
-      }
-      isBg[ny]![nx] = true;
+      if (!isBackgroundColor(npx, model, tolerance)) continue;
+      mask[ny]![nx] = true;
       queue.push([nx, ny]);
     }
   }
 
-  return isBg;
+  return mask;
 }
 
-/** 剔除泛洪链路漂移进本体的像素：掩码内像素须仍属于边缘三层色组 */
-function restrictMaskToEdgeGroup(
+/** 填充肢体缝隙：同属边缘色组、被主体紧密包围、且未被边缘连通覆盖 */
+function fillEnclosedBackgroundGaps(
   mask: boolean[][],
   grid: PixelGrid,
-  ctx: RemoveBgColorContext,
+  model: BgColorModel,
   tolerance: number
 ): boolean[][] {
   const rows = mask.length;
   const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (!out[y]![x]) continue;
-      const px = getPixel(grid, x, y);
-      if (
-        !px ||
-        px.a < 0.08 ||
-        !isInEdgeColorGroup(px, ctx.edgeGroup, ctx.interiorPalette, tolerance, {
-          matchScale: 1.02,
-        })
-      ) {
-        out[y]![x] = false;
-      }
-    }
-  }
-
-  return out;
-}
-
-interface ProtectSubjectOptions {
-  strength?: 'normal' | 'strong';
-  protectDetail?: boolean;
-}
-
-/** 撤销明显非背景色、且被主体紧密包围的误标记 */
-function protectSubjectInMask(
-  mask: boolean[][],
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: ProtectSubjectOptions = {}
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const out = cloneMask(mask);
-  const strong = opts.strength === 'strong';
-  const minNeighbors = strong ? 4 : 5;
-  const detailThreshold = 0.26;
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (!out[y]![x]) continue;
-      const px = getPixel(grid, x, y);
-      if (!px || px.a < 0.08) continue;
-
-      if (opts.protectDetail && localDetailWeight(grid, x, y) >= detailThreshold) {
-        out[y]![x] = false;
-        continue;
-      }
-
-      if (
-        isInEdgeColorGroup(px, ctx.edgeGroup, ctx.interiorPalette, tolerance, {
-          matchScale: strong ? 0.96 : 1,
-        })
-      ) {
-        continue;
-      }
-      if (countNonBgNeighbors8(out, x, y) < minNeighbors) continue;
-      out[y]![x] = false;
-    }
-  }
-
-  return out;
-}
-
-const SURROUND_DETAIL_MAX = 0.3;
-
-interface FillPocketOptions {
-  /** 额外迭代轮数（不含默认 4 轮） */
-  extraPasses?: number;
-  /** 包围非背景邻居下限，越大越保守 */
-  minEnclosure?: number;
-}
-
-/**
- * 填充肢体缝隙内残留背景：须严格匹配边缘色板、被主体紧密包围，且未被边缘连通泛洪覆盖。
- * 不依赖局部邻域相似延伸，避免把本体色块误判为背景。
- */
-function fillEnclosedEdgePalettePockets(
-  mask: boolean[][],
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: FillPocketOptions = {}
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const gapTol = tolerance * 0.88;
   let out = cloneMask(mask);
-  const minEnclosure = opts.minEnclosure ?? 5;
-  const maxPasses = 4 + (opts.extraPasses ?? 0);
 
-  for (let pass = 0; pass < maxPasses; pass++) {
+  for (let pass = 0; pass < 4; pass++) {
     let changed = false;
     const next = cloneMask(out);
     for (let y = 0; y < rows; y++) {
@@ -832,16 +562,8 @@ function fillEnclosedEdgePalettePockets(
         if (next[y]![x]) continue;
         const px = getPixel(grid, x, y);
         if (!px || px.a < 0.08) continue;
-        if (
-          !isInEdgeColorGroup(px, ctx.edgeGroup, ctx.interiorPalette, tolerance, {
-            matchScale: 0.82,
-            interiorAdvantage: 0.92,
-          })
-        ) {
-          continue;
-        }
-        if (localDetailWeight(grid, x, y) >= SURROUND_DETAIL_MAX) continue;
-        if (countNonBgNeighbors8(out, x, y) < minEnclosure) continue;
+        if (!isBackgroundColor(px, model, gapTol)) continue;
+        if (countNonBgNeighbors8(out, x, y) < 6) continue;
         next[y]![x] = true;
         changed = true;
       }
@@ -853,309 +575,29 @@ function fillEnclosedEdgePalettePockets(
   return out;
 }
 
-/** 边缘连通背景掩码：三层色组判定 + 泛洪 + 主体保护 */
-function buildRefinedDetailMask(
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  pocketOpts?: FillPocketOptions
-): boolean[][] {
-  let mask = floodBgMaskFromEdges(grid, ctx, tolerance);
-  mask = restrictMaskToEdgeGroup(mask, grid, ctx, tolerance);
-  mask = protectSubjectInMask(mask, grid, ctx, tolerance, {
-    protectDetail: true,
-    strength: 'strong',
-  });
-  if (pocketOpts) {
-    mask = fillEnclosedEdgePalettePockets(mask, grid, ctx, tolerance, pocketOpts);
+function buildRemoveBgMask(grid: PixelGrid, tolerance: number, fillGaps: boolean): boolean[][] | null {
+  const model = buildBgColorModel(grid);
+  if (!model) return null;
+
+  let mask = floodEdgeConnectedBackground(grid, model, tolerance);
+  if (fillGaps) {
+    mask = fillEnclosedBackgroundGaps(mask, grid, model, tolerance);
   }
   return mask;
 }
 
-const NEIGHBOR4_DIRS: [number, number][] = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
-
-function countForegroundNeighbors4(mask: boolean[][], x: number, y: number): number {
-  let count = 0;
-  for (const [dx, dy] of NEIGHBOR4_DIRS) {
-    const ny = y + dy;
-    const nx = x + dx;
-    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (!mask[ny]![nx]) count++;
-  }
-  return count;
-}
-
-function averageInteriorNeighborColor(
-  mask: boolean[][],
-  grid: PixelGrid,
-  x: number,
-  y: number
-): Rgba | null {
-  const colors: Rgba[] = [];
-  for (const [dx, dy] of NEIGHBOR8_DIRS) {
-    const ny = y + dy;
-    const nx = x + dx;
-    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (mask[ny]![nx]) continue;
-    const px = getPixel(grid, nx, ny);
-    if (px && px.a >= 0.08) colors.push(px);
-  }
-  return averageRgba(colors);
-}
-
-/** 已清除邻域（掩码为背景）的平均色，用于判断最外圈是否仍为背景色 */
-function averageAdjacentClearedColor(
-  mask: boolean[][],
-  grid: PixelGrid,
-  x: number,
-  y: number
-): Rgba | null {
-  const colors: Rgba[] = [];
-  for (const [dx, dy] of NEIGHBOR8_DIRS) {
-    const ny = y + dy;
-    const nx = x + dx;
-    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (!mask[ny]![nx]) continue;
-    const px = getPixel(grid, nx, ny);
-    if (px && px.a >= 0.08) colors.push(px);
-  }
-  return averageRgba(colors);
-}
-
-function hasSimilarClearedNeighbor(
-  mask: boolean[][],
-  grid: PixelGrid,
-  x: number,
-  y: number,
-  px: Rgba,
-  tolerance: number
-): boolean {
-  const matchTol = tolerance * 1.1;
-  for (const [dx, dy] of NEIGHBOR8_DIRS) {
-    const ny = y + dy;
-    const nx = x + dx;
-    if (ny < 0 || ny >= mask.length || nx < 0 || nx >= (mask[ny]?.length ?? 0)) continue;
-    if (!mask[ny]![nx]) continue;
-    const npx = getPixel(grid, nx, ny);
-    if (!npx || npx.a < 0.08) continue;
-    if (rgbaDistance(px, npx) <= matchTol) return true;
-  }
-  return false;
-}
-
-type PeelBoundaryStyle = 'outer' | 'safe';
-
-interface PeelBoundaryOptions {
-  style?: PeelBoundaryStyle;
-}
-
-/**
- * 辨别最外圈背景色块：须像已清除邻域/边框色板中的背景，且不像内侧主体。
- */
-function isOutermostBgColoredPixel(
-  mask: boolean[][],
-  grid: PixelGrid,
-  x: number,
-  y: number,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  style: PeelBoundaryStyle
-): boolean {
-  const px = getPixel(grid, x, y);
-  if (!px || px.a < 0.08) return true;
-
-  const matchesEdgePalette = isInEdgeColorGroup(
-    px,
-    ctx.edgeGroup,
-    ctx.interiorPalette,
-    tolerance,
-    { matchScale: style === 'safe' ? 0.98 : 1.02 }
-  );
-
-  const clearedAvg = averageAdjacentClearedColor(mask, grid, x, y);
-  const interiorAvg = averageInteriorNeighborColor(mask, grid, x, y);
-  const clearedDist = clearedAvg ? rgbaDistance(px, clearedAvg) : Number.POSITIVE_INFINITY;
-  const interiorDist = interiorAvg ? rgbaDistance(px, interiorAvg) : Number.POSITIVE_INFINITY;
-  const bgDist = clearedDist;
-
-  if (interiorAvg && interiorDist < bgDist * 0.8) return false;
-
-  if (countForegroundNeighbors4(mask, x, y) <= 2) {
-    if (!interiorAvg || interiorDist < bgDist * 0.92) return false;
-  }
-
-  const clearedTol = tolerance * (style === 'safe' ? 1.06 : 1.1);
-  const likeCleared = clearedAvg !== null && clearedDist <= clearedTol;
-  const likeClearedNeighbor = hasSimilarClearedNeighbor(mask, grid, x, y, px, tolerance);
-
-  if (!matchesEdgePalette && !likeCleared && !likeClearedNeighbor) return false;
-
-  if (interiorAvg && interiorDist < bgDist * 0.88) return false;
-
-  return true;
-}
-
-/** 判断是否应剥离该边缘像素（仅处理与透明区相邻的一圈） */
-function shouldPeelBoundaryPixel(
-  mask: boolean[][],
-  grid: PixelGrid,
-  x: number,
-  y: number,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: PeelBoundaryOptions
-): boolean {
-  return isOutermostBgColoredPixel(
-    mask,
-    grid,
-    x,
-    y,
-    ctx,
-    tolerance,
-    opts.style ?? 'outer'
-  );
-}
-
-/**
- * 单圈边缘剥离：基于输入掩码判定边界，写入新掩码，避免同遍循环中级联剥光全图。
- */
-function peelOneBoundaryRing(
-  mask: boolean[][],
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: PeelBoundaryOptions
-): boolean[][] {
-  const rows = mask.length;
-  const cols = Math.max(0, ...mask.map((r) => r.length));
-  const next = cloneMask(mask);
-
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (mask[y]![x]) continue;
-      if (countBgNeighbors8(mask, x, y) < 1) continue;
-      if (!shouldPeelBoundaryPixel(mask, grid, x, y, ctx, tolerance, opts)) continue;
-      next[y]![x] = true;
-    }
-  }
-
-  return next;
-}
-
-interface OutermostPeelOptions {
-  style?: PeelBoundaryStyle;
-  /** 首圈后迭代收束残留边缘，非固定双层 */
-  fringePasses?: number;
-}
-
-/**
- * 除去主体最外圈中的背景色块：每遍仅剥一圈，且只去除背景色像素。
- */
-function peelOutermostForegroundRing(
-  mask: boolean[][],
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: OutermostPeelOptions = {}
-): boolean[][] {
-  const fringePasses = opts.fringePasses ?? 0;
-  const style = opts.style ?? 'outer';
-  let out = peelOneBoundaryRing(mask, grid, ctx, tolerance, { style });
-
-  for (let pass = 0; pass < fringePasses; pass++) {
-    const next = peelOneBoundaryRing(out, grid, ctx, tolerance, { style });
-    if (masksEqual(out, next)) break;
-    out = next;
-  }
-
-  return out;
-}
-
-function masksEqual(a: boolean[][], b: boolean[][]): boolean {
-  if (a.length !== b.length) return false;
-  for (let y = 0; y < a.length; y++) {
-    const rowA = a[y] ?? [];
-    const rowB = b[y] ?? [];
-    if (rowA.length !== rowB.length) return false;
-    for (let x = 0; x < rowA.length; x++) {
-      if (rowA[x] !== rowB[x]) return false;
-    }
-  }
-  return true;
-}
-
-interface RefinedOuterVariantOpts {
-  peelStyle?: PeelBoundaryStyle;
-  fringePasses?: number;
-  /** 剥离后强化肢体缝隙内边缘色板填充 */
-  pocketFill?: FillPocketOptions;
-}
-
-/** 边缘连通背景 + 除去最外层，再按方案叠加剥离强度与缝隙填充 */
-function buildRefinedOuterMaskVariant(
-  grid: PixelGrid,
-  ctx: RemoveBgColorContext,
-  tolerance: number,
-  opts: RefinedOuterVariantOpts
-): boolean[][] {
-  let mask = buildRefinedDetailMask(grid, ctx, tolerance, opts.pocketFill);
-  mask = peelOutermostForegroundRing(mask, grid, ctx, tolerance, {
-    style: opts.peelStyle ?? 'outer',
-    fringePasses: opts.fringePasses ?? 0,
-  });
-  if (opts.pocketFill) {
-    mask = fillEnclosedEdgePalettePockets(mask, grid, ctx, tolerance, opts.pocketFill);
-  }
-  return mask;
-}
-
-/**
- * 去背景掩码：均为「综合优化 + 除去最外层」变体。
- */
+/** 计算去背景掩码 */
 export function computeRemoveBgMask(
   grid: PixelGrid,
   tolerance: number,
-  mode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE
+  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
 ): boolean[][] | null {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0 || tolerance <= 0) return null;
 
-  const ctx = buildRemoveBgColorContext(grid, tolerance);
-  if (!ctx) return null;
-
-  switch (mode) {
-    case 'outerSafe':
-      return buildRefinedOuterMaskVariant(grid, ctx, tolerance, {
-        peelStyle: 'safe',
-      });
-    case 'outerFringe':
-      return buildRefinedOuterMaskVariant(grid, ctx, tolerance, {
-        peelStyle: 'outer',
-        fringePasses: 5,
-      });
-    case 'outerCorner':
-      return buildRefinedOuterMaskVariant(grid, ctx, tolerance, {
-        peelStyle: 'outer',
-        pocketFill: { extraPasses: 2 },
-      });
-    case 'outerFull':
-      return buildRefinedOuterMaskVariant(grid, ctx, tolerance, {
-        peelStyle: 'safe',
-        fringePasses: 5,
-        pocketFill: { extraPasses: 4, minEnclosure: 4 },
-      });
-    case 'outer':
-    default:
-      return buildRefinedOuterMaskVariant(grid, ctx, tolerance, {
-        peelStyle: 'outer',
-      });
-  }
+  const normalized = normalizeRemoveBgMode(mode);
+  return buildRemoveBgMask(grid, tolerance, normalized === 'gapFill');
 }
 
 function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
@@ -1172,7 +614,7 @@ function removeBgGrid(
   grid: PixelGrid,
   tolerance: number,
   maskSource?: PixelGrid,
-  mode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE
+  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
 ): PixelGrid {
   const source = maskSource ?? grid;
   const mask = computeRemoveBgMask(source, tolerance, mode);
