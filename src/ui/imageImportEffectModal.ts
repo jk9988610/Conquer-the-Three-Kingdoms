@@ -7,8 +7,10 @@ import {
   applyPixelImportMixForEditor,
   applyPixelImportMixOnDisplay,
   clonePixelImportMix,
+  cloneRemoveBgColorRules,
   computeRemoveBgMask,
   createDefaultEffectMix,
+  createEmptyRemoveBgColorRules,
   DEFAULT_REMOVE_BG_MODE,
   describeEffectMix,
   formatImportEffectSliderValue,
@@ -16,11 +18,14 @@ import {
   isThresholdImportEffect,
   logicalGridToDisplayGridMatting,
   normalizeRemoveBgMode,
+  pickRemoveBgColorRuleFromGrid,
   PIXEL_IMPORT_EFFECTS,
   REMOVE_BG_MODES,
   removeBgSliderToTolerance,
   type PixelImportEffect,
   type PixelImportEffectMix,
+  type RemoveBgColorRule,
+  type RemoveBgColorRules,
   type RemoveBgMode,
   type RemoveBgModeInput,
 } from '../art/pixelGridEffects';
@@ -50,6 +55,21 @@ interface EffectHistoryEntry {
   grid: PixelGrid;
   mix: PixelImportEffectMix;
   removeBgMode: RemoveBgModeInput;
+  removeBgRules: RemoveBgColorRules;
+}
+
+type PreviewNavMode = 'browse' | 'protect' | 'remove';
+
+function upsertColorRule(list: RemoveBgColorRule[], rule: RemoveBgColorRule): RemoveBgColorRule[] {
+  return [...list.filter((r) => r.key !== rule.key), rule];
+}
+
+function removeColorRuleByKey(list: RemoveBgColorRule[], key: string): RemoveBgColorRule[] {
+  return list.filter((r) => r.key !== key);
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
 }
 
 function clonePixelGrid(grid: PixelGrid): PixelGrid {
@@ -81,6 +101,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   let currentGrid = options.grid;
   const mix = createDefaultEffectMix();
   let removeBgMode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE;
+  let removeBgRules: RemoveBgColorRules = createEmptyRemoveBgColorRules();
   const undoStack: EffectHistoryEntry[] = [];
   const redoStack: EffectHistoryEntry[] = [];
 
@@ -106,9 +127,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     <div class="img-import-effect__body">
       <section class="img-import-effect__preview-col">
         <div class="img-import-effect__preview-label">预览 · <span data-effect-name>原图</span></div>
+        <div class="img-import-effect__preview-tools">
+          <button type="button" class="img-import-effect__preview-tool is-active" data-preview-mode="browse" title="单指拖动、双指缩放">拖动</button>
+          <button type="button" class="img-import-effect__preview-tool" data-preview-mode="protect" title="点选预览色块加入保护（白名单），大容差也不去除">点选保护</button>
+          <button type="button" class="img-import-effect__preview-tool" data-preview-mode="remove" title="点选预览色块强制去除（黑名单）">点选去除</button>
+          <button type="button" class="img-import-effect__preview-tool" data-preview-reset title="复位缩放与位置">复位</button>
+        </div>
         <div class="img-import-effect__preview-wrap" data-preview-wrap>
-          <div class="img-import-effect__art-surface" data-preview-surface>
-            <canvas data-preview-canvas></canvas>
+          <div class="img-import-effect__preview-viewport" data-preview-viewport>
+            <div class="img-import-effect__art-surface" data-preview-surface>
+              <canvas data-preview-canvas></canvas>
+            </div>
           </div>
         </div>
       </section>
@@ -128,8 +157,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   `;
 
   const previewWrap = modal.querySelector<HTMLElement>('[data-preview-wrap]')!;
+  const previewViewport = modal.querySelector<HTMLElement>('[data-preview-viewport]')!;
   const previewSurface = modal.querySelector<HTMLElement>('[data-preview-surface]')!;
   const previewCanvas = modal.querySelector<HTMLCanvasElement>('[data-preview-canvas]')!;
+  const previewModeButtons = modal.querySelectorAll<HTMLButtonElement>('[data-preview-mode]');
+  const previewResetBtn = modal.querySelector<HTMLButtonElement>('[data-preview-reset]')!;
   const effectNameEl = modal.querySelector<HTMLElement>('[data-effect-name]')!;
   const slidersEl = modal.querySelector<HTMLElement>('[data-effect-sliders]')!;
   const transparentFlashBtn = modal.querySelector<HTMLButtonElement>(
@@ -144,6 +176,20 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   let flashHighlight = false;
   let maskOverlay = false;
   let edgePaletteEl: HTMLElement | null = null;
+  let whitelistEl: HTMLElement | null = null;
+  let blacklistEl: HTMLElement | null = null;
+
+  let previewNavMode: PreviewNavMode = 'browse';
+  let previewPanX = 0;
+  let previewPanY = 0;
+  let previewUserScale = 1;
+  let previewCellPx = 1;
+
+  const previewPointers = new Map<number, { x: number; y: number }>();
+  let previewPinchDist = 0;
+  let previewPinchMid: { x: number; y: number } | null = null;
+  let pickPointerId: number | null = null;
+  let pickStart: { x: number; y: number } | null = null;
 
   const sliderByEffect = new Map<
     Exclude<PixelImportEffect, 'standard'>,
@@ -155,11 +201,24 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
+  function mixOptions() {
+    return { removeBgMode, removeBgRules };
+  }
+
+  function isRemoveBgActive(): boolean {
+    return (
+      (mix.removeBg ?? 0) > 0 ||
+      removeBgRules.blacklist.length > 0 ||
+      removeBgRules.whitelist.length > 0
+    );
+  }
+
   function pushEffectUndo(): void {
     undoStack.push({
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
       removeBgMode,
+      removeBgRules: cloneRemoveBgColorRules(removeBgRules),
     });
     if (undoStack.length > MAX_EFFECT_UNDO) undoStack.shift();
     redoStack.length = 0;
@@ -173,10 +232,12 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       mix[key] = entry.mix[key] ?? 0;
     }
     removeBgMode = normalizeRemoveBgMode(entry.removeBgMode);
+    removeBgRules = cloneRemoveBgColorRules(entry.removeBgRules);
     for (const [id, slider] of sliderByEffect) {
       slider.setValue(mix[id] ?? 0, { silent: true });
     }
     updateRemoveBgModeButtons();
+    updateColorRulesUI();
     updateMixLabel();
     renderPreview();
   }
@@ -187,6 +248,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
       removeBgMode,
+      removeBgRules: cloneRemoveBgColorRules(removeBgRules),
     });
     const entry = undoStack.pop()!;
     restoreEffectHistory(entry);
@@ -199,6 +261,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       grid: clonePixelGrid(currentGrid),
       mix: clonePixelImportMix(mix),
       removeBgMode,
+      removeBgRules: cloneRemoveBgColorRules(removeBgRules),
     });
     const entry = redoStack.pop()!;
     restoreEffectHistory(entry);
@@ -276,6 +339,29 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       edgePaletteEl.className = 'img-import-effect__remove-bg-palette';
       edgePaletteEl.hidden = true;
       section.append(edgePaletteEl);
+
+      const pickHint = document.createElement('div');
+      pickHint.className = 'img-import-effect__remove-bg-modes-label';
+      pickHint.textContent = '点选保护 / 点选去除：在预览上点击色块；大容差误伤主体时用保护色';
+      section.append(pickHint);
+
+      const whitelistLabel = document.createElement('div');
+      whitelistLabel.className = 'img-import-effect__remove-bg-modes-label';
+      whitelistLabel.textContent = '保护色（白名单）';
+      section.append(whitelistLabel);
+
+      whitelistEl = document.createElement('div');
+      whitelistEl.className = 'img-import-effect__remove-bg-rules img-import-effect__remove-bg-rules--whitelist';
+      section.append(whitelistEl);
+
+      const blacklistLabel = document.createElement('div');
+      blacklistLabel.className = 'img-import-effect__remove-bg-modes-label';
+      blacklistLabel.textContent = '强制去除（黑名单）';
+      section.append(blacklistLabel);
+
+      blacklistEl = document.createElement('div');
+      blacklistEl.className = 'img-import-effect__remove-bg-rules img-import-effect__remove-bg-rules--blacklist';
+      section.append(blacklistEl);
 
       slidersEl.append(section);
     } else {
@@ -359,6 +445,80 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     renderPreview();
   });
 
+  function ruleListState(key: string): 'whitelist' | 'blacklist' | null {
+    if (removeBgRules.whitelist.some((r) => r.key === key)) return 'whitelist';
+    if (removeBgRules.blacklist.some((r) => r.key === key)) return 'blacklist';
+    return null;
+  }
+
+  function renderRuleSwatch(
+    rule: RemoveBgColorRule,
+    list: 'whitelist' | 'blacklist',
+    container: HTMLElement
+  ): void {
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = `img-import-effect__remove-bg-swatch img-import-effect__remove-bg-swatch--${list}`;
+    swatch.style.backgroundColor = `rgb(${rule.r},${rule.g},${rule.b})`;
+    swatch.title = `rgb(${rule.r},${rule.g},${rule.b}) · 点击移除`;
+    swatch.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      pushEffectUndo();
+      if (list === 'whitelist') {
+        removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, rule.key);
+      } else {
+        removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, rule.key);
+      }
+      updateColorRulesUI();
+      renderPreview();
+    });
+    container.append(swatch);
+  }
+
+  function updateColorRulesUI(): void {
+    if (whitelistEl) {
+      whitelistEl.replaceChildren();
+      if (removeBgRules.whitelist.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'img-import-effect__remove-bg-rules-empty';
+        empty.textContent = '无';
+        whitelistEl.append(empty);
+      } else {
+        for (const rule of removeBgRules.whitelist) {
+          renderRuleSwatch(rule, 'whitelist', whitelistEl);
+        }
+      }
+    }
+    if (blacklistEl) {
+      blacklistEl.replaceChildren();
+      if (removeBgRules.blacklist.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'img-import-effect__remove-bg-rules-empty';
+        empty.textContent = '无';
+        blacklistEl.append(empty);
+      } else {
+        for (const rule of removeBgRules.blacklist) {
+          renderRuleSwatch(rule, 'blacklist', blacklistEl);
+        }
+      }
+    }
+    updateEdgePaletteSwatches();
+  }
+
+  function addColorRule(list: 'whitelist' | 'blacklist', rule: RemoveBgColorRule): void {
+    pushEffectUndo();
+    if (list === 'whitelist') {
+      removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, rule.key);
+      removeBgRules.whitelist = upsertColorRule(removeBgRules.whitelist, rule);
+    } else {
+      removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, rule.key);
+      removeBgRules.blacklist = upsertColorRule(removeBgRules.blacklist, rule);
+    }
+    updateColorRulesUI();
+    renderPreview();
+  }
+
   function updateEdgePaletteSwatches(): void {
     if (!edgePaletteEl) return;
     const strength = mix.removeBg ?? 0;
@@ -372,13 +532,193 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     edgePaletteEl.hidden = colors.length === 0;
     edgePaletteEl.replaceChildren();
     for (const c of colors) {
-      const swatch = document.createElement('span');
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      const state = ruleListState(c.key);
       swatch.className = 'img-import-effect__remove-bg-swatch';
+      if (state === 'whitelist') swatch.classList.add('is-whitelist');
+      if (state === 'blacklist') swatch.classList.add('is-blacklist');
       swatch.style.backgroundColor = `rgb(${c.r},${c.g},${c.b})`;
-      swatch.title = `rgb(${c.r},${c.g},${c.b}) · 外圈 ${c.count} 格`;
+      swatch.title = `rgb(${c.r},${c.g},${c.b}) · 外圈 ${c.count} 格 · 点击切换保护/去除`;
+      swatch.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rule: RemoveBgColorRule = { key: c.key, r: c.r, g: c.g, b: c.b };
+        if (state === 'whitelist') {
+          pushEffectUndo();
+          removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, c.key);
+          updateColorRulesUI();
+          renderPreview();
+        } else if (state === 'blacklist') {
+          pushEffectUndo();
+          removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, c.key);
+          updateColorRulesUI();
+          renderPreview();
+        } else {
+          addColorRule('whitelist', rule);
+        }
+      });
+      swatch.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const rule: RemoveBgColorRule = { key: c.key, r: c.r, g: c.g, b: c.b };
+        addColorRule('blacklist', rule);
+      });
       edgePaletteEl.append(swatch);
     }
   }
+
+  function applyPreviewTransform(): void {
+    previewSurface.style.transform = `translate(${previewPanX}px, ${previewPanY}px) scale(${previewUserScale})`;
+  }
+
+  function resetPreviewNav(): void {
+    previewPanX = 0;
+    previewPanY = 0;
+    previewUserScale = 1;
+    applyPreviewTransform();
+  }
+
+  function updatePreviewNavModeButtons(): void {
+    previewModeButtons.forEach((btn) => {
+      const mode = btn.dataset.previewMode as PreviewNavMode | undefined;
+      btn.classList.toggle('is-active', mode === previewNavMode);
+    });
+    previewViewport.classList.toggle('is-pick-protect', previewNavMode === 'protect');
+    previewViewport.classList.toggle('is-pick-remove', previewNavMode === 'remove');
+  }
+
+  function pickDisplayCell(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = previewSurface.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+    const gx = Math.floor(localX / previewCellPx);
+    const gy = Math.floor(localY / previewCellPx);
+    if (gx < 0 || gy < 0 || gx >= ART_DISPLAY_COLS || gy >= ART_DISPLAY_ROWS) return null;
+    return { x: gx, y: gy };
+  }
+
+  function tryPickColorAt(clientX: number, clientY: number): void {
+    if (previewNavMode === 'browse' || !isRemoveBgActive()) return;
+    const cell = pickDisplayCell(clientX, clientY);
+    if (!cell) return;
+    const matting = logicalGridToDisplayGridMatting(currentGrid);
+    const rule = pickRemoveBgColorRuleFromGrid(matting, cell.x, cell.y);
+    if (!rule) return;
+    addColorRule(previewNavMode === 'protect' ? 'whitelist' : 'blacklist', rule);
+  }
+
+  previewModeButtons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mode = btn.dataset.previewMode as PreviewNavMode | undefined;
+      if (!mode || mode === previewNavMode) return;
+      previewNavMode = mode;
+      updatePreviewNavModeButtons();
+    });
+  });
+
+  previewResetBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resetPreviewNav();
+  });
+
+  previewViewport.addEventListener('pointerdown', (e) => {
+    if (previewNavMode !== 'browse') {
+      pickPointerId = e.pointerId;
+      pickStart = { x: e.clientX, y: e.clientY };
+      previewViewport.setPointerCapture(e.pointerId);
+      return;
+    }
+    e.preventDefault();
+    previewViewport.setPointerCapture(e.pointerId);
+    previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (previewPointers.size === 2) {
+      const pts = [...previewPointers.values()];
+      previewPinchDist = Math.hypot(pts[1]!.x - pts[0]!.x, pts[1]!.y - pts[0]!.y);
+      previewPinchMid = {
+        x: (pts[0]!.x + pts[1]!.x) / 2,
+        y: (pts[0]!.y + pts[1]!.y) / 2,
+      };
+    } else {
+      previewPinchDist = 0;
+      previewPinchMid = null;
+    }
+  });
+
+  previewViewport.addEventListener('pointermove', (e) => {
+    if (previewNavMode !== 'browse') return;
+    if (!previewPointers.has(e.pointerId)) return;
+    e.preventDefault();
+    const prev = previewPointers.get(e.pointerId)!;
+    previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (previewPointers.size === 1) {
+      previewPanX += e.clientX - prev.x;
+      previewPanY += e.clientY - prev.y;
+      applyPreviewTransform();
+      return;
+    }
+
+    if (previewPointers.size === 2) {
+      const pts = [...previewPointers.values()];
+      const dist = Math.hypot(pts[1]!.x - pts[0]!.x, pts[1]!.y - pts[0]!.y);
+      const midX = (pts[0]!.x + pts[1]!.x) / 2;
+      const midY = (pts[0]!.y + pts[1]!.y) / 2;
+      const vRect = previewViewport.getBoundingClientRect();
+      const anchorX = midX - vRect.left - vRect.width / 2;
+      const anchorY = midY - vRect.top - vRect.height / 2;
+
+      if (previewPinchDist > 0) {
+        const factor = dist / previewPinchDist;
+        const nextScale = clamp(previewUserScale * factor, 0.5, 12);
+        const ratio = nextScale / previewUserScale;
+        previewPanX = anchorX - (anchorX - previewPanX) * ratio;
+        previewPanY = anchorY - (anchorY - previewPanY) * ratio;
+        previewUserScale = nextScale;
+      }
+      if (previewPinchMid) {
+        previewPanX += midX - previewPinchMid.x;
+        previewPanY += midY - previewPinchMid.y;
+      }
+      previewPinchDist = dist;
+      previewPinchMid = { x: midX, y: midY };
+      applyPreviewTransform();
+    }
+  });
+
+  const onPreviewPointerEnd = (e: PointerEvent) => {
+    if (previewNavMode !== 'browse' && pickPointerId === e.pointerId && pickStart) {
+      const dx = e.clientX - pickStart.x;
+      const dy = e.clientY - pickStart.y;
+      if (Math.hypot(dx, dy) < 10) {
+        tryPickColorAt(e.clientX, e.clientY);
+      }
+      pickPointerId = null;
+      pickStart = null;
+      try {
+        previewViewport.releasePointerCapture(e.pointerId);
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    previewPointers.delete(e.pointerId);
+    if (previewPointers.size < 2) {
+      previewPinchDist = 0;
+      previewPinchMid = null;
+    }
+    try {
+      previewViewport.releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+
+  previewViewport.addEventListener('pointerup', onPreviewPointerEnd);
+  previewViewport.addEventListener('pointercancel', onPreviewPointerEnd);
 
   function renderPreview(): void {
     const rect = previewWrap.getBoundingClientRect();
@@ -395,8 +735,10 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     const cssW = ART_DISPLAY_COLS * cellPx;
     const cssH = ART_DISPLAY_ROWS * cellPx;
 
+    previewCellPx = cellPx;
     previewSurface.style.width = `${cssW}px`;
     previewSurface.style.height = `${cssH}px`;
+    applyPreviewTransform();
 
     const prepared = prepareSharpCanvas(
       previewCanvas,
@@ -408,7 +750,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     previewCanvas.style.width = `${cssW}px`;
     previewCanvas.style.height = `${cssH}px`;
     ctx.clearRect(0, 0, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
-    const display = applyPixelImportMixOnDisplay(currentGrid, mix, { removeBgMode });
+    const display = applyPixelImportMixOnDisplay(currentGrid, mix, mixOptions());
     drawGridToCanvas(
       ctx,
       display,
@@ -428,10 +770,11 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       }
     }
 
-    if (maskOverlay && (mix.removeBg ?? 0) > 0) {
+    if (maskOverlay && isRemoveBgActive()) {
       const matting = logicalGridToDisplayGridMatting(currentGrid);
-      const tolerance = removeBgSliderToTolerance(mix.removeBg ?? 0);
-      const mask = computeRemoveBgMask(matting, tolerance, removeBgMode);
+      const slider = mix.removeBg ?? 0;
+      const tolerance = slider > 0 ? removeBgSliderToTolerance(slider) : 0;
+      const mask = computeRemoveBgMask(matting, tolerance, removeBgMode, removeBgRules);
       if (mask) {
         ctx.fillStyle = 'rgba(255, 64, 48, 0.55)';
         for (let y = 0; y < mask.length; y++) {
@@ -454,14 +797,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       mix[key] = defaults[key];
     }
     removeBgMode = DEFAULT_REMOVE_BG_MODE;
+    removeBgRules = createEmptyRemoveBgColorRules();
     sliderByEffect.forEach((handle) => handle.setValue(0, { silent: true }));
     updateRemoveBgModeButtons();
+    updateColorRulesUI();
+    resetPreviewNav();
     updateMixLabel();
     renderPreview();
   }
 
   function finishConfirm(): void {
-    const processed = applyPixelImportMixForEditor(currentGrid, mix, { removeBgMode });
+    const processed = applyPixelImportMixForEditor(currentGrid, mix, mixOptions());
     closeImageImportEffectModal();
     onConfirm(processed);
   }
@@ -553,6 +899,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
   updateFullscreenBtn();
   updateTransparentFlashBtn();
+  updatePreviewNavModeButtons();
+  updateColorRulesUI();
   updateMixLabel();
   updateEffectUndoRedo();
   requestAnimationFrame(() => {
