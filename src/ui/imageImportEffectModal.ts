@@ -57,6 +57,7 @@ interface EffectHistoryEntry {
   mix: PixelImportEffectMix;
   removeBgMode: RemoveBgModeInput;
   removeBgRules: RemoveBgColorRules;
+  removeBgFillEnclosed: boolean;
 }
 
 type PreviewNavMode = 'browse' | 'protect' | 'remove';
@@ -103,6 +104,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const mix = createDefaultEffectMix();
   let removeBgMode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE;
   let removeBgRules: RemoveBgColorRules = createEmptyRemoveBgColorRules();
+  let removeBgFillEnclosed = false;
   const undoStack: EffectHistoryEntry[] = [];
   const redoStack: EffectHistoryEntry[] = [];
 
@@ -209,7 +211,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   function mixOptions() {
-    return { removeBgMode, removeBgRules };
+    return { removeBgMode, removeBgRules, removeBgFillEnclosed };
   }
 
   function isRemoveBgActive(): boolean {
@@ -226,6 +228,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       mix: clonePixelImportMix(mix),
       removeBgMode,
       removeBgRules: cloneRemoveBgColorRules(removeBgRules),
+      removeBgFillEnclosed,
     });
     if (undoStack.length > MAX_EFFECT_UNDO) undoStack.shift();
     redoStack.length = 0;
@@ -240,10 +243,12 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     }
     removeBgMode = normalizeRemoveBgMode(entry.removeBgMode);
     removeBgRules = cloneRemoveBgColorRules(entry.removeBgRules);
+    removeBgFillEnclosed = entry.removeBgFillEnclosed;
     for (const [id, slider] of sliderByEffect) {
       slider.setValue(mix[id] ?? 0, { silent: true });
     }
     updateRemoveBgModeButtons();
+    updateRemoveBgFillBtn();
     updateColorRulesUI();
     updateMixLabel();
     renderPreview();
@@ -256,6 +261,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       mix: clonePixelImportMix(mix),
       removeBgMode,
       removeBgRules: cloneRemoveBgColorRules(removeBgRules),
+      removeBgFillEnclosed,
     });
     const entry = undoStack.pop()!;
     restoreEffectHistory(entry);
@@ -269,6 +275,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       mix: clonePixelImportMix(mix),
       removeBgMode,
       removeBgRules: cloneRemoveBgColorRules(removeBgRules),
+      removeBgFillEnclosed,
     });
     const entry = redoStack.pop()!;
     restoreEffectHistory(entry);
@@ -276,11 +283,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   const removeBgModeButtons = new Map<RemoveBgMode, HTMLButtonElement>();
+  let removeBgFillBtn: HTMLButtonElement | null = null;
 
   function updateRemoveBgModeButtons(): void {
     for (const [mode, btn] of removeBgModeButtons) {
       btn.classList.toggle('is-active', mode === removeBgMode);
     }
+  }
+
+  function updateRemoveBgFillBtn(): void {
+    if (!removeBgFillBtn) return;
+    removeBgFillBtn.classList.toggle('is-active', removeBgFillEnclosed);
   }
 
   for (const opt of PIXEL_IMPORT_EFFECTS) {
@@ -371,6 +384,32 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       blacklistEl.className = 'img-import-effect__remove-bg-rules img-import-effect__remove-bg-rules--blacklist';
       section.append(blacklistEl);
 
+      const fillLabel = document.createElement('div');
+      fillLabel.className = 'img-import-effect__remove-bg-modes-label';
+      fillLabel.textContent = '后处理';
+      section.append(fillLabel);
+
+      const fillRow = document.createElement('div');
+      fillRow.className = 'img-import-effect__remove-bg-modes';
+      removeBgFillBtn = document.createElement('button');
+      removeBgFillBtn.type = 'button';
+      removeBgFillBtn.className = 'img-import-effect__remove-bg-mode';
+      removeBgFillBtn.textContent = '内洞填色';
+      removeBgFillBtn.title =
+        '去背景后，将八邻域均不透明的透明内洞用邻域主色填补（适合黑名单去掉主体内独立背景块）';
+      removeBgFillBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pushEffectUndo();
+        removeBgFillEnclosed = !removeBgFillEnclosed;
+        updateRemoveBgFillBtn();
+        updateMixLabel();
+        renderPreview();
+      });
+      fillRow.append(removeBgFillBtn);
+      section.append(fillRow);
+      updateRemoveBgFillBtn();
+
       slidersEl.append(section);
     } else {
       slidersEl.append(slider.root);
@@ -379,7 +418,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
   function updateMixLabel(): void {
     if (effectNameEl) {
-      effectNameEl.textContent = describeEffectMix(mix, { removeBgMode });
+      effectNameEl.textContent = describeEffectMix(mix, mixOptions());
     }
   }
 
@@ -825,8 +864,10 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     }
     removeBgMode = DEFAULT_REMOVE_BG_MODE;
     removeBgRules = createEmptyRemoveBgColorRules();
+    removeBgFillEnclosed = false;
     sliderByEffect.forEach((handle) => handle.setValue(0, { silent: true }));
     updateRemoveBgModeButtons();
+    updateRemoveBgFillBtn();
     updateColorRulesUI();
     resetPreviewNav();
     updateMixLabel();
@@ -927,6 +968,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   updateFullscreenBtn();
   updateTransparentFlashBtn();
   updatePreviewNavModeButtons();
+  updateRemoveBgFillBtn();
   updateColorRulesUI();
   updateMixLabel();
   updateEffectUndoRedo();
