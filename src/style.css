@@ -971,6 +971,15 @@ body {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.pixel-editor__tools-grid--effects {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pixel-editor__tools-grid--effects .btn {
+  font-size: 0.62rem;
+  padding: 0.22rem 0.25rem;
+}
+
 .pixel-editor__tools-nav {
   display: flex;
   align-items: center;

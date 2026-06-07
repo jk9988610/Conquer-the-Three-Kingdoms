@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: 'Lab 感知容差 + 边缘参考色；5×5 稀疏色块自动清除，3×3 透明洞智能填色',
+    description: 'Lab 感知容差 + 边缘参考色；5×5 单点自动清除，3×3 透明洞智能填色',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -811,7 +811,7 @@ function isDisplayCellOpaque(grid: PixelGrid, x: number, y: number): boolean {
 }
 
 /**
- * 5×5 自动清除：完整窗口内非透明格 ≤3 时，清除这些孤立色块（60×84 展示格）。
+ * 5×5 自动清除：完整窗口内仅有 1 个非透明格时，清除该孤立色块（60×84 展示格）。
  */
 function clearRemoveBgSparseBlocks5x5(grid: PixelGrid): PixelGrid {
   const rows = grid.length;
@@ -831,7 +831,7 @@ function clearRemoveBgSparseBlocks5x5(grid: PixelGrid): PixelGrid {
           if (isDisplayCellOpaque(out, x, y)) opaqueCells.push({ x, y });
         }
       }
-      if (opaqueCells.length === 0 || opaqueCells.length > 3) continue;
+      if (opaqueCells.length !== 1) continue;
       for (const cell of opaqueCells) {
         toClear.add(`${cell.x},${cell.y}`);
       }

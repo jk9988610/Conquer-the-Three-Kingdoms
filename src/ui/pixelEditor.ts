@@ -35,6 +35,19 @@ import {
   type PackedGrid,
 } from '../art/packedGrid';
 import {
+  anyDisplayHighlightBreath,
+  createEmptyDisplayHighlight,
+  DISPLAY_HIGHLIGHT_BREATH,
+  DISPLAY_HIGHLIGHT_GLOW,
+  DISPLAY_HIGHLIGHT_MARK,
+  displayHighlightIndex,
+  getDisplayHighlightFlags,
+  hasDisplayHighlightBreath,
+  hasDisplayHighlightGlow,
+  hasDisplayHighlightMark,
+  type DisplayHighlightGrid,
+} from '../art/displayHighlight';
+import {
   getLastEditedArtKey,
   loadPixelEditorDraft,
   savePixelEditorDraft,
@@ -64,7 +77,16 @@ interface CellPatch {
   next: number;
 }
 
-type UndoEntry = CellPatch[];
+interface HighlightPatch {
+  idx: number;
+  prev: number;
+  next: number;
+}
+
+interface UndoEntry {
+  cells: CellPatch[];
+  highlights: HighlightPatch[];
+}
 const PALETTE_PRESETS = [
   '#c44',
   '#6a8',
@@ -75,7 +97,7 @@ const PALETTE_PRESETS = [
   '#e8589a',
 ];
 
-type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'hand';
+type Tool = 'paint' | 'fill' | 'eraser' | 'eyedropper' | 'highlight' | 'glow' | 'breath' | 'hand';
 type ClipboardMode = 'copy' | 'cut' | 'paste' | null;
 
 interface Selection {
@@ -106,8 +128,13 @@ export function openPixelEditor(onApplied: () => void): void {
   let gridCols = ART_GRID_COLS;
   let gridRows = ART_GRID_ROWS;
   let grid: PackedGrid = createPackedGrid();
+  let highlightGrid: DisplayHighlightGrid = createEmptyDisplayHighlight();
   const undoStack: UndoEntry[] = [];
   const redoStack: UndoEntry[] = [];
+  let highlightPatchBatch: Map<number, { prev: number; next: number }> | null = null;
+  let highlightStrokeUndoPushed = false;
+  let breathSpeed = 50;
+  let breathRafId = 0;
   let patchBatch: Map<number, { prev: number; next: number }> | null = null;
   let strokeUndoPushed = false;
   let paintColor: Pixel = 'rgba(255,255,255,1)';
@@ -136,6 +163,7 @@ export function openPixelEditor(onApplied: () => void): void {
   let floatingPasteOnly = false;
   let clipboardMode: ClipboardMode = null;
   let lastPaintCell: { x: number; y: number } | null = null;
+  let lastHighlightCell: { x: number; y: number } | null = null;
   let lastDragCell: { x: number; y: number } | null = null;
   let pointerDrawing = false;
   let cellSize = 4;
@@ -176,28 +204,31 @@ export function openPixelEditor(onApplied: () => void): void {
       patchBatch = null;
       return;
     }
-    const entry: UndoEntry = [];
+    const cells: CellPatch[] = [];
     for (const [i, { prev, next }] of patchBatch) {
-      entry.push({ i, prev, next });
+      cells.push({ i, prev, next });
     }
-    undoStack.push(entry);
+    undoStack.push({ cells, highlights: [] });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     redoStack.length = 0;
     patchBatch = null;
     updateUndoRedoButtons();
   }
 
-  function pushPatches(patches: UndoEntry): void {
-    if (patches.length === 0) return;
-    undoStack.push(patches);
+  function pushPatches(cells: CellPatch[]): void {
+    if (cells.length === 0) return;
+    undoStack.push({ cells, highlights: [] });
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     redoStack.length = 0;
     updateUndoRedoButtons();
   }
 
   function applyUndoEntry(entry: UndoEntry, useNext: boolean): void {
-    for (const p of entry) {
+    for (const p of entry.cells) {
       grid[p.i] = (useNext ? p.next : p.prev) >>> 0;
+    }
+    for (const p of entry.highlights) {
+      highlightGrid[p.idx] = (useNext ? p.next : p.prev) & 0xff;
     }
   }
 
@@ -215,6 +246,44 @@ export function openPixelEditor(onApplied: () => void): void {
     updateUndoRedoButtons();
   }
 
+  function recordHighlightChange(idx: number, next: number): void {
+    const prev = highlightGrid[idx] ?? 0;
+    if (prev === next) return;
+    if (!highlightPatchBatch) highlightPatchBatch = new Map();
+    const existing = highlightPatchBatch.get(idx);
+    if (existing) {
+      existing.next = next;
+    } else {
+      highlightPatchBatch.set(idx, { prev, next });
+    }
+    highlightGrid[idx] = next;
+  }
+
+  function beginHighlightUndoBatch(): void {
+    highlightPatchBatch = new Map();
+  }
+
+  function commitHighlightUndoBatch(): void {
+    if (!highlightPatchBatch || highlightPatchBatch.size === 0) {
+      highlightPatchBatch = null;
+      return;
+    }
+    const highlights: HighlightPatch[] = [];
+    for (const [idx, { prev, next }] of highlightPatchBatch) {
+      highlights.push({ idx, prev, next });
+    }
+    undoStack.push({ cells: [], highlights });
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    highlightPatchBatch = null;
+    updateUndoRedoButtons();
+  }
+
+  function resetHighlightHistory(): void {
+    highlightStrokeUndoPushed = false;
+    highlightPatchBatch = null;
+  }
+
   function undo(): void {
     if (undoStack.length === 0) return;
     const entry = undoStack.pop()!;
@@ -223,6 +292,7 @@ export function openPixelEditor(onApplied: () => void): void {
     selection = null;
     selectStart = null;
     refreshAll();
+    scheduleBreathAnimation();
     updateUndoRedoButtons();
   }
 
@@ -234,6 +304,7 @@ export function openPixelEditor(onApplied: () => void): void {
     selection = null;
     selectStart = null;
     refreshAll();
+    scheduleBreathAnimation();
     updateUndoRedoButtons();
   }
 
@@ -323,7 +394,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   function persistDraft(): void {
     flattenEditorGrid();
-    savePixelEditorDraft(currentKey, grid);
+    savePixelEditorDraft(currentKey, grid, highlightGrid);
   }
 
   /** 优先恢复本地草稿，否则从已应用美术加载 */
@@ -332,6 +403,9 @@ export function openPixelEditor(onApplied: () => void): void {
     gridRows = ART_GRID_ROWS;
     const draft = loadPixelEditorDraft(key);
     grid = draft ? clonePackedGrid(draft.grid) : clonePackedGrid(getArtPacked(key));
+    highlightGrid = draft
+      ? new Uint8Array(draft.highlight)
+      : createEmptyDisplayHighlight();
     selection = null;
     selectStart = null;
     selectionFloating = false;
@@ -343,8 +417,10 @@ export function openPixelEditor(onApplied: () => void): void {
     viewPanY = 0;
     viewZoom = 1;
     resetHistory();
+    resetHighlightHistory();
     applyEditViewTransform();
     syncToolbarUi();
+    scheduleBreathAnimation();
   }
 
   const overlay = document.createElement('div');
@@ -412,6 +488,16 @@ export function openPixelEditor(onApplied: () => void): void {
               画笔粗细
               <input type="range" min="1" max="12" value="1" data-brush-size />
               <span data-brush-size-label>1</span>
+            </label>
+            <div class="pixel-editor__tools-grid pixel-editor__tools-grid--effects">
+              <button type="button" class="btn pixel-editor__tool" data-tool="highlight" title="在有色块上标记高亮（不改颜色）">高亮</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="glow" title="为已高亮色块开启/关闭光晕">光晕</button>
+              <button type="button" class="btn pixel-editor__tool" data-tool="breath" title="为已高亮色块开启/关闭呼吸灯">呼吸</button>
+            </div>
+            <label class="pixel-editor__brush-row">
+              呼吸速度
+              <input type="range" min="1" max="100" value="50" data-breath-speed />
+              <span data-breath-speed-label>50</span>
             </label>
             <div class="pixel-editor__tools-nav" data-alpha-mount></div>
             <div class="pixel-editor__tools-nav">
@@ -693,54 +779,6 @@ export function openPixelEditor(onApplied: () => void): void {
     updateEditorDebug();
   }
 
-  /** 编辑区叠加网格（仅绘制区，不写入像素数据） */
-  function drawReferenceGrid(): void {
-    const ctx = gridLayerCanvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    if (!showGrid) return;
-
-    const displayStep = Math.max(
-      1,
-      Math.round((ART_GRID_MAJOR_STEP * ART_DISPLAY_COLS) / gridCols)
-    );
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.lineWidth = 1;
-
-    const drawV = (c: number, strong: boolean) => {
-      if (c < 0 || c > ART_DISPLAY_COLS) return;
-      ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const x =
-        c >= ART_DISPLAY_COLS
-          ? gridPixelW - 0.5
-          : (c / ART_DISPLAY_COLS) * gridPixelW + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, gridPixelH);
-      ctx.stroke();
-    };
-    const drawH = (r: number, strong: boolean) => {
-      if (r < 0 || r > ART_DISPLAY_ROWS) return;
-      ctx.globalAlpha = strong ? 0.55 : 0.22;
-      const y =
-        r >= ART_DISPLAY_ROWS
-          ? gridPixelH - 0.5
-          : (r / ART_DISPLAY_ROWS) * gridPixelH + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(gridPixelW, y);
-      ctx.stroke();
-    };
-
-    for (let c = 0; c <= ART_DISPLAY_COLS; c += displayStep) drawV(c, true);
-    for (let r = 0; r <= ART_DISPLAY_ROWS; r += displayStep) drawH(r, true);
-    drawV(0, true);
-    drawV(ART_DISPLAY_COLS, true);
-    drawH(0, true);
-    drawH(ART_DISPLAY_ROWS, true);
-    ctx.globalAlpha = 1;
-  }
-
   function floatingSelectionPos(): { x: number; y: number } | null {
     if (!selection) return null;
     return movePreviewPos ?? { x: selection.x, y: selection.y };
@@ -823,7 +861,7 @@ export function openPixelEditor(onApplied: () => void): void {
   function refreshAll(): void {
     refreshEditCanvas();
     refreshPreview();
-    drawReferenceGrid();
+    redrawGridLayer();
     updateSelectionBox();
   }
 
@@ -977,6 +1015,192 @@ export function openPixelEditor(onApplied: () => void): void {
       ART_DISPLAY_COLS,
       ART_DISPLAY_ROWS
     );
+  }
+
+  function isDisplayCellOpaqueAt(dx: number, dy: number): boolean {
+    return (displayPackedForView()[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) !== 0;
+  }
+
+  function breathPulsePhase(nowMs: number): number {
+    const periodMs = 3200 - ((breathSpeed - 1) / 99) * 2700;
+    return 0.5 + 0.5 * Math.sin((nowMs / periodMs) * Math.PI * 2);
+  }
+
+  function toggleHighlightFlagAtDisplay(dx: number, dy: number, flag: number): void {
+    if (dx < 0 || dy < 0 || dx >= ART_DISPLAY_COLS || dy >= ART_DISPLAY_ROWS) return;
+    const idx = displayHighlightIndex(dx, dy);
+    const prev = highlightGrid[idx] ?? 0;
+
+    if (flag === DISPLAY_HIGHLIGHT_MARK) {
+      if (!isDisplayCellOpaqueAt(dx, dy)) return;
+      const next = prev & DISPLAY_HIGHLIGHT_MARK ? 0 : prev | DISPLAY_HIGHLIGHT_MARK;
+      recordHighlightChange(idx, next);
+      return;
+    }
+
+    if (!(prev & DISPLAY_HIGHLIGHT_MARK) || !isDisplayCellOpaqueAt(dx, dy)) return;
+    const next = prev & flag ? prev & ~flag : prev | flag;
+    recordHighlightChange(idx, next);
+  }
+
+  function stampHighlightBrushAtDisplay(
+    centerDx: number,
+    centerDy: number,
+    flag: number
+  ): void {
+    const r = brushSize - 1;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (brushSize > 1 && dx * dx + dy * dy > r * r + r * 0.2) continue;
+        toggleHighlightFlagAtDisplay(centerDx + dx, centerDy + dy, flag);
+      }
+    }
+  }
+
+  function highlightToolFlag(): number {
+    if (tool === 'glow') return DISPLAY_HIGHLIGHT_GLOW;
+    if (tool === 'breath') return DISPLAY_HIGHLIGHT_BREATH;
+    return DISPLAY_HIGHLIGHT_MARK;
+  }
+
+  function highlightAtDisplay(dc: { dx: number; dy: number }): void {
+    const flag = highlightToolFlag();
+    if (
+      lastHighlightCell?.x === dc.dx &&
+      lastHighlightCell?.y === dc.dy &&
+      brushSize === 1
+    ) {
+      return;
+    }
+    if (lastHighlightCell) {
+      forEachDisplayLine(lastHighlightCell.x, lastHighlightCell.y, dc.dx, dc.dy, (px, py) => {
+        stampHighlightBrushAtDisplay(px, py, flag);
+      });
+    } else {
+      stampHighlightBrushAtDisplay(dc.dx, dc.dy, flag);
+    }
+    lastHighlightCell = { x: dc.dx, y: dc.dy };
+    redrawGridLayer();
+    scheduleBreathAnimation();
+  }
+
+  function paintHighlightOverlay(ctx: CanvasRenderingContext2D): void {
+    const display = displayPackedForView();
+    const pulse = breathPulsePhase(performance.now());
+
+    for (let dy = 0; dy < ART_DISPLAY_ROWS; dy++) {
+      for (let dx = 0; dx < ART_DISPLAY_COLS; dx++) {
+        const flags = getDisplayHighlightFlags(highlightGrid, dx, dy);
+        if (!hasDisplayHighlightMark(flags)) continue;
+        if ((display[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0) === 0) continue;
+
+        const x = dx * cellSize;
+        const y = dy * cellSize;
+        const w = cellSize;
+        const h = cellSize;
+        const v = display[gridIndex(dx, dy, ART_DISPLAY_COLS)] ?? 0;
+        const cr = (v >>> 16) & 255;
+        const cg = (v >>> 8) & 255;
+        const cb = v & 255;
+
+        let outlineAlpha = 0.88;
+        if (hasDisplayHighlightBreath(flags)) {
+          outlineAlpha = 0.28 + 0.62 * pulse;
+        }
+
+        ctx.strokeStyle = `rgba(255, 220, 64, ${outlineAlpha})`;
+        ctx.lineWidth = Math.max(1, cellSize * 0.14);
+        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+
+        if (hasDisplayHighlightGlow(flags) || hasDisplayHighlightBreath(flags)) {
+          const glowAlpha = hasDisplayHighlightBreath(flags)
+            ? 0.18 + 0.42 * pulse
+            : 0.5;
+          const pad = Math.max(1, cellSize * 0.22);
+          ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha})`;
+          ctx.lineWidth = pad;
+          ctx.strokeRect(x + pad * 0.5, y + pad * 0.5, w - pad, h - pad);
+          ctx.fillStyle = `rgba(255, 255, 255, ${glowAlpha * 0.22})`;
+          ctx.fillRect(x, y, w, h);
+        }
+      }
+    }
+  }
+
+  function redrawGridLayer(): void {
+    const ctx = gridLayerCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, gridPixelW, gridPixelH);
+    if (showGrid) drawReferenceGridLines(ctx);
+    paintHighlightOverlay(ctx);
+  }
+
+  function drawReferenceGridLines(ctx: CanvasRenderingContext2D): void {
+    const displayStep = Math.max(
+      1,
+      Math.round((ART_GRID_MAJOR_STEP * ART_DISPLAY_COLS) / gridCols)
+    );
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1;
+
+    const drawV = (c: number, strong: boolean) => {
+      if (c < 0 || c > ART_DISPLAY_COLS) return;
+      ctx.globalAlpha = strong ? 0.55 : 0.22;
+      const x =
+        c >= ART_DISPLAY_COLS
+          ? gridPixelW - 0.5
+          : (c / ART_DISPLAY_COLS) * gridPixelW + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, gridPixelH);
+      ctx.stroke();
+    };
+
+    const drawH = (r: number, strong: boolean) => {
+      if (r < 0 || r > ART_DISPLAY_ROWS) return;
+      ctx.globalAlpha = strong ? 0.55 : 0.22;
+      const y =
+        r >= ART_DISPLAY_ROWS
+          ? gridPixelH - 0.5
+          : (r / ART_DISPLAY_ROWS) * gridPixelH + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(gridPixelW, y);
+      ctx.stroke();
+    };
+
+    for (let c = 0; c <= ART_DISPLAY_COLS; c += displayStep) drawV(c, true);
+    for (let r = 0; r <= ART_DISPLAY_ROWS; r += displayStep) drawH(r, true);
+    drawV(0, true);
+    drawV(ART_DISPLAY_COLS, true);
+    drawH(0, true);
+    drawH(ART_DISPLAY_ROWS, true);
+    ctx.globalAlpha = 1;
+  }
+
+  function stopBreathAnimation(): void {
+    if (breathRafId) {
+      cancelAnimationFrame(breathRafId);
+      breathRafId = 0;
+    }
+  }
+
+  function scheduleBreathAnimation(): void {
+    if (!anyDisplayHighlightBreath(highlightGrid)) {
+      stopBreathAnimation();
+      return;
+    }
+    if (breathRafId) return;
+    const tick = (): void => {
+      if (!anyDisplayHighlightBreath(highlightGrid)) {
+        stopBreathAnimation();
+        redrawGridLayer();
+        return;
+      }
+      redrawGridLayer();
+      breathRafId = requestAnimationFrame(tick);
+    };
+    breathRafId = requestAnimationFrame(tick);
   }
 
   /** 按展示格（60×84）泛洪填充，与所见色块一致 */
@@ -1275,6 +1499,16 @@ export function openPixelEditor(onApplied: () => void): void {
       paintAtDisplay(dc, 0);
       return;
     }
+    if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
+      if (!dc) return;
+      if (!highlightStrokeUndoPushed) {
+        beginHighlightUndoBatch();
+        highlightStrokeUndoPushed = true;
+      }
+      lastHighlightCell = null;
+      highlightAtDisplay(dc);
+      return;
+    }
   };
 
   editSurface.addEventListener('pointerdown', onEditPointerDown);
@@ -1319,6 +1553,11 @@ export function openPixelEditor(onApplied: () => void): void {
       paintAtDisplay(dc, 0);
       return;
     }
+    if (tool === 'highlight' || tool === 'glow' || tool === 'breath') {
+      if (!dc) return;
+      highlightAtDisplay(dc);
+      return;
+    }
   };
 
   editSurface.addEventListener('pointermove', onEditPointerMove);
@@ -1334,7 +1573,10 @@ export function openPixelEditor(onApplied: () => void): void {
         endMoveDrag();
       }
       lastPaintCell = null;
+      lastHighlightCell = null;
       strokeUndoPushed = false;
+      if (highlightStrokeUndoPushed) commitHighlightUndoBatch();
+      highlightStrokeUndoPushed = false;
       pointerDrawing = false;
       try {
         editSurface.releasePointerCapture(e.pointerId);
@@ -1354,8 +1596,16 @@ export function openPixelEditor(onApplied: () => void): void {
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
     }
+    if (
+      highlightStrokeUndoPushed &&
+      (tool === 'highlight' || tool === 'glow' || tool === 'breath')
+    ) {
+      commitHighlightUndoBatch();
+    }
     lastPaintCell = null;
+    lastHighlightCell = null;
     strokeUndoPushed = false;
+    highlightStrokeUndoPushed = false;
     pointerDrawing = false;
     try {
       editSurface.releasePointerCapture(e.pointerId);
@@ -1370,11 +1620,19 @@ export function openPixelEditor(onApplied: () => void): void {
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
     }
+    if (
+      highlightStrokeUndoPushed &&
+      (tool === 'highlight' || tool === 'glow' || tool === 'breath')
+    ) {
+      commitHighlightUndoBatch();
+    }
     if (clipboardMode === 'paste' && moveAnchor) {
       endMoveDrag();
     }
     lastPaintCell = null;
+    lastHighlightCell = null;
     strokeUndoPushed = false;
+    highlightStrokeUndoPushed = false;
     pointerDrawing = false;
     try {
       editSurface.releasePointerCapture(e.pointerId);
@@ -1397,6 +1655,14 @@ export function openPixelEditor(onApplied: () => void): void {
     brushSize = clamp(Number(brushSizeInput.value) || 1, 1, MAX_BRUSH);
     brushSizeLabel.textContent = String(brushSize);
     updateEditorDebug();
+  });
+
+  const breathSpeedInput = panel.querySelector<HTMLInputElement>('[data-breath-speed]')!;
+  const breathSpeedLabel = panel.querySelector<HTMLElement>('[data-breath-speed-label]')!;
+  breathSpeedInput.addEventListener('input', () => {
+    breathSpeed = clamp(Number(breathSpeedInput.value) || 50, 1, 100);
+    breathSpeedLabel.textContent = String(breathSpeed);
+    if (anyDisplayHighlightBreath(highlightGrid)) redrawGridLayer();
   });
 
   panel.querySelector('[data-zoom-reset]')?.addEventListener('click', () => {
@@ -1479,7 +1745,7 @@ export function openPixelEditor(onApplied: () => void): void {
 
   panel.querySelector('[data-toggle-grid]')?.addEventListener('click', () => {
     showGrid = !showGrid;
-    drawReferenceGrid();
+    redrawGridLayer();
     const btn = panel.querySelector('[data-toggle-grid]');
     if (btn) btn.textContent = showGrid ? '参考线：开' : '参考线：关';
   });
@@ -1524,7 +1790,7 @@ export function openPixelEditor(onApplied: () => void): void {
                 applyEditViewTransform();
                 flattenEditorGrid();
                 refreshAll();
-                savePixelEditorDraft(currentKey, grid);
+                savePixelEditorDraft(currentKey, grid, highlightGrid);
                 requestAnimationFrame(() => layoutViewport());
               },
             });
@@ -1539,14 +1805,17 @@ export function openPixelEditor(onApplied: () => void): void {
 
   panel.querySelector('[data-clear]')?.addEventListener('click', () => {
     replaceGrid(makeEmptyGrid());
+    highlightGrid = createEmptyDisplayHighlight();
+    resetHighlightHistory();
     selection = null;
+    scheduleBreathAnimation();
     refreshAll();
   });
 
   panel.querySelector('[data-apply]')?.addEventListener('click', () => {
     flattenEditorGrid();
     setCustomArtGrid(currentKey, packedToGrid(grid));
-    savePixelEditorDraft(currentKey, grid);
+    savePixelEditorDraft(currentKey, grid, highlightGrid);
     onApplied();
   });
 
@@ -1697,6 +1966,7 @@ export function openPixelEditor(onApplied: () => void): void {
   editorOverlay = overlay;
   editorTeardown = () => {
     stopTransparentFlash();
+    stopBreathAnimation();
     persistDraft();
     ro.disconnect();
     document.removeEventListener('keydown', onEditorKey);

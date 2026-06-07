@@ -1,5 +1,11 @@
 import type { PixelArtKey } from '../game/types';
 import type { PixelGrid } from './pixelArt';
+import {
+  createEmptyDisplayHighlight,
+  decodeDisplayHighlightBase64,
+  encodeDisplayHighlightBase64,
+  type DisplayHighlightGrid,
+} from './displayHighlight';
 import { ART_GRID_COLS, ART_GRID_ROWS } from './gridConfig';
 import {
   clonePackedGrid,
@@ -20,12 +26,18 @@ const STORAGE_KEY_V1 = 'tcg-pixel-editor-drafts-v1';
 
 export interface PixelEditorDraft {
   grid: PackedGrid;
+  highlight: DisplayHighlightGrid;
   updatedAt: number;
 }
 
 interface DraftStoreV3 {
   lastArtKey?: PixelArtKey;
-  byKey: Partial<Record<PixelArtKey, { gridB64: string; updatedAt: number }>>;
+  byKey: Partial<
+    Record<
+      PixelArtKey,
+      { gridB64: string; highlightB64?: string; updatedAt: number }
+    >
+  >;
 }
 
 interface DraftStoreV2 {
@@ -119,7 +131,11 @@ function migrateV2Draft(key: PixelArtKey, v2: DraftStoreV2): PixelEditorDraft | 
   if (!draft?.layersB64?.length) return null;
   const layers = draft.layersB64.map((b64) => decodePackedBase64(b64));
   const merged = compositePackedGrids(layers, draft.layerVisible);
-  return { grid: normalizeGrid(merged), updatedAt: draft.updatedAt };
+  return {
+    grid: normalizeGrid(merged),
+    highlight: createEmptyDisplayHighlight(),
+    updatedAt: draft.updatedAt,
+  };
 }
 
 function migrateV1Draft(key: PixelArtKey, v1: DraftStoreV1): PixelEditorDraft | null {
@@ -129,7 +145,11 @@ function migrateV1Draft(key: PixelArtKey, v1: DraftStoreV1): PixelEditorDraft | 
     gridToPacked(g ? upscaleGridToArtSize(g) : emptyPixelGrid())
   );
   const merged = compositePackedGrids(layers, draft.layerVisible);
-  return { grid: normalizeGrid(merged), updatedAt: draft.updatedAt };
+  return {
+    grid: normalizeGrid(merged),
+    highlight: createEmptyDisplayHighlight(),
+    updatedAt: draft.updatedAt,
+  };
 }
 
 export function getLastEditedArtKey(): PixelArtKey | null {
@@ -143,6 +163,9 @@ export function loadPixelEditorDraft(key: PixelArtKey): PixelEditorDraft | null 
   if (stored?.gridB64) {
     return {
       grid: normalizeGrid(decodePackedBase64(stored.gridB64)),
+      highlight: stored.highlightB64
+        ? decodeDisplayHighlightBase64(stored.highlightB64)
+        : createEmptyDisplayHighlight(),
       updatedAt: stored.updatedAt,
     };
   }
@@ -153,11 +176,16 @@ export function loadPixelEditorDraft(key: PixelArtKey): PixelEditorDraft | null 
   return null;
 }
 
-export function savePixelEditorDraft(key: PixelArtKey, grid: PackedGrid): void {
+export function savePixelEditorDraft(
+  key: PixelArtKey,
+  grid: PackedGrid,
+  highlight: DisplayHighlightGrid = createEmptyDisplayHighlight()
+): void {
   const store = readStoreV3();
   store.lastArtKey = key;
   store.byKey[key] = {
     gridB64: encodePackedBase64(grid),
+    highlightB64: encodeDisplayHighlightBase64(highlight),
     updatedAt: Date.now(),
   };
   writeStoreV3(store);
