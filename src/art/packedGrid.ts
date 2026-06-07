@@ -221,7 +221,47 @@ export function downsamplePackedGrid(
   return out;
 }
 
-/** 卡面/预览：下采样后按 fit/cover 绘制（先 1:1 光栅再整数倍缩放，避免亚像素缝隙网格线） */
+function fillDisplayPackedCells(
+  ctx: CanvasRenderingContext2D,
+  display: PackedGrid,
+  cellPx: number,
+  originX: number,
+  originY: number,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): void {
+  ctx.imageSmoothingEnabled = false;
+  for (let y = 0; y < dstRows; y++) {
+    for (let x = 0; x < dstCols; x++) {
+      const v = display[gridIndex(x, y, dstCols)] ?? 0;
+      if (v === 0) continue;
+      const a = (v >>> 24) / 255;
+      const r = (v >>> 16) & 255;
+      const g = (v >>> 8) & 255;
+      const b = v & 255;
+      ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+      ctx.fillRect(originX + x * cellPx, originY + y * cellPx, cellPx, cellPx);
+    }
+  }
+}
+
+/** 编辑器：已知整数格宽，从 (0,0) 铺满展示网格，避免缩放裁切 */
+export function drawDisplayPackedAtCellSize(
+  ctx: CanvasRenderingContext2D,
+  packed: PackedGrid,
+  cellPx: number,
+  originX = 0,
+  originY = 0,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): void {
+  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  fillDisplayPackedCells(ctx, display, cellPx, originX, originY, dstCols, dstRows);
+}
+
+/** 卡面/预览：下采样后按 fit/cover 绘制；fit 优先整数格铺满，避免边缘裁切 */
 export function drawPackedDisplayToCanvas(
   ctx: CanvasRenderingContext2D,
   packed: PackedGrid,
@@ -234,36 +274,20 @@ export function drawPackedDisplayToCanvas(
   dstRows = ART_DISPLAY_ROWS
 ): void {
   const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
-  const aspectMatch = Math.abs(width / height - dstCols / dstRows) < 1e-4;
-  const cellW = width / dstCols;
-  const cellH = height / dstRows;
-  const uniformCell =
-    aspectMatch && Math.abs(cellW - cellH) < 1e-4 && Math.abs(cellW - Math.round(cellW)) < 1e-4;
-  const cellPx = Math.round(cellW);
 
-  if (mode === 'fit' && uniformCell && dstCols * cellPx === width && dstRows * cellPx === height) {
-    ctx.imageSmoothingEnabled = false;
-    for (let y = 0; y < dstRows; y++) {
-      for (let x = 0; x < dstCols; x++) {
-        const v = display[gridIndex(x, y, dstCols)] ?? 0;
-        if (v === 0) continue;
-        const a = (v >>> 24) / 255;
-        const r = (v >>> 16) & 255;
-        const g = (v >>> 8) & 255;
-        const b = v & 255;
-        ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-        ctx.fillRect(x * cellPx, y * cellPx, cellPx, cellPx);
-      }
+  if (mode === 'fit') {
+    const cellPx = Math.min(Math.floor(width / dstCols), Math.floor(height / dstRows));
+    if (cellPx >= 1) {
+      const drawW = dstCols * cellPx;
+      const drawH = dstRows * cellPx;
+      const ox = Math.floor((width - drawW) / 2);
+      const oy = Math.floor((height - drawH) / 2);
+      fillDisplayPackedCells(ctx, display, cellPx, ox, oy, dstCols, dstRows);
+      return;
     }
-    return;
   }
 
-  let { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
-  if (mode === 'fit' && aspectMatch) {
-    cell = width / dstCols;
-    ox = 0;
-    oy = 0;
-  }
+  const { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
   const dw = dstCols * cell;
   const dh = dstRows * cell;
 
@@ -462,7 +486,7 @@ export function pastePackedRegion(
   }
 }
 
-/** 导出当前所见扁平图（75×105 展示格，1 格 = 1 像素，透明 PNG） */
+/** 导出当前所见扁平图（60×84 展示格，1 格 = 1 像素，透明 PNG） */
 export function downloadPackedPng(
   packed: PackedGrid,
   filename: string,

@@ -1008,6 +1008,9 @@ body {
 
 .pixel-editor__edit-stage > .pixel-editor__art-surface {
   border: none;
+  border-radius: 0;
+  overflow: visible;
+  box-sizing: content-box;
 }
 
 .pixel-editor__edit-frame {

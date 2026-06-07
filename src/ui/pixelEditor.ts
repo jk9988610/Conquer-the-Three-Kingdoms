@@ -20,6 +20,7 @@ import {
   copyPackedRegion,
   createPackedGrid,
   downloadPackedPng,
+  drawDisplayPackedAtCellSize,
   flattenPackedToDisplayBlocks,
   floodFillPacked,
   getPackedPixel,
@@ -495,12 +496,20 @@ export function openPixelEditor(onApplied: () => void): void {
     h: number,
     dpr: number
   ): CanvasRenderingContext2D | null {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
+    const cssW = Math.max(1, Math.floor(w));
+    const cssH = Math.max(1, Math.floor(h));
+    const ratio = Math.max(1, dpr);
+    canvas.width = Math.max(1, Math.floor(cssW * ratio));
+    canvas.height = Math.max(1, Math.floor(cssH * ratio));
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    canvas.style.maxWidth = `${cssW}px`;
+    canvas.style.maxHeight = `${cssH}px`;
     const ctx = canvas.getContext('2d');
-    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (ctx) {
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+    }
     return ctx;
   }
 
@@ -563,6 +572,12 @@ export function openPixelEditor(onApplied: () => void): void {
     editStage.style.minHeight = sizeH;
     editStage.style.maxWidth = size;
     editStage.style.maxHeight = sizeH;
+    editSurface.style.width = size;
+    editSurface.style.height = sizeH;
+    editSurface.style.minWidth = size;
+    editSurface.style.minHeight = sizeH;
+    editSurface.style.maxWidth = size;
+    editSurface.style.maxHeight = sizeH;
     panel.style.setProperty('--pe-art-w', size);
     panel.style.setProperty('--pe-art-h', sizeH);
   }
@@ -578,7 +593,7 @@ export function openPixelEditor(onApplied: () => void): void {
     previewSurface.style.maxHeight = h;
   }
 
-  /** 预览区：按卡面展示分辨率（75×105）适配面板，与主页卡图一致 */
+  /** 预览区：按卡面展示分辨率（60×84）适配面板，与主页卡图一致 */
   function layoutPreview(): void {
     const avail = availSizeInPane(previewPanel);
     const aspect = gridCols / gridRows;
@@ -724,7 +739,15 @@ export function openPixelEditor(onApplied: () => void): void {
     const ctx = editCanvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, gridPixelW, gridPixelH);
-    drawPackedPreview(ctx, gridForDisplay(), gridPixelW, gridPixelH, gridCols, gridRows);
+    drawDisplayPackedAtCellSize(
+      ctx,
+      gridForDisplay(),
+      cellSize,
+      0,
+      0,
+      gridCols,
+      gridRows
+    );
   }
 
   function refreshPreview(): void {
@@ -912,7 +935,7 @@ export function openPixelEditor(onApplied: () => void): void {
     }
   }
 
-  /** 笔刷粗细按展示像素（75×105）计，与卡面所见块一致 */
+  /** 笔刷粗细按展示像素（60×84）计，与卡面所见块一致 */
   function stampBrushAtDisplay(centerDx: number, centerDy: number, colorArgb: number): void {
     const r = brushSize - 1;
     for (let dy = -r; dy <= r; dy++) {

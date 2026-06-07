@@ -496,7 +496,7 @@ export function describeEffectMix(mix: PixelImportEffectMix): string {
     .join(' · ');
 }
 
-/** 逻辑网格 → 卡面展示网格（75×105） */
+/** 逻辑网格 → 卡面展示网格（60×84） */
 export function logicalGridToDisplayGrid(grid: PixelGrid): PixelGrid {
   const packed = gridToPacked(grid, ART_GRID_COLS, ART_GRID_ROWS);
   const displayPacked = downsamplePackedGrid(
@@ -530,7 +530,7 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
   return out;
 }
 
-/** 在 75×105 展示网格上按混合参数处理，供预览与落盘 */
+/** 在 60×84 展示网格上按混合参数处理，供预览与落盘 */
 export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
   mix: PixelImportEffectMix

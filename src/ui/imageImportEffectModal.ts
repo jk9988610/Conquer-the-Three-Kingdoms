@@ -55,7 +55,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     <header class="img-import-effect__topbar">
       <div class="img-import-effect__topbar-main">
         <h3 class="img-import-effect__title">调配像素画效果</h3>
-        <p class="img-import-effect__subtitle">拖动右侧滑条组合效果，左侧实时预览（75×105）</p>
+        <p class="img-import-effect__subtitle">拖动右侧滑条组合效果，左侧实时预览（60×84）</p>
       </div>
       <div class="img-import-effect__topbar-actions">
         <button type="button" class="btn img-import-effect__topbar-btn" data-fullscreen>全屏</button>
