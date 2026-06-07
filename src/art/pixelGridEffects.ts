@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '以外层参考色组为准，从外向内逐层剥离背景',
+    description: '外层参考色组为准，从外向内逐层只剥该层内的背景色块',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -343,7 +343,7 @@ export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
   {
     id: 'peel',
     label: '层层剥离',
-    description: '外层参考色组 + 从外向内逐层剥离，该层颜色相近且在色组内则视为背景',
+    description: '外层参考色组 + 从外向内逐层只去除该层中落在色组区间内的背景色块',
   },
 ];
 
@@ -418,7 +418,9 @@ function* borderCoords(cols: number, rows: number): Generator<[number, number]> 
 }
 
 /**
- * 仅用最外圈像素按数量统计，多数色才进入边缘参考色组。
+ * 边缘参考色组：仅统计画面最外一圈像素，按色块数量排序。
+ * 出现次数 ≥ max(2, 外圈总数×8%) 的色块才入组，作为后续「色组区间」的参考点。
+ * 某像素是否在区间内：其 RGB 与组内任一参考色的欧氏距离 ≤ 容差（滑条换算值）。
  */
 function buildEdgeReferencePalette(grid: PixelGrid): Rgba[] {
   const rows = grid.length;
@@ -449,51 +451,7 @@ function isInEdgeReferenceGroup(px: Rgba, palette: Rgba[], tolerance: number): b
   return nearestPaletteDistance(px, palette) <= tolerance;
 }
 
-function dominantRingColor(colors: Rgba[]): Rgba | null {
-  if (colors.length === 0) return null;
-  const buckets = new Map<string, { color: Rgba; count: number }>();
-  for (const px of colors) {
-    const key = colorBucketKey(px);
-    const entry = buckets.get(key);
-    if (entry) entry.count++;
-    else buckets.set(key, { color: px, count: 1 });
-  }
-  let best: { color: Rgba; count: number } | null = null;
-  for (const entry of buckets.values()) {
-    if (!best || entry.count > best.count) best = entry;
-  }
-  return best?.color ?? null;
-}
-
-/** 该层像素是否颜色相近（多数接近本层主色） */
-function isRingColorCoherent(colors: Rgba[], tolerance: number, minShare = 0.62): boolean {
-  if (colors.length === 0) return false;
-  const dominant = dominantRingColor(colors);
-  if (!dominant) return false;
-  const ringTol = tolerance * 0.9;
-  let similar = 0;
-  for (const px of colors) {
-    if (rgbaDistance(px, dominant) <= ringTol) similar++;
-  }
-  return similar / colors.length >= minShare;
-}
-
-/** 该层像素是否多数落在边缘参考色组内 */
-function isRingInEdgeGroup(
-  colors: Rgba[],
-  palette: Rgba[],
-  tolerance: number,
-  minShare = 0.62
-): boolean {
-  if (colors.length === 0 || palette.length === 0) return false;
-  let matched = 0;
-  for (const px of colors) {
-    if (isInEdgeReferenceGroup(px, palette, tolerance)) matched++;
-  }
-  return matched / colors.length >= minShare;
-}
-
-/** 当前最外圈待剥离像素：贴边或在已剥离区域外侧 */
+/** 当前最外圈待检验像素：贴画面边，或与已剥除区域四邻相接 */
 function collectOutermostPeelRing(
   mask: boolean[][],
   grid: PixelGrid,
@@ -515,7 +473,8 @@ function collectOutermostPeelRing(
 }
 
 /**
- * 从外向内逐层剥离：每层须颜色相近且多数属于边缘参考色组，否则停止。
+ * 从外向内逐层剥：每层只去除落在边缘色组区间内的背景色块，本体色块保留。
+ * 当某一层已无任何色组区间内色块时停止。
  */
 function peelBackgroundLayers(
   grid: PixelGrid,
@@ -525,24 +484,22 @@ function peelBackgroundLayers(
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   const mask = createEmptyMask(rows, cols);
+  const maxPasses = Math.max(cols, rows) * 2;
 
-  for (let pass = 0; pass < Math.max(cols, rows); pass++) {
+  for (let pass = 0; pass < maxPasses; pass++) {
     const ring = collectOutermostPeelRing(mask, grid, cols, rows);
     if (ring.length === 0) break;
 
-    const colors: Rgba[] = [];
+    let hasBgPixelInRing = false;
     for (const [x, y] of ring) {
       const px = getPixel(grid, x, y);
-      if (px && px.a >= 0.08) colors.push(px);
-    }
-    if (colors.length === 0) break;
-
-    if (!isRingColorCoherent(colors, tolerance)) break;
-    if (!isRingInEdgeGroup(colors, edgePalette, tolerance)) break;
-
-    for (const [x, y] of ring) {
+      if (!px || px.a < 0.08) continue;
+      if (!isInEdgeReferenceGroup(px, edgePalette, tolerance)) continue;
+      hasBgPixelInRing = true;
       mask[y]![x] = true;
     }
+
+    if (!hasBgPixelInRing) break;
   }
 
   return mask;
