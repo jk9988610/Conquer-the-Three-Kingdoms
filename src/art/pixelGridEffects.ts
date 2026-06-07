@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '选择下方方案并调节容差滑条',
+    description: '综合优化 + 除去最外层，选择下方方案并调节容差',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -319,8 +319,8 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
   return `容差${removeBgSliderToTolerance(sliderValue)}`;
 }
 
-/** 去背景算法方案（均为细节保护变体） */
-export type RemoveBgMode = 'detail' | 'surround' | 'expand' | 'corner' | 'refined';
+/** 去背景算法方案（均为综合优化 + 除去最外层变体） */
+export type RemoveBgMode = 'outer' | 'outerSafe' | 'outerDeep' | 'outerCorner' | 'outerFull';
 
 export interface RemoveBgModeOption {
   id: RemoveBgMode;
@@ -329,14 +329,14 @@ export interface RemoveBgModeOption {
 }
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
-  { id: 'detail', label: '细节保护', description: '保留肢体纹理，按容差去背景' },
-  { id: 'surround', label: '周围清除', description: '细节保护 + 清除主体边缘残留背景色块' },
-  { id: 'expand', label: '扩展清除', description: '细节保护 + 向已清除区域扩展相近背景' },
-  { id: 'corner', label: '角落强化', description: '细节保护 + 四角区域额外清除' },
-  { id: 'refined', label: '综合优化', description: '细节保护 + 周围 + 扩展 + 角落 + 孔洞填补' },
+  { id: 'outer', label: '除去最外层', description: '综合优化后剥离主体最外一圈边缘像素' },
+  { id: 'outerSafe', label: '安全剥离', description: '综合优化 + 仅剥离接近背景色的边缘像素' },
+  { id: 'outerDeep', label: '双层剥离', description: '综合优化 + 连续剥离最外两圈边缘' },
+  { id: 'outerCorner', label: '角落剥离', description: '除去最外层 + 四角区域额外清除' },
+  { id: 'outerFull', label: '综合剥离', description: '双层安全剥离 + 角落 + 孔洞填补' },
 ];
 
-export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'detail';
+export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'outer';
 
 export function getRemoveBgModeLabel(mode: RemoveBgMode): string {
   return REMOVE_BG_MODES.find((m) => m.id === mode)?.label ?? mode;
@@ -721,33 +721,106 @@ function expandBgMaskSimilar(
   return out;
 }
 
-interface DetailBgVariantOpts {
-  surround?: boolean;
-  expand?: boolean;
-  corner?: boolean;
-  close?: boolean;
-}
-
-function buildDetailBgMaskVariant(
+function buildRefinedDetailMask(
   grid: PixelGrid,
   bgRefs: Rgba[],
-  tolerance: number,
-  opts: DetailBgVariantOpts
+  tolerance: number
 ): boolean[][] {
   const primaryRef = bgRefs[0]!;
   let mask = buildGlobalBgMask(grid, bgRefs, tolerance);
   mask = protectSubjectInMask(mask, grid, bgRefs, tolerance, {
     protectDetail: true,
   });
-  if (opts.surround) mask = peelSurroundingBackground(mask, grid, bgRefs, tolerance);
-  if (opts.expand) mask = expandBgMaskSimilar(mask, grid, bgRefs, tolerance);
-  if (opts.corner) mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
-  if (opts.close) mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  mask = peelSurroundingBackground(mask, grid, bgRefs, tolerance);
+  mask = expandBgMaskSimilar(mask, grid, bgRefs, tolerance);
+  mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
+  mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  return mask;
+}
+
+interface OutermostPeelOptions {
+  depth?: number;
+  safeOnly?: boolean;
+}
+
+const OUTER_PEEL_DETAIL_MAX = 0.34;
+
+/**
+ * 除去主体最外圈：与透明区相邻的前景边缘像素标记为背景。
+ * safeOnly 时仅剥离接近背景色、且非高细节的边缘。
+ */
+function peelOutermostForegroundRing(
+  mask: boolean[][],
+  grid: PixelGrid,
+  bgRefs: Rgba[],
+  tolerance: number,
+  opts: OutermostPeelOptions = {}
+): boolean[][] {
+  const rows = mask.length;
+  const cols = Math.max(0, ...mask.map((r) => r.length));
+  const depth = Math.max(1, opts.depth ?? 1);
+  const safeOnly = opts.safeOnly ?? false;
+  const safeTol = tolerance * 1.08;
+  let out = cloneMask(mask);
+
+  for (let ring = 0; ring < depth; ring++) {
+    const next = cloneMask(out);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (out[y]![x]) continue;
+        if (countBgNeighbors8(out, x, y) < 1) continue;
+
+        const px = getPixel(grid, x, y);
+        if (!px || px.a < 0.08) {
+          next[y]![x] = true;
+          continue;
+        }
+
+        if (safeOnly) {
+          if (localDetailWeight(grid, x, y) >= OUTER_PEEL_DETAIL_MAX) continue;
+          if (!isSimilarToBgRefs(px, bgRefs, safeTol)) continue;
+        }
+
+        next[y]![x] = true;
+      }
+    }
+    out = next;
+  }
+
+  return out;
+}
+
+interface RefinedOuterVariantOpts {
+  peelDepth?: number;
+  peelSafeOnly?: boolean;
+  extraCorner?: boolean;
+  closeAfterPeel?: boolean;
+}
+
+/** 综合优化 + 除去最外层，再按方案叠加剥离强度与后处理 */
+function buildRefinedOuterMaskVariant(
+  grid: PixelGrid,
+  bgRefs: Rgba[],
+  tolerance: number,
+  opts: RefinedOuterVariantOpts
+): boolean[][] {
+  const primaryRef = bgRefs[0]!;
+  let mask = buildRefinedDetailMask(grid, bgRefs, tolerance);
+  mask = peelOutermostForegroundRing(mask, grid, bgRefs, tolerance, {
+    depth: opts.peelDepth ?? 1,
+    safeOnly: opts.peelSafeOnly ?? false,
+  });
+  if (opts.extraCorner) {
+    mask = forceClearCornerBackground(mask, grid, bgRefs, tolerance);
+  }
+  if (opts.closeAfterPeel) {
+    mask = closeBgMask(mask, grid, primaryRef, tolerance);
+  }
   return mask;
 }
 
 /**
- * 去背景掩码：均为细节保护变体，按方案叠加周围/扩展/角落等后处理。
+ * 去背景掩码：均为「综合优化 + 除去最外层」变体。
  */
 export function computeRemoveBgMask(
   grid: PixelGrid,
@@ -762,25 +835,28 @@ export function computeRemoveBgMask(
   if (bgRefs.length === 0) return null;
 
   switch (mode) {
-    case 'surround':
-      return buildDetailBgMaskVariant(grid, bgRefs, tolerance, { surround: true });
-    case 'expand':
-      return buildDetailBgMaskVariant(grid, bgRefs, tolerance, {
-        surround: true,
-        expand: true,
+    case 'outerSafe':
+      return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
+        peelSafeOnly: true,
       });
-    case 'corner':
-      return buildDetailBgMaskVariant(grid, bgRefs, tolerance, { corner: true });
-    case 'refined':
-      return buildDetailBgMaskVariant(grid, bgRefs, tolerance, {
-        surround: true,
-        expand: true,
-        corner: true,
-        close: true,
+    case 'outerDeep':
+      return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
+        peelDepth: 2,
       });
-    case 'detail':
+    case 'outerCorner':
+      return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
+        extraCorner: true,
+      });
+    case 'outerFull':
+      return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {
+        peelDepth: 2,
+        peelSafeOnly: true,
+        extraCorner: true,
+        closeAfterPeel: true,
+      });
+    case 'outer':
     default:
-      return buildDetailBgMaskVariant(grid, bgRefs, tolerance, {});
+      return buildRefinedOuterMaskVariant(grid, bgRefs, tolerance, {});
   }
 }
 
