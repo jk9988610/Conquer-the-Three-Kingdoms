@@ -71,21 +71,6 @@ export function breathPulsePhase(nowMs: number, breathSpeed = 50): number {
   return 0.5 + 0.5 * Math.sin((nowMs / periodMs) * Math.PI * 2);
 }
 
-function clampByte(v: number): number {
-  return Math.max(0, Math.min(255, Math.round(v)));
-}
-
-function brightenArgb(argb: number, amount: number): number {
-  const a = (argb >>> 24) & 255;
-  const r = (argb >>> 16) & 255;
-  const g = (argb >>> 8) & 255;
-  const b = argb & 255;
-  const br = clampByte(r + (255 - r) * amount);
-  const bg = clampByte(g + (255 - g) * amount);
-  const bb = clampByte(b + (255 - b) * amount);
-  return (a << 24) | (br << 16) | (bg << 8) | bb;
-}
-
 function argbToRgbaStyle(v: number): string {
   const a = (v >>> 24) / 255;
   const r = (v >>> 16) & 255;
@@ -94,11 +79,13 @@ function argbToRgbaStyle(v: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function brightenAmountForFlags(flags: number, pulse: number): number {
-  let brighten = 0.18;
-  if (hasDisplayHighlightGlow(flags)) brighten = Math.max(brighten, 0.28);
-  if (hasDisplayHighlightBreath(flags)) brighten = Math.max(brighten, 0.08 + pulse * 0.24);
-  return Math.min(1, brighten);
+/** 同色相叠光强度：用 screen 合成，避免向白色插值 */
+function cellHighlightOverlayAlpha(flags: number, pulse: number): number {
+  let alpha = 0;
+  if (hasDisplayHighlightMark(flags)) alpha = Math.max(alpha, 0.1);
+  if (hasDisplayHighlightGlow(flags)) alpha = Math.max(alpha, 0.14);
+  if (hasDisplayHighlightBreath(flags)) alpha = Math.max(alpha, 0.06 + pulse * 0.16);
+  return alpha;
 }
 
 function paintGlowLayers(
@@ -171,14 +158,32 @@ export function fillDisplayPackedWithHighlight(
       if (v === 0) continue;
       const x = originX + dx * cell;
       const y = originY + dy * cell;
-      const flags = hasHighlight ? getDisplayHighlightFlags(highlightGrid!, dx, dy) : 0;
-      const color =
-        hasDisplayHighlightMark(flags)
-          ? brightenArgb(v, brightenAmountForFlags(flags, pulse))
-          : v;
-      ctx.fillStyle = argbToRgbaStyle(color);
+      ctx.fillStyle = argbToRgbaStyle(v);
       ctx.fillRect(x, y, cell, cell);
     }
+  }
+
+  if (hasHighlight) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (let dy = 0; dy < dstRows; dy++) {
+      for (let dx = 0; dx < dstCols; dx++) {
+        const flags = getDisplayHighlightFlags(highlightGrid!, dx, dy);
+        if (!hasDisplayHighlightMark(flags)) continue;
+        const v = display[gridIndex(dx, dy, dstCols)] ?? 0;
+        if (v === 0) continue;
+        const x = originX + dx * cell;
+        const y = originY + dy * cell;
+        const cr = (v >>> 16) & 255;
+        const cg = (v >>> 8) & 255;
+        const cb = v & 255;
+        const alpha = cellHighlightOverlayAlpha(flags, pulse);
+        if (alpha <= 0) continue;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
+        ctx.fillRect(x, y, cell, cell);
+      }
+    }
+    ctx.restore();
   }
 }
 
