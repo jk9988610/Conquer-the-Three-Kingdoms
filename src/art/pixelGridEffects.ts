@@ -274,6 +274,61 @@ function sharpenGrid(grid: PixelGrid): PixelGrid {
   return out;
 }
 
+/** 八邻域（不含自身）；若 8 格均不透明则返回，否则返回空 */
+function neighbor8OpaqueRgba(grid: PixelGrid, x: number, y: number): Rgba[] {
+  const out: Rgba[] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const px = getPixel(grid, x + dx, y + dy);
+      if (!px || px.a < 0.08) return [];
+      out.push(px);
+    }
+  }
+  return out.length === 8 ? out : [];
+}
+
+/**
+ * 单遍内洞填色：透明格且八邻域均不透明时，用邻域主色组均值填补（与去深色点策略一致）。
+ */
+function fillEnclosedHolesPass(grid: PixelGrid): PixelGrid {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const out = cloneGrid(grid);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const center = getPixel(grid, x, y);
+      if (center && center.a >= 0.08) continue;
+
+      const neighbors = neighbor8OpaqueRgba(grid, x, y);
+      if (neighbors.length !== 8) continue;
+
+      const replacement = majorityNeighborAverage(neighbors) ?? averageRgba(neighbors);
+      if (!replacement) continue;
+
+      out[y]![x] = toPixel({
+        r: clampByte(replacement.r),
+        g: clampByte(replacement.g),
+        b: clampByte(replacement.b),
+        a: 1,
+      });
+    }
+  }
+  return out;
+}
+
+/** 多遍自外向内填补封闭透明内洞（如黑名单去除的独立背景色块） */
+export function fillEnclosedTransparentHoles(grid: PixelGrid, maxPasses = 12): PixelGrid {
+  let result = cloneGrid(grid);
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const next = fillEnclosedHolesPass(result);
+    if (gridsEqual(result, next)) break;
+    result = next;
+  }
+  return result;
+}
+
 /**
  * 去黑点（单遍）：扫雷式检查八邻域。
  * 若当前为深色且周围 8 格均无深色，则用邻域主色组的平均值替换。
@@ -410,6 +465,8 @@ export function cloneRemoveBgColorRules(rules: RemoveBgColorRules): RemoveBgColo
 export interface PixelImportMixOptions {
   removeBgMode?: RemoveBgModeInput;
   removeBgRules?: RemoveBgColorRules;
+  /** 去背景后填补被八邻域不透明色块完全包围的透明内洞 */
+  removeBgFillEnclosed?: boolean;
 }
 
 /** 边缘参考色（供 UI 展示） */
@@ -922,11 +979,14 @@ function applyRemoveBgToLogicalGrid(
   const logicalMask = computeRemoveBgLogicalMask(grid, toleranceSlider, options);
   if (!logicalMask) return cloneGrid(grid);
 
-  const out = cloneGrid(grid);
+  let out = cloneGrid(grid);
   for (let y = 0; y < logicalMask.length; y++) {
     for (let x = 0; x < (logicalMask[y]?.length ?? 0); x++) {
       if (logicalMask[y]![x]) out[y]![x] = null;
     }
+  }
+  if (options?.removeBgFillEnclosed) {
+    out = fillEnclosedTransparentHoles(out);
   }
   return out;
 }
@@ -1250,9 +1310,18 @@ export function describeEffectMix(
     const v = mix[o.id as keyof PixelImportEffectMix] ?? 0;
     if (v <= 0) continue;
     if (o.id === 'removeBg') {
-      parts.push(
-        `${o.label} ${getRemoveBgModeLabel(removeBgMode)} 容差${removeBgSliderToTolerance(v)}`
-      );
+      const hasRemove =
+        v > 0 || (options?.removeBgRules?.blacklist.length ?? 0) > 0;
+      const hasFill = !!options?.removeBgFillEnclosed;
+      if (!hasRemove && !hasFill) continue;
+      if (hasRemove) {
+        let part = `${o.label} ${getRemoveBgModeLabel(removeBgMode)} 容差${removeBgSliderToTolerance(v)}`;
+        if (hasFill) part += ' 内洞填色';
+        parts.push(part);
+      } else if (hasFill) {
+        parts.push('内洞填色');
+      }
+      continue;
     } else if (o.id === 'deblack') {
       parts.push(`${o.label} 深度${deblackSliderToLuminanceThreshold(v)}`);
     } else {
