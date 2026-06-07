@@ -427,6 +427,9 @@ export function getRemoveBgColorBucketKey(r: number, g: number, b: number): stri
   return `${r >> q},${g >> q},${b >> q}`;
 }
 
+/** 白/黑名单点选时，Lab ΔE76 与此值内视为同色组（覆盖相近色桶） */
+export const REMOVE_BG_RULE_MATCH_TOLERANCE = 14;
+
 // --- 去背景：Lab 感知距离 + 边缘参考色组 + 连通/剥离混合 ---
 
 function srgbToLinear(channel: number): number {
@@ -591,15 +594,29 @@ export function getRemoveBgEdgePalette(grid: PixelGrid): RemoveBgEdgeColor[] {
     });
 }
 
+function ruleToRgba(rule: RemoveBgColorRule): Rgba {
+  return { r: rule.r, g: rule.g, b: rule.b, a: 1 };
+}
+
+/** 判断像素是否落在某条色块规则的可感知范围内 */
+export function matchesRemoveBgColorRule(px: Rgba, rule: RemoveBgColorRule): boolean {
+  return perceptualColorDistance(px, ruleToRgba(rule)) <= REMOVE_BG_RULE_MATCH_TOLERANCE;
+}
+
+function pixelMatchesRuleList(px: Rgba, rules: RemoveBgColorRule[]): boolean {
+  for (const rule of rules) {
+    if (matchesRemoveBgColorRule(px, rule)) return true;
+  }
+  return false;
+}
+
 function applyColorRulesToMask(
   grid: PixelGrid,
   mask: boolean[][],
   rules?: RemoveBgColorRules
 ): boolean[][] {
   if (!rules) return mask;
-  const whitelistKeys = new Set(rules.whitelist.map((r) => r.key));
-  const blacklistKeys = new Set(rules.blacklist.map((r) => r.key));
-  if (whitelistKeys.size === 0 && blacklistKeys.size === 0) return mask;
+  if (rules.whitelist.length === 0 && rules.blacklist.length === 0) return mask;
 
   const rows = mask.length;
   const cols = mask[0]?.length ?? 0;
@@ -611,10 +628,21 @@ function applyColorRulesToMask(
         out[y]![x] = false;
         continue;
       }
-      const key = colorBucketKey(px);
-      if (whitelistKeys.has(key)) out[y]![x] = false;
-      else if (blacklistKeys.has(key)) out[y]![x] = true;
+      if (pixelMatchesRuleList(px, rules.whitelist)) out[y]![x] = false;
+      else if (pixelMatchesRuleList(px, rules.blacklist)) out[y]![x] = true;
     }
+  }
+  return out;
+}
+
+/** 合并相近规则，避免重复条目 */
+export function normalizeRemoveBgColorRuleList(rules: RemoveBgColorRule[]): RemoveBgColorRule[] {
+  const out: RemoveBgColorRule[] = [];
+  for (const rule of rules) {
+    const px = ruleToRgba(rule);
+    const dup = out.findIndex((existing) => matchesRemoveBgColorRule(px, existing));
+    if (dup >= 0) out[dup] = rule;
+    else out.push(rule);
   }
   return out;
 }
@@ -730,7 +758,80 @@ function computeRemoveBgMaskForMode(
   }
 }
 
-/** 计算去背景掩码（60×84 展示格）；规则在算法掩码上叠加保护色 / 强制去除色 */
+function computeRemoveBgAlgorithmMask(
+  grid: PixelGrid,
+  tolerance: number,
+  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
+): boolean[][] | null {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0 || tolerance <= 0) return null;
+
+  const edgePalette = buildEdgeReferencePalette(grid);
+  if (edgePalette.length === 0) return null;
+
+  return computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode));
+}
+
+/** 逻辑网格（500×700）上的最终去背景掩码：展示格算法 + 映射 + 感知色规则 */
+export function computeRemoveBgLogicalMask(
+  grid: PixelGrid,
+  toleranceSlider: number,
+  options?: PixelImportMixOptions
+): boolean[][] | null {
+  const tolerance =
+    toleranceSlider > 0 ? removeBgSliderToTolerance(toleranceSlider) : 0;
+  const hasBlacklist = (options?.removeBgRules?.blacklist.length ?? 0) > 0;
+  const hasWhitelist = (options?.removeBgRules?.whitelist.length ?? 0) > 0;
+  if (tolerance <= 0 && !hasBlacklist && !hasWhitelist) return null;
+
+  const matting = logicalGridToDisplayGridMatting(grid);
+  const displayMask = computeRemoveBgAlgorithmMask(
+    matting,
+    tolerance,
+    options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE
+  );
+
+  const logicalRaw = displayMask
+    ? displayMaskToLogicalMask(displayMask)
+    : createEmptyMask(ART_GRID_ROWS, ART_GRID_COLS);
+
+  const logicalMask = applyColorRulesToMask(grid, logicalRaw, options?.removeBgRules);
+
+  const anyMarked = logicalMask.some((row) => row.some(Boolean));
+  return anyMarked ? logicalMask : null;
+}
+
+/** 逻辑掩码聚合到 60×84 展示格（块内任一格去除则展示格标记） */
+export function logicalMaskToDisplayMask(logicalMask: boolean[][]): boolean[][] {
+  const displayMask = createEmptyMask(ART_DISPLAY_ROWS, ART_DISPLAY_COLS);
+  for (let y = 0; y < ART_GRID_ROWS; y++) {
+    const dy = Math.min(
+      ART_DISPLAY_ROWS - 1,
+      Math.floor((y * ART_DISPLAY_ROWS) / ART_GRID_ROWS)
+    );
+    for (let x = 0; x < ART_GRID_COLS; x++) {
+      const dx = Math.min(
+        ART_DISPLAY_COLS - 1,
+        Math.floor((x * ART_DISPLAY_COLS) / ART_GRID_COLS)
+      );
+      if (logicalMask[y]?.[x]) displayMask[dy]![dx] = true;
+    }
+  }
+  return displayMask;
+}
+
+/** 从逻辑网格导出 60×84 预览掩码（与落盘一致） */
+export function computeRemoveBgDisplayMaskFromLogical(
+  logicalGrid: PixelGrid,
+  toleranceSlider: number,
+  options?: PixelImportMixOptions
+): boolean[][] | null {
+  const logicalMask = computeRemoveBgLogicalMask(logicalGrid, toleranceSlider, options);
+  return logicalMask ? logicalMaskToDisplayMask(logicalMask) : null;
+}
+
+/** 计算去背景掩码（60×84 展示格，仅展示格内规则；预览请用 computeRemoveBgDisplayMaskFromLogical） */
 export function computeRemoveBgMask(
   grid: PixelGrid,
   tolerance: number,
@@ -745,9 +846,10 @@ export function computeRemoveBgMask(
   const edgePalette = buildEdgeReferencePalette(grid);
   if (edgePalette.length === 0 && !hasBlacklist) return null;
 
-  let mask = edgePalette.length > 0
-    ? computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode))
-    : createEmptyMask(rows, cols);
+  const mask =
+    edgePalette.length > 0
+      ? computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode))
+      : createEmptyMask(rows, cols);
 
   return applyColorRulesToMask(grid, mask, rules);
 }
@@ -817,14 +919,9 @@ function applyRemoveBgToLogicalGrid(
   toleranceSlider: number,
   options?: PixelImportMixOptions
 ): PixelGrid {
-  const tolerance =
-    toleranceSlider > 0 ? removeBgSliderToTolerance(toleranceSlider) : 0;
-  const mode = options?.removeBgMode ?? DEFAULT_REMOVE_BG_MODE;
-  const matting = logicalGridToDisplayGridMatting(grid);
-  const displayMask = computeRemoveBgMask(matting, tolerance, mode, options?.removeBgRules);
-  if (!displayMask) return cloneGrid(grid);
+  const logicalMask = computeRemoveBgLogicalMask(grid, toleranceSlider, options);
+  if (!logicalMask) return cloneGrid(grid);
 
-  const logicalMask = displayMaskToLogicalMask(displayMask);
   const out = cloneGrid(grid);
   for (let y = 0; y < logicalMask.length; y++) {
     for (let x = 0; x < (logicalMask[y]?.length ?? 0); x++) {

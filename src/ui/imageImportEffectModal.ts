@@ -8,7 +8,7 @@ import {
   applyPixelImportMixOnDisplay,
   clonePixelImportMix,
   cloneRemoveBgColorRules,
-  computeRemoveBgMask,
+  computeRemoveBgDisplayMaskFromLogical,
   createDefaultEffectMix,
   createEmptyRemoveBgColorRules,
   DEFAULT_REMOVE_BG_MODE,
@@ -17,11 +17,12 @@ import {
   getRemoveBgEdgePalette,
   isThresholdImportEffect,
   logicalGridToDisplayGridMatting,
+  matchesRemoveBgColorRule,
+  normalizeRemoveBgColorRuleList,
   normalizeRemoveBgMode,
   pickRemoveBgColorRuleFromGrid,
   PIXEL_IMPORT_EFFECTS,
   REMOVE_BG_MODES,
-  removeBgSliderToTolerance,
   type PixelImportEffect,
   type PixelImportEffectMix,
   type RemoveBgColorRule,
@@ -60,12 +61,12 @@ interface EffectHistoryEntry {
 
 type PreviewNavMode = 'browse' | 'protect' | 'remove';
 
-function upsertColorRule(list: RemoveBgColorRule[], rule: RemoveBgColorRule): RemoveBgColorRule[] {
-  return [...list.filter((r) => r.key !== rule.key), rule];
+function ruleRgba(rule: RemoveBgColorRule) {
+  return { r: rule.r, g: rule.g, b: rule.b, a: 1 };
 }
 
-function removeColorRuleByKey(list: RemoveBgColorRule[], key: string): RemoveBgColorRule[] {
-  return list.filter((r) => r.key !== key);
+function withoutSimilarRules(list: RemoveBgColorRule[], rule: RemoveBgColorRule): RemoveBgColorRule[] {
+  return list.filter((r) => !matchesRemoveBgColorRule(ruleRgba(r), rule));
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -183,7 +184,13 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   let previewPanX = 0;
   let previewPanY = 0;
   let previewUserScale = 1;
-  let previewCellPx = 1;
+  let previewLayout = {
+    cell: 1,
+    ox: 0,
+    oy: 0,
+    cssW: ART_DISPLAY_COLS,
+    cssH: ART_DISPLAY_ROWS,
+  };
 
   const previewPointers = new Map<number, { x: number; y: number }>();
   let previewPinchDist = 0;
@@ -342,7 +349,8 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
 
       const pickHint = document.createElement('div');
       pickHint.className = 'img-import-effect__remove-bg-modes-label';
-      pickHint.textContent = '点选保护 / 点选去除：在预览上点击色块；大容差误伤主体时用保护色';
+      pickHint.textContent =
+        '点选保护/去除：在预览点击色块（相近色一组生效）；大容差误伤主体请加保护色';
       section.append(pickHint);
 
       const whitelistLabel = document.createElement('div');
@@ -445,9 +453,14 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     renderPreview();
   });
 
-  function ruleListState(key: string): 'whitelist' | 'blacklist' | null {
-    if (removeBgRules.whitelist.some((r) => r.key === key)) return 'whitelist';
-    if (removeBgRules.blacklist.some((r) => r.key === key)) return 'blacklist';
+  function ruleListState(r: number, g: number, b: number): 'whitelist' | 'blacklist' | null {
+    const px = { r, g, b, a: 1 };
+    if (removeBgRules.whitelist.some((rule) => matchesRemoveBgColorRule(px, rule))) {
+      return 'whitelist';
+    }
+    if (removeBgRules.blacklist.some((rule) => matchesRemoveBgColorRule(px, rule))) {
+      return 'blacklist';
+    }
     return null;
   }
 
@@ -466,9 +479,9 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       e.stopPropagation();
       pushEffectUndo();
       if (list === 'whitelist') {
-        removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, rule.key);
+        removeBgRules.whitelist = withoutSimilarRules(removeBgRules.whitelist, rule);
       } else {
-        removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, rule.key);
+        removeBgRules.blacklist = withoutSimilarRules(removeBgRules.blacklist, rule);
       }
       updateColorRulesUI();
       renderPreview();
@@ -509,11 +522,17 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   function addColorRule(list: 'whitelist' | 'blacklist', rule: RemoveBgColorRule): void {
     pushEffectUndo();
     if (list === 'whitelist') {
-      removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, rule.key);
-      removeBgRules.whitelist = upsertColorRule(removeBgRules.whitelist, rule);
+      removeBgRules.blacklist = withoutSimilarRules(removeBgRules.blacklist, rule);
+      removeBgRules.whitelist = normalizeRemoveBgColorRuleList([
+        ...withoutSimilarRules(removeBgRules.whitelist, rule),
+        rule,
+      ]);
     } else {
-      removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, rule.key);
-      removeBgRules.blacklist = upsertColorRule(removeBgRules.blacklist, rule);
+      removeBgRules.whitelist = withoutSimilarRules(removeBgRules.whitelist, rule);
+      removeBgRules.blacklist = normalizeRemoveBgColorRuleList([
+        ...withoutSimilarRules(removeBgRules.blacklist, rule),
+        rule,
+      ]);
     }
     updateColorRulesUI();
     renderPreview();
@@ -534,7 +553,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     for (const c of colors) {
       const swatch = document.createElement('button');
       swatch.type = 'button';
-      const state = ruleListState(c.key);
+      const state = ruleListState(c.r, c.g, c.b);
       swatch.className = 'img-import-effect__remove-bg-swatch';
       if (state === 'whitelist') swatch.classList.add('is-whitelist');
       if (state === 'blacklist') swatch.classList.add('is-blacklist');
@@ -546,12 +565,12 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         const rule: RemoveBgColorRule = { key: c.key, r: c.r, g: c.g, b: c.b };
         if (state === 'whitelist') {
           pushEffectUndo();
-          removeBgRules.whitelist = removeColorRuleByKey(removeBgRules.whitelist, c.key);
+          removeBgRules.whitelist = withoutSimilarRules(removeBgRules.whitelist, rule);
           updateColorRulesUI();
           renderPreview();
         } else if (state === 'blacklist') {
           pushEffectUndo();
-          removeBgRules.blacklist = removeColorRuleByKey(removeBgRules.blacklist, c.key);
+          removeBgRules.blacklist = withoutSimilarRules(removeBgRules.blacklist, rule);
           updateColorRulesUI();
           renderPreview();
         } else {
@@ -588,13 +607,24 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   function pickDisplayCell(clientX: number, clientY: number): { x: number; y: number } | null {
-    const rect = previewSurface.getBoundingClientRect();
-    const localX = clientX - rect.left;
-    const localY = clientY - rect.top;
-    const gx = Math.floor(localX / previewCellPx);
-    const gy = Math.floor(localY / previewCellPx);
+    const rect = previewCanvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const { cell, ox, oy, cssW, cssH } = previewLayout;
+    const nx = ((clientX - rect.left) / rect.width) * cssW;
+    const ny = ((clientY - rect.top) / rect.height) * cssH;
+    const gx = Math.floor((nx - ox) / cell);
+    const gy = Math.floor((ny - oy) / cell);
     if (gx < 0 || gy < 0 || gx >= ART_DISPLAY_COLS || gy >= ART_DISPLAY_ROWS) return null;
     return { x: gx, y: gy };
+  }
+
+  function fillPreviewDisplayCell(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number
+  ): void {
+    const { cell, ox, oy } = previewLayout;
+    ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
   }
 
   function tryPickColorAt(clientX: number, clientY: number): void {
@@ -735,29 +765,25 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     const cssW = ART_DISPLAY_COLS * cellPx;
     const cssH = ART_DISPLAY_ROWS * cellPx;
 
-    previewCellPx = cellPx;
+    const layout = gridDrawLayout(
+      ART_DISPLAY_COLS,
+      ART_DISPLAY_ROWS,
+      cssW,
+      cssH,
+      'fit'
+    );
+    previewLayout = { cell: layout.cell, ox: layout.ox, oy: layout.oy, cssW, cssH };
+
     previewSurface.style.width = `${cssW}px`;
     previewSurface.style.height = `${cssH}px`;
     applyPreviewTransform();
 
-    const prepared = prepareSharpCanvas(
-      previewCanvas,
-      ART_DISPLAY_COLS,
-      ART_DISPLAY_ROWS
-    );
+    const prepared = prepareSharpCanvas(previewCanvas, cssW, cssH);
     if (!prepared) return;
     const { ctx } = prepared;
-    previewCanvas.style.width = `${cssW}px`;
-    previewCanvas.style.height = `${cssH}px`;
-    ctx.clearRect(0, 0, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
+    ctx.clearRect(0, 0, cssW, cssH);
     const display = applyPixelImportMixOnDisplay(currentGrid, mix, mixOptions());
-    drawGridToCanvas(
-      ctx,
-      display,
-      ART_DISPLAY_COLS,
-      ART_DISPLAY_ROWS,
-      'fit'
-    );
+    drawGridToCanvas(ctx, display, cssW, cssH, 'fit');
 
     if (transparentFlash && flashHighlight) {
       ctx.fillStyle = 'rgba(255, 48, 140, 0.72)';
@@ -765,23 +791,24 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         const row = display[y] ?? [];
         for (let x = 0; x < row.length; x++) {
           if (row[x] !== null) continue;
-          ctx.fillRect(x, y, 1, 1);
+          fillPreviewDisplayCell(ctx, x, y);
         }
       }
     }
 
     if (maskOverlay && isRemoveBgActive()) {
-      const matting = logicalGridToDisplayGridMatting(currentGrid);
-      const slider = mix.removeBg ?? 0;
-      const tolerance = slider > 0 ? removeBgSliderToTolerance(slider) : 0;
-      const mask = computeRemoveBgMask(matting, tolerance, removeBgMode, removeBgRules);
+      const mask = computeRemoveBgDisplayMaskFromLogical(
+        currentGrid,
+        mix.removeBg ?? 0,
+        mixOptions()
+      );
       if (mask) {
         ctx.fillStyle = 'rgba(255, 64, 48, 0.55)';
         for (let y = 0; y < mask.length; y++) {
           const row = mask[y] ?? [];
           for (let x = 0; x < row.length; x++) {
             if (!row[x]) continue;
-            ctx.fillRect(x, y, 1, 1);
+            fillPreviewDisplayCell(ctx, x, y);
           }
         }
       }
