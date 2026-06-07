@@ -6,7 +6,7 @@ import {
 } from './gridConfig';
 import {
   downsamplePackedGrid,
-  downsamplePackedGridMajority,
+  downsamplePackedGridBucketMajority,
   gridToPacked,
   packedToGrid,
 } from './packedGrid';
@@ -37,7 +37,7 @@ export const PIXEL_IMPORT_EFFECTS: PixelImportEffectOption[] = [
   {
     id: 'removeBg',
     label: '去背景',
-    description: '外层参考色组为准，从外向内逐层只剥该层内的背景色块',
+    description: 'Lab 感知容差 + 边缘参考色组，智能混合剥除背景',
   },
   { id: 'sharpen', label: '锐化', description: '细节与边缘区域优先强化' },
   { id: 'deblack', label: '去深色点', description: '滑条为颜色深度阈值，扫雷式去除孤立深色噪点' },
@@ -308,10 +308,10 @@ function deblackPass(grid: PixelGrid, threshold = DARK_PIXEL_LUMINANCE_DEFAULT):
   return out;
 }
 
-/** 滑条 1–100 → RGB 欧氏容差（约 10–82，越大越易判定为背景） */
+/** 滑条 1–100 → Lab ΔE76 容差（约 6–42，越大越易判定为背景） */
 export function removeBgSliderToTolerance(sliderValue: number): number {
   if (sliderValue <= 0) return 0;
-  return Math.max(10, Math.round(10 + (sliderValue / 100) * 72));
+  return Math.max(6, Math.round(6 + (sliderValue / 100) * 36));
 }
 
 export function formatRemoveBgSliderValue(sliderValue: number): string {
@@ -319,8 +319,8 @@ export function formatRemoveBgSliderValue(sliderValue: number): string {
   return `容差${removeBgSliderToTolerance(sliderValue)}`;
 }
 
-/** 去背景方案（当前仅层层剥离） */
-export type RemoveBgMode = 'peel';
+/** 去背景方案 */
+export type RemoveBgMode = 'hybrid' | 'connected' | 'peel';
 
 /** 兼容历史撤销记录中的旧方案名 */
 export type RemoveBgModeInput =
@@ -341,16 +341,42 @@ export interface RemoveBgModeOption {
 
 export const REMOVE_BG_MODES: RemoveBgModeOption[] = [
   {
+    id: 'hybrid',
+    label: '智能混合',
+    description: '边缘连通泛洪剥除外围背景，再按格距逐层清除主体内缝隙背景',
+  },
+  {
+    id: 'connected',
+    label: '边缘连通',
+    description: '仅从画面边缘出发泛洪，只去除与边框连通的背景色块，不易误伤贴边主体',
+  },
+  {
     id: 'peel',
     label: '层层剥离',
-    description: '按与画面边缘格距从外向内逐层扫描，只去除落在边缘色组区间内的背景色块',
+    description: '按与画面边缘格距从外向内逐层扫描，清除落在边缘色组区间内的背景色块',
   },
 ];
 
-export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'peel';
+export const DEFAULT_REMOVE_BG_MODE: RemoveBgMode = 'hybrid';
 
-export function normalizeRemoveBgMode(_mode: RemoveBgModeInput): RemoveBgMode {
-  return 'peel';
+export function normalizeRemoveBgMode(mode: RemoveBgModeInput): RemoveBgMode {
+  switch (mode) {
+    case 'hybrid':
+      return 'hybrid';
+    case 'connected':
+    case 'edge':
+    case 'outer':
+    case 'outerSafe':
+    case 'outerFringe':
+    case 'outerCorner':
+    case 'outerFull':
+      return 'connected';
+    case 'peel':
+    case 'gapFill':
+      return 'peel';
+    default:
+      return DEFAULT_REMOVE_BG_MODE;
+  }
 }
 
 export function getRemoveBgModeLabel(mode: RemoveBgModeInput): string {
@@ -362,6 +388,38 @@ export interface PixelImportMixOptions {
   removeBgMode?: RemoveBgModeInput;
 }
 
+/** 边缘参考色（供 UI 展示） */
+export interface RemoveBgEdgeColor {
+  r: number;
+  g: number;
+  b: number;
+  count: number;
+}
+
+// --- 去背景：Lab 感知距离 + 边缘参考色组 + 连通/剥离混合 ---
+
+function srgbToLinear(channel: number): number {
+  const v = channel / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
+
+function rgbaToLab(rgba: Rgba): [number, number, number] {
+  const r = srgbToLinear(rgba.r);
+  const g = srgbToLinear(rgba.g);
+  const b = srgbToLinear(rgba.b);
+  const x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
+  const y = r * 0.2126729 + g * 0.7151522 + b * 0.072175;
+  const z = r * 0.0193339 + g * 0.119192 + b * 0.9503041;
+  const refX = 0.95047;
+  const refY = 1;
+  const refZ = 1.08883;
+  const f = (t: number) => (t > 0.008856 ? t ** (1 / 3) : 7.787 * t + 16 / 116);
+  const fx = f(x / refX);
+  const fy = f(y / refY);
+  const fz = f(z / refZ);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
 function rgbaDistance(a: Rgba, b: Rgba): number {
   const dr = a.r - b.r;
   const dg = a.g - b.g;
@@ -369,7 +427,15 @@ function rgbaDistance(a: Rgba, b: Rgba): number {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
-// --- 去背景：外层参考色组 + 按与画面边缘格距从外向内逐层剥离 ---
+/** Lab ΔE76，比 RGB 欧氏距离更符合人眼对背景相近色的感知 */
+function perceptualColorDistance(a: Rgba, b: Rgba): number {
+  const [L1, a1, b1] = rgbaToLab(a);
+  const [L2, a2, b2] = rgbaToLab(b);
+  const dL = L1 - L2;
+  const da = a1 - a2;
+  const db = b1 - b2;
+  return Math.sqrt(dL * dL + da * da + db * db);
+}
 
 function createEmptyMask(rows: number, cols: number): boolean[][] {
   return Array.from({ length: rows }, () => Array.from({ length: cols }, () => false));
@@ -379,7 +445,7 @@ function nearestPaletteDistance(px: Rgba, palette: Rgba[]): number {
   if (palette.length === 0) return Number.POSITIVE_INFINITY;
   let min = Number.POSITIVE_INFINITY;
   for (const ref of palette) {
-    const d = rgbaDistance(px, ref);
+    const d = perceptualColorDistance(px, ref);
     if (d < min) min = d;
   }
   return min;
@@ -401,17 +467,37 @@ function* borderCoords(cols: number, rows: number): Generator<[number, number]> 
   }
 }
 
+function bucketCentroid(samples: Rgba[]): Rgba {
+  let sr = 0;
+  let sg = 0;
+  let sb = 0;
+  let sa = 0;
+  for (const px of samples) {
+    sr += px.r;
+    sg += px.g;
+    sb += px.b;
+    sa += px.a;
+  }
+  const n = samples.length;
+  return {
+    r: Math.round(sr / n),
+    g: Math.round(sg / n),
+    b: Math.round(sb / n),
+    a: sa / n,
+  };
+}
+
 /**
  * 边缘参考色组：仅统计画面最外一圈像素，按色块数量排序。
- * 出现次数 ≥ max(2, 外圈总数×8%) 的色块才入组，作为后续「色组区间」的参考点。
- * 某像素是否在区间内：其 RGB 与组内任一参考色的欧氏距离 ≤ 容差（滑条换算值）。
+ * 每桶取均值作代表色；出现次数 ≥ max(2, 外圈总数×8%) 的色块才入组。
+ * 判定：Lab ΔE76 与组内任一参考色 ≤ 容差。
  */
 function buildEdgeReferencePalette(grid: PixelGrid): Rgba[] {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
   if (cols === 0 || rows === 0) return [];
 
-  const buckets = new Map<string, { color: Rgba; count: number }>();
+  const buckets = new Map<string, { samples: Rgba[]; count: number }>();
   let total = 0;
   for (const [x, y] of borderCoords(cols, rows)) {
     const px = getPixel(grid, x, y);
@@ -419,8 +505,12 @@ function buildEdgeReferencePalette(grid: PixelGrid): Rgba[] {
     total++;
     const key = colorBucketKey(px);
     const entry = buckets.get(key);
-    if (entry) entry.count++;
-    else buckets.set(key, { color: px, count: 1 });
+    if (entry) {
+      entry.samples.push(px);
+      entry.count++;
+    } else {
+      buckets.set(key, { samples: [px], count: 1 });
+    }
   }
   if (total === 0) return [];
 
@@ -428,11 +518,92 @@ function buildEdgeReferencePalette(grid: PixelGrid): Rgba[] {
   return [...buckets.values()]
     .filter((b) => b.count >= minCount)
     .sort((a, b) => b.count - a.count)
-    .map((b) => b.color);
+    .map((b) => bucketCentroid(b.samples));
+}
+
+/** 获取边缘参考色组（供预览 UI 展示色块） */
+export function getRemoveBgEdgePalette(grid: PixelGrid): RemoveBgEdgeColor[] {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  if (cols === 0 || rows === 0) return [];
+
+  const buckets = new Map<string, { samples: Rgba[]; count: number }>();
+  for (const [x, y] of borderCoords(cols, rows)) {
+    const px = getPixel(grid, x, y);
+    if (!px || px.a < 0.08) continue;
+    const key = colorBucketKey(px);
+    const entry = buckets.get(key);
+    if (entry) {
+      entry.samples.push(px);
+      entry.count++;
+    } else {
+      buckets.set(key, { samples: [px], count: 1 });
+    }
+  }
+
+  const total = [...buckets.values()].reduce((sum, b) => sum + b.count, 0);
+  if (total === 0) return [];
+
+  const minCount = Math.max(2, Math.ceil(total * 0.08));
+  return [...buckets.values()]
+    .filter((b) => b.count >= minCount)
+    .sort((a, b) => b.count - a.count)
+    .map((b) => {
+      const c = bucketCentroid(b.samples);
+      return { r: c.r, g: c.g, b: c.b, count: b.count };
+    });
 }
 
 function isInEdgeReferenceGroup(px: Rgba, palette: Rgba[], tolerance: number): boolean {
   return nearestPaletteDistance(px, palette) <= tolerance;
+}
+
+const FLOOD_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [0, -1],
+  [1, 0],
+  [-1, 0],
+];
+
+/** 从画面边缘出发泛洪，只剥与边框连通的背景色块 */
+function floodBackgroundFromBorder(
+  grid: PixelGrid,
+  edgePalette: Rgba[],
+  tolerance: number
+): boolean[][] {
+  const rows = grid.length;
+  const cols = Math.max(0, ...grid.map((r) => r.length));
+  const mask = createEmptyMask(rows, cols);
+  const visited = createEmptyMask(rows, cols);
+  const queue: [number, number][] = [];
+
+  for (const [x, y] of borderCoords(cols, rows)) {
+    const px = getPixel(grid, x, y);
+    if (!px || px.a < 0.08) continue;
+    if (!isInEdgeReferenceGroup(px, edgePalette, tolerance)) continue;
+    visited[y]![x] = true;
+    mask[y]![x] = true;
+    queue.push([x, y]);
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const [x, y] = queue[head++]!;
+    for (const [dx, dy] of FLOOD_NEIGHBORS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      if (visited[ny]![nx]) continue;
+      const px = getPixel(grid, nx, ny);
+      if (!px || px.a < 0.08) continue;
+      if (!isInEdgeReferenceGroup(px, edgePalette, tolerance)) continue;
+      visited[ny]![nx] = true;
+      mask[ny]![nx] = true;
+      queue.push([nx, ny]);
+    }
+  }
+
+  return mask;
 }
 
 /**
@@ -464,11 +635,41 @@ function peelBackgroundLayers(
   return mask;
 }
 
+function unionMasks(a: boolean[][], b: boolean[][]): boolean[][] {
+  const rows = a.length;
+  const out = createEmptyMask(rows, a[0]?.length ?? 0);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < (out[y]?.length ?? 0); x++) {
+      out[y]![x] = !!(a[y]?.[x] || b[y]?.[x]);
+    }
+  }
+  return out;
+}
+
+function computeRemoveBgMaskForMode(
+  grid: PixelGrid,
+  edgePalette: Rgba[],
+  tolerance: number,
+  mode: RemoveBgMode
+): boolean[][] {
+  switch (mode) {
+    case 'connected':
+      return floodBackgroundFromBorder(grid, edgePalette, tolerance);
+    case 'peel':
+      return peelBackgroundLayers(grid, edgePalette, tolerance);
+    case 'hybrid':
+      return unionMasks(
+        floodBackgroundFromBorder(grid, edgePalette, tolerance),
+        peelBackgroundLayers(grid, edgePalette, tolerance)
+      );
+  }
+}
+
 /** 计算去背景掩码（60×84 展示格） */
 export function computeRemoveBgMask(
   grid: PixelGrid,
   tolerance: number,
-  _mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
+  mode: RemoveBgModeInput = DEFAULT_REMOVE_BG_MODE
 ): boolean[][] | null {
   const rows = grid.length;
   const cols = Math.max(0, ...grid.map((r) => r.length));
@@ -477,7 +678,7 @@ export function computeRemoveBgMask(
   const edgePalette = buildEdgeReferencePalette(grid);
   if (edgePalette.length === 0) return null;
 
-  return peelBackgroundLayers(grid, edgePalette, tolerance);
+  return computeRemoveBgMaskForMode(grid, edgePalette, tolerance, normalizeRemoveBgMode(mode));
 }
 
 function applyRemoveBgMask(grid: PixelGrid, mask: boolean[][]): PixelGrid {
@@ -865,10 +1066,10 @@ export function logicalGridToDisplayGrid(grid: PixelGrid): PixelGrid {
   return packedToGrid(displayPacked, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
 }
 
-/** 逻辑网格 → 展示网格（块内多数色，专供去背景算掩码，减少取样条纹） */
+/** 逻辑网格 → 展示网格（色桶多数票 + 桶内均值，专供去背景算掩码） */
 export function logicalGridToDisplayGridMatting(grid: PixelGrid): PixelGrid {
   const packed = gridToPacked(grid, ART_GRID_COLS, ART_GRID_ROWS);
-  const displayPacked = downsamplePackedGridMajority(
+  const displayPacked = downsamplePackedGridBucketMajority(
     packed,
     ART_GRID_COLS,
     ART_GRID_ROWS,

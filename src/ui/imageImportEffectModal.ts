@@ -7,14 +7,18 @@ import {
   applyPixelImportMixForEditor,
   applyPixelImportMixOnDisplay,
   clonePixelImportMix,
+  computeRemoveBgMask,
   createDefaultEffectMix,
   DEFAULT_REMOVE_BG_MODE,
   describeEffectMix,
   formatImportEffectSliderValue,
+  getRemoveBgEdgePalette,
   isThresholdImportEffect,
+  logicalGridToDisplayGridMatting,
   normalizeRemoveBgMode,
   PIXEL_IMPORT_EFFECTS,
   REMOVE_BG_MODES,
+  removeBgSliderToTolerance,
   type PixelImportEffect,
   type PixelImportEffectMix,
   type RemoveBgMode,
@@ -94,6 +98,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       </div>
       <div class="img-import-effect__topbar-actions">
         <button type="button" class="btn img-import-effect__topbar-btn" data-transparent-flash title="高亮闪烁已透明区域，便于检查抠图">透明闪烁</button>
+        <button type="button" class="btn img-import-effect__topbar-btn" data-mask-overlay title="红色叠层标出将被去除的色块">掩码预览</button>
         <button type="button" class="btn img-import-effect__topbar-btn" data-fullscreen>全屏</button>
         <button type="button" class="img-import-effect__close" data-close aria-label="关闭">×</button>
       </div>
@@ -130,12 +135,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   const transparentFlashBtn = modal.querySelector<HTMLButtonElement>(
     '[data-transparent-flash]'
   )!;
+  const maskOverlayBtn = modal.querySelector<HTMLButtonElement>('[data-mask-overlay]')!;
   const fullscreenBtn = modal.querySelector<HTMLButtonElement>('[data-fullscreen]')!;
   const undoBtn = modal.querySelector<HTMLButtonElement>('[data-undo]')!;
   const redoBtn = modal.querySelector<HTMLButtonElement>('[data-redo]')!;
 
   let transparentFlash = false;
   let flashHighlight = false;
+  let maskOverlay = false;
+  let edgePaletteEl: HTMLElement | null = null;
 
   const sliderByEffect = new Map<
     Exclude<PixelImportEffect, 'standard'>,
@@ -229,37 +237,45 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       section.className = 'img-import-effect__remove-bg-section';
       section.append(slider.root);
 
-      if (REMOVE_BG_MODES.length > 1) {
-        const modesLabel = document.createElement('div');
-        modesLabel.className = 'img-import-effect__remove-bg-modes-label';
-        modesLabel.textContent = '去背景方案';
-        section.append(modesLabel);
+      const modesLabel = document.createElement('div');
+      modesLabel.className = 'img-import-effect__remove-bg-modes-label';
+      modesLabel.textContent = '去背景方案';
+      section.append(modesLabel);
 
-        const modesEl = document.createElement('div');
-        modesEl.className = 'img-import-effect__remove-bg-modes';
-        for (const modeOpt of REMOVE_BG_MODES) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'img-import-effect__remove-bg-mode';
-          btn.dataset.mode = modeOpt.id;
-          btn.textContent = modeOpt.label;
-          btn.title = modeOpt.description;
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (removeBgMode === modeOpt.id) return;
-            pushEffectUndo();
-            removeBgMode = modeOpt.id;
-            updateRemoveBgModeButtons();
-            updateMixLabel();
-            renderPreview();
-          });
-          removeBgModeButtons.set(modeOpt.id, btn);
-          modesEl.append(btn);
-        }
-        section.append(modesEl);
-        updateRemoveBgModeButtons();
+      const modesEl = document.createElement('div');
+      modesEl.className = 'img-import-effect__remove-bg-modes';
+      for (const modeOpt of REMOVE_BG_MODES) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'img-import-effect__remove-bg-mode';
+        btn.dataset.mode = modeOpt.id;
+        btn.textContent = modeOpt.label;
+        btn.title = modeOpt.description;
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (removeBgMode === modeOpt.id) return;
+          pushEffectUndo();
+          removeBgMode = modeOpt.id;
+          updateRemoveBgModeButtons();
+          updateMixLabel();
+          renderPreview();
+        });
+        removeBgModeButtons.set(modeOpt.id, btn);
+        modesEl.append(btn);
       }
+      section.append(modesEl);
+      updateRemoveBgModeButtons();
+
+      const paletteLabel = document.createElement('div');
+      paletteLabel.className = 'img-import-effect__remove-bg-modes-label';
+      paletteLabel.textContent = '边缘参考色';
+      section.append(paletteLabel);
+
+      edgePaletteEl = document.createElement('div');
+      edgePaletteEl.className = 'img-import-effect__remove-bg-palette';
+      edgePaletteEl.hidden = true;
+      section.append(edgePaletteEl);
 
       slidersEl.append(section);
     } else {
@@ -330,6 +346,40 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
     updateTransparentFlashBtn();
   });
 
+  function updateMaskOverlayBtn(): void {
+    maskOverlayBtn.classList.toggle('is-active', maskOverlay);
+    maskOverlayBtn.textContent = maskOverlay ? '关闭掩码' : '掩码预览';
+  }
+
+  maskOverlayBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    maskOverlay = !maskOverlay;
+    updateMaskOverlayBtn();
+    renderPreview();
+  });
+
+  function updateEdgePaletteSwatches(): void {
+    if (!edgePaletteEl) return;
+    const strength = mix.removeBg ?? 0;
+    if (strength <= 0) {
+      edgePaletteEl.replaceChildren();
+      edgePaletteEl.hidden = true;
+      return;
+    }
+    const matting = logicalGridToDisplayGridMatting(currentGrid);
+    const colors = getRemoveBgEdgePalette(matting);
+    edgePaletteEl.hidden = colors.length === 0;
+    edgePaletteEl.replaceChildren();
+    for (const c of colors) {
+      const swatch = document.createElement('span');
+      swatch.className = 'img-import-effect__remove-bg-swatch';
+      swatch.style.backgroundColor = `rgb(${c.r},${c.g},${c.b})`;
+      swatch.title = `rgb(${c.r},${c.g},${c.b}) · 外圈 ${c.count} 格`;
+      edgePaletteEl.append(swatch);
+    }
+  }
+
   function renderPreview(): void {
     const rect = previewWrap.getBoundingClientRect();
     const availW = Math.max(1, Math.floor(rect.width));
@@ -377,6 +427,24 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
         }
       }
     }
+
+    if (maskOverlay && (mix.removeBg ?? 0) > 0) {
+      const matting = logicalGridToDisplayGridMatting(currentGrid);
+      const tolerance = removeBgSliderToTolerance(mix.removeBg ?? 0);
+      const mask = computeRemoveBgMask(matting, tolerance, removeBgMode);
+      if (mask) {
+        ctx.fillStyle = 'rgba(255, 64, 48, 0.55)';
+        for (let y = 0; y < mask.length; y++) {
+          const row = mask[y] ?? [];
+          for (let x = 0; x < row.length; x++) {
+            if (!row[x]) continue;
+            ctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    }
+
+    updateEdgePaletteSwatches();
   }
 
   function resetMix(): void {
