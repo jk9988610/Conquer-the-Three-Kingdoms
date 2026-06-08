@@ -603,6 +603,30 @@ export function pastePackedRegion(
   }
 }
 
+/** 将逻辑网格转为 60×84 PNG Blob（供云端上传） */
+export function packedGridToPngBlob(
+  packed: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): Promise<Blob> {
+  const flat = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const canvas = document.createElement('canvas');
+  canvas.width = dstCols;
+  canvas.height = dstRows;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return Promise.reject(new Error('无法创建画布'));
+  ctx.clearRect(0, 0, dstCols, dstRows);
+  drawPackedToCanvas(ctx, flat, dstCols, dstRows, dstCols, dstRows, 'fit');
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error('无法生成 PNG'));
+      else resolve(blob);
+    }, 'image/png');
+  });
+}
+
 /** 导出当前所见扁平图（60×84 展示格，1 格 = 1 像素，透明 PNG） */
 export function downloadPackedPng(
   packed: PackedGrid,
@@ -612,23 +636,14 @@ export function downloadPackedPng(
   dstCols = ART_DISPLAY_COLS,
   dstRows = ART_DISPLAY_ROWS
 ): void {
-  const flat = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
-  const canvas = document.createElement('canvas');
-  canvas.width = dstCols;
-  canvas.height = dstRows;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, dstCols, dstRows);
-  drawPackedToCanvas(ctx, flat, dstCols, dstRows, dstCols, dstRows, 'fit');
-  canvas.toBlob((blob) => {
-    if (!blob) return;
+  void packedGridToPngBlob(packed, srcCols, srcRows, dstCols, dstRows).then((blob) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
     a.click();
     URL.revokeObjectURL(url);
-  }, 'image/png');
+  });
 }
 
 export function collectPackedDiff(

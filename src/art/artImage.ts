@@ -30,6 +30,23 @@ export function clearCustomArtImage(key: PixelArtKey): void {
   customArtDisplayPacked.delete(key);
 }
 
+export async function loadArtImageFromBlob(key: PixelArtKey, blob: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('无法解码缓存卡图'));
+      img.src = url;
+    });
+    setCustomArtImage(key, img);
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function loadArtImageFromUrl(key: PixelArtKey, url: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.decoding = 'async';

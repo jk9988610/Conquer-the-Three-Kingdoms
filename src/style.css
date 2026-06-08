@@ -322,6 +322,12 @@ body {
   color: var(--tcg-text);
   font-size: 0.7rem;
   cursor: pointer;
+}
+
+.btn--accent {
+  border-color: var(--tcg-accent);
+  color: #1a1408;
+  background: var(--tcg-accent);
   touch-action: manipulation;
 }
 

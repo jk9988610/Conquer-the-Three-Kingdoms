@@ -11,8 +11,10 @@
     "upload-art": "node scripts/upload-art-supabase.mjs",
     "sync-art": "npm run build-art-manifest && npm run upload-art"
   },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8"
+  },
   "devDependencies": {
-    "@supabase/supabase-js": "^2.49.8",
     "typescript": "~6.0.2",
     "vite": "^5.4.11"
   }

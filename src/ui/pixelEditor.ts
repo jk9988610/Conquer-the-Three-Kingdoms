@@ -1,3 +1,4 @@
+import { uploadArtToCloud } from '../art/artCloudUpload';
 import { createArtCardMeta, downloadJsonFile } from '../art/artMeta';
 import { formatArtMemoryReport } from '../art/artMemoryStats';
 import {
@@ -26,6 +27,7 @@ import {
   createPackedGrid,
   downsamplePackedGrid,
   downloadPackedPng,
+  packedGridToPngBlob,
   drawDisplayPackedAtCellSize,
   flattenPackedToDisplayBlocks,
   getPackedPixel,
@@ -627,7 +629,8 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-clear>清空画布</button>
             <button type="button" class="btn" data-apply>应用</button>
             <button type="button" class="btn" data-export>导出 PNG</button>
-            <button type="button" class="btn" data-export-bundle title="下载 PNG + 渲染层 meta.json，放入 public/cards 后运行 npm run build-art-manifest">导出资源包</button>
+            <button type="button" class="btn" data-export-bundle title="下载 PNG + 渲染层 meta.json">导出资源包</button>
+            <button type="button" class="btn btn--accent" data-upload-cloud title="上传至 Supabase，玩家刷新后自动加载">上传云端</button>
           </div>
         </div>
     </section>
@@ -1997,6 +2000,38 @@ export function openPixelEditor(onApplied: () => void): void {
       `${currentKey}.meta.json`,
       createArtCardMeta(currentKey, highlightGrid, breathSpeed)
     );
+  });
+
+  const uploadCloudBtn = panel.querySelector<HTMLButtonElement>('[data-upload-cloud]')!;
+  uploadCloudBtn.addEventListener('click', () => {
+    void (async () => {
+      const prevLabel = uploadCloudBtn.textContent;
+      uploadCloudBtn.disabled = true;
+      uploadCloudBtn.textContent = '上传中…';
+      try {
+        flattenEditorGrid();
+        refreshAll();
+        const meta = createArtCardMeta(currentKey, highlightGrid, breathSpeed);
+        const pngBlob = await packedGridToPngBlob(grid);
+        await uploadArtToCloud(currentKey, pngBlob, meta);
+        setCustomArtGrid(currentKey, packedToGrid(grid));
+        setCustomArtHighlight(currentKey, highlightGrid, breathSpeed);
+        savePixelEditorDraft(currentKey, grid, highlightGrid, breathSpeed);
+        onApplied();
+        uploadCloudBtn.textContent = '上传成功';
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`上传失败：${msg}`);
+        uploadCloudBtn.textContent = prevLabel ?? '上传云端';
+      } finally {
+        uploadCloudBtn.disabled = false;
+        window.setTimeout(() => {
+          if (uploadCloudBtn.textContent === '上传成功') {
+            uploadCloudBtn.textContent = '上传云端';
+          }
+        }, 2200);
+      }
+    })();
   });
 
   function updateTransparentFlashBtn(): void {

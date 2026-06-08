@@ -19,13 +19,19 @@
 }
 ```
 
-## 最简工作流（GitHub）
+## 最简工作流（Pages 绘制页一键上传）
 
-1. 游戏内打开 **绘制** → 画好 → **导出资源包**（同时下载 `.png` 与 `.meta.json`）
-2. 将两个文件放入仓库 `public/cards/`
-3. 运行 `npm run build-art-manifest`（合并为 `manifest.json`）
-4. `git add public/cards && git commit && git push`
-5. 部署后刷新页面，卡牌自动加载 PNG
+1. 打开 **https://jk9988610.github.io/Conquer-the-Three-Kingdoms/** → **绘制**
+2. 画好 → 点 **上传云端**（自动上传 PNG + meta 并更新 Supabase `manifest.json`）
+3. 刷新游戏页面（或其他玩家打开）→ 自动从网络下载并 **缓存到 IndexedDB**
+
+也可离线导出：`导出资源包` 下载到本机，或用 `npm run sync-art`（开发者脚本）。
+
+## 本地/Git 工作流（可选）
+
+1. 导出资源包 → 放入 `public/cards/`
+2. `npm run build-art-manifest` → `npm run sync-art`
+3. `git push`（不必须，玩家端以 Supabase 为准）
 
 ## Supabase（CDN / 日后素材商店）
 

@@ -58,6 +58,7 @@ function main() {
   }
 
   const entries = {};
+  const updatedAt = new Date().toISOString();
 
   for (const [artKey, pngFile] of pngKeys.entries()) {
     const metaFile = `${artKey}.meta.json`;
@@ -79,11 +80,13 @@ function main() {
       }
     }
 
+    entry.updatedAt = updatedAt;
     entries[artKey] = entry;
   }
 
   const manifest = {
     version: 1,
+    updatedAt,
     baseUrl,
     entries,
   };
