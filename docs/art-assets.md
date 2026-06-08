@@ -66,6 +66,42 @@ VITE_ART_MANIFEST_URL=https://xxxx.supabase.co/storage/v1/object/public/card-art
 
 流程：meta 与 manifest 走 Git PR；PNG 用 `upload-art` 推 Supabase；manifest 的 `baseUrl` 指向 Supabase。
 
+## 与 Card-World 共用 Supabase 项目
+
+[Card-World](https://github.com/jk9988610/Card-World) 已配置同一 Supabase 项目（`js/cloud-config.js`）：
+
+| 桶 / 表 | 用途 |
+|---------|------|
+| `art` + `art_shop_works` | Card World **素材商店**（用户上传 pixel/v1 + PNG） |
+| `audio` + `published_works` | HarmonyForge 编曲发布 |
+| **`card-art`** | **征战三国**正式卡图（本仓库 `upload-art` 脚本） |
+
+Card-World 的 GitHub Pages **不在 CI 里调 Supabase**；静态页部署后，浏览器用 anon key 直连 API。本游戏同理：清单 URL 指向 Supabase 公共地址即可。
+
+### SQL Editor 执行顺序（征战三国专用桶）
+
+在 [Supabase Dashboard](https://supabase.com/dashboard) → **SQL Editor** → New query，按顺序执行：
+
+1. `supabase/schema-card-art-bucket.sql` — 创建 `card-art` 公共桶  
+2. `supabase/schema-card-art-storage-policies.sql` — 读取/上传策略  
+3. （可选）`supabase/schema-card-art-catalog.sql` — 日后商店「审核上架」用目录表  
+
+若桶已在 Dashboard 建好，文件 1 的 `INSERT` 会因 `on conflict` 安全跳过，仍建议执行文件 2。
+
+### 上传后公共 URL 模板
+
+```
+https://yjqkotqmglxjhlrhynsu.supabase.co/storage/v1/object/public/card-art/manifest.json
+https://yjqkotqmglxjhlrhynsu.supabase.co/storage/v1/object/public/card-art/lvbu.png
+```
+
+`.env`：
+
+```
+VITE_ART_MANIFEST_URL=https://yjqkotqmglxjhlrhynsu.supabase.co/storage/v1/object/public/card-art/manifest.json
+SUPABASE_URL=https://yjqkotqmglxjhlrhynsu.supabase.co
+```
+
 ## 环境变量
 
 见仓库根目录 `.env.example`。
