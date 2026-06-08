@@ -1,8 +1,15 @@
 import type { PixelArtKey } from '../game/types';
 import {
+  drawArtImageToCanvas,
+  getCustomArtDisplayPacked,
+  getCustomArtImage,
+  hasCustomArtImage,
+} from './artImage';
+import {
   anyDisplayHighlightBreath,
   cloneDisplayHighlight,
   createEmptyDisplayHighlight,
+  drawImageDisplayWithHighlight,
   drawPackedDisplayWithHighlight,
   hasAnyDisplayHighlight,
   type DisplayHighlightGrid,
@@ -289,9 +296,32 @@ export function drawPixelArt(
     ctx.fillRect(0, 0, width, height);
   }
 
-  const packed = getArtPacked(key);
   const highlight = options.highlight ?? getArtHighlight(key);
   const breathSpeed = options.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key);
+  const nowMs = performance.now();
+
+  if (hasCustomArtImage(key)) {
+    const image = getCustomArtImage(key)!;
+    const displayPacked = getCustomArtDisplayPacked(key);
+    if (displayPacked && hasAnyDisplayHighlight(highlight)) {
+      drawImageDisplayWithHighlight(
+        ctx,
+        image,
+        displayPacked,
+        width,
+        height,
+        highlight,
+        mode,
+        breathSpeed,
+        nowMs
+      );
+    } else {
+      drawArtImageToCanvas(ctx, image, width, height, mode);
+    }
+    return;
+  }
+
+  const packed = getArtPacked(key);
 
   if (hasAnyDisplayHighlight(highlight)) {
     drawPackedDisplayWithHighlight(
@@ -302,7 +332,7 @@ export function drawPixelArt(
       highlight,
       mode,
       breathSpeed,
-      performance.now(),
+      nowMs,
       ART_GRID_COLS,
       ART_GRID_ROWS,
       ART_DISPLAY_COLS,

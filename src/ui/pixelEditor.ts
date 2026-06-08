@@ -1,3 +1,4 @@
+import { createArtCardMeta, downloadJsonFile } from '../art/artMeta';
 import { formatArtMemoryReport } from '../art/artMemoryStats';
 import {
   ART_DISPLAY_COLS,
@@ -626,6 +627,7 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-clear>清空画布</button>
             <button type="button" class="btn" data-apply>应用</button>
             <button type="button" class="btn" data-export>导出 PNG</button>
+            <button type="button" class="btn" data-export-bundle title="下载 PNG + 渲染层 meta.json，放入 public/cards 后运行 npm run build-art-manifest">导出资源包</button>
           </div>
         </div>
     </section>
@@ -1985,6 +1987,16 @@ export function openPixelEditor(onApplied: () => void): void {
     flattenEditorGrid();
     refreshAll();
     downloadPackedPng(grid, `${currentKey}.png`);
+  });
+
+  panel.querySelector('[data-export-bundle]')?.addEventListener('click', () => {
+    flattenEditorGrid();
+    refreshAll();
+    downloadPackedPng(grid, `${currentKey}.png`);
+    downloadJsonFile(
+      `${currentKey}.meta.json`,
+      createArtCardMeta(currentKey, highlightGrid, breathSpeed)
+    );
   });
 
   function updateTransparentFlashBtn(): void {

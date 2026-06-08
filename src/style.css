@@ -26,6 +26,15 @@ body,
   touch-action: none;
 }
 
+.boot-status {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--tcg-muted);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+}
+
 body {
   margin: 0;
   height: 100dvh;

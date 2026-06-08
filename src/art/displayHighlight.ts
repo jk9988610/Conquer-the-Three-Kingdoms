@@ -1,3 +1,4 @@
+import { drawArtImageToCanvas } from './artImage';
 import { ART_DISPLAY_COLS, ART_DISPLAY_ROWS } from './gridConfig';
 import {
   downsamplePackedGrid,
@@ -115,6 +116,11 @@ function paintGlowLayers(
   }
 }
 
+export interface FillDisplayHighlightOptions {
+  /** PNG 底图已绘制时跳过像素格铺色，仅叠加光晕/呼吸 */
+  skipBasePixels?: boolean;
+}
+
 /** 单次绘制展示格：光晕在下、格色（含提亮）在上，避免叠在原图上的「复制层」 */
 export function fillDisplayPackedWithHighlight(
   ctx: CanvasRenderingContext2D,
@@ -126,8 +132,10 @@ export function fillDisplayPackedWithHighlight(
   breathSpeed = 50,
   nowMs = performance.now(),
   dstCols = ART_DISPLAY_COLS,
-  dstRows = ART_DISPLAY_ROWS
+  dstRows = ART_DISPLAY_ROWS,
+  options: FillDisplayHighlightOptions = {}
 ): void {
+  const { skipBasePixels = false } = options;
   const hasHighlight = highlightGrid && hasAnyDisplayHighlight(highlightGrid);
   const pulse = breathPulsePhase(nowMs, breathSpeed);
   const cell = Math.max(1, cellPx);
@@ -152,14 +160,16 @@ export function fillDisplayPackedWithHighlight(
     }
   }
 
-  for (let dy = 0; dy < dstRows; dy++) {
-    for (let dx = 0; dx < dstCols; dx++) {
-      const v = display[gridIndex(dx, dy, dstCols)] ?? 0;
-      if (v === 0) continue;
-      const x = originX + dx * cell;
-      const y = originY + dy * cell;
-      ctx.fillStyle = argbToRgbaStyle(v);
-      ctx.fillRect(x, y, cell, cell);
+  if (!skipBasePixels) {
+    for (let dy = 0; dy < dstRows; dy++) {
+      for (let dx = 0; dx < dstCols; dx++) {
+        const v = display[gridIndex(dx, dy, dstCols)] ?? 0;
+        if (v === 0) continue;
+        const x = originX + dx * cell;
+        const y = originY + dy * cell;
+        ctx.fillStyle = argbToRgbaStyle(v);
+        ctx.fillRect(x, y, cell, cell);
+      }
     }
   }
 
@@ -247,6 +257,74 @@ export function drawPackedDisplayWithHighlight(
     nowMs,
     dstCols,
     dstRows
+  );
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buffer, 0, 0, dstCols, dstRows, ox, oy, dw, dh);
+}
+
+/** 卡面 PNG + 渲染层高亮（底图为位图，效果层与 PackedGrid 路径一致） */
+export function drawImageDisplayWithHighlight(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  display: PackedGrid,
+  width: number,
+  height: number,
+  highlightGrid: DisplayHighlightGrid,
+  mode: GridDrawMode = 'fit',
+  breathSpeed = 50,
+  nowMs = performance.now(),
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): void {
+  if (mode === 'fit') {
+    const cellPx = Math.min(Math.floor(width / dstCols), Math.floor(height / dstRows));
+    if (cellPx >= 1) {
+      const drawW = dstCols * cellPx;
+      const drawH = dstRows * cellPx;
+      const ox = Math.floor((width - drawW) / 2);
+      const oy = Math.floor((height - drawH) / 2);
+      drawArtImageToCanvas(ctx, image, width, height, 'fit');
+      fillDisplayPackedWithHighlight(
+        ctx,
+        display,
+        highlightGrid,
+        cellPx,
+        ox,
+        oy,
+        breathSpeed,
+        nowMs,
+        dstCols,
+        dstRows,
+        { skipBasePixels: true }
+      );
+      return;
+    }
+  }
+
+  const { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
+  const dw = dstCols * cell;
+  const dh = dstRows * cell;
+
+  const buffer = document.createElement('canvas');
+  buffer.width = dstCols;
+  buffer.height = dstRows;
+  const bctx = buffer.getContext('2d');
+  if (!bctx) return;
+
+  drawArtImageToCanvas(bctx, image, dstCols, dstRows, 'fit');
+  fillDisplayPackedWithHighlight(
+    bctx,
+    display,
+    highlightGrid,
+    1,
+    0,
+    0,
+    breathSpeed,
+    nowMs,
+    dstCols,
+    dstRows,
+    { skipBasePixels: true }
   );
 
   ctx.imageSmoothingEnabled = false;

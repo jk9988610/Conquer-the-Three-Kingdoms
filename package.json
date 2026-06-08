@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build-art-manifest": "node scripts/build-art-manifest.mjs",
+    "upload-art": "node scripts/upload-art-supabase.mjs",
+    "sync-art": "npm run build-art-manifest && npm run upload-art"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2.49.8",
     "typescript": "~6.0.2",
     "vite": "^5.4.11"
   }
