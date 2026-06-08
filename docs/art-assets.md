@@ -112,9 +112,11 @@ SUPABASE_URL=https://yjqkotqmglxjhlrhynsu.supabase.co
 
 ### 一次性设置
 
-1. 仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**
-2. 合并含 workflow 的 PR 到 `main`，或手动 **Actions → Deploy to GitHub Pages → Run workflow**
+1. **必须先做：** [Settings → Pages](https://github.com/jk9988610/Conquer-the-Three-Kingdoms/settings/pages) → **Source** 选 **GitHub Actions**（未做会报 `Get Pages site failed` / `Not Found`）
+2. **Actions** 里 Re-run **Deploy to GitHub Pages**，或 push 到 `main` 触发
 3. 完成 Supabase 第 1～2 步 SQL 后，用 `npm run upload-art` 上传卡图（日后可做 CI 自动上传）
+
+排错详见 `docs/deploy-pages.md`。
 
 本地开发仍为 `npm run dev`（`base: /`）；仅 CI 构建使用 `/Conquer-the-Three-Kingdoms/` 前缀。
 
