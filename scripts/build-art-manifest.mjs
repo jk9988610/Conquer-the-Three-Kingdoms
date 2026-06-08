@@ -47,7 +47,7 @@ function main() {
     pngKeys.set(key, file);
   }
 
-  let baseUrl = '/cards';
+  let baseUrl = 'cards';
   try {
     const existing = readJson(MANIFEST_PATH);
     if (typeof existing.baseUrl === 'string' && existing.baseUrl.trim()) {

@@ -102,6 +102,22 @@ VITE_ART_MANIFEST_URL=https://yjqkotqmglxjhlrhynsu.supabase.co/storage/v1/object
 SUPABASE_URL=https://yjqkotqmglxjhlrhynsu.supabase.co
 ```
 
+## GitHub Pages 部署（自动联网加载卡图）
+
+推送 `main` 分支后，`.github/workflows/deploy-pages.yml` 自动构建并发布：
+
+- 站点：`https://jk9988610.github.io/Conquer-the-Three-Kingdoms/`
+- 构建时注入 `VITE_ART_MANIFEST_URL` → 打开页面自动从 Supabase 拉 `manifest.json` 与 PNG
+- **上传新卡图后无需重新部署页面**（只要更新 Supabase 上的 manifest 与 PNG）
+
+### 一次性设置
+
+1. 仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**
+2. 合并含 workflow 的 PR 到 `main`，或手动 **Actions → Deploy to GitHub Pages → Run workflow**
+3. 完成 Supabase 第 1～2 步 SQL 后，用 `npm run upload-art` 上传卡图（日后可做 CI 自动上传）
+
+本地开发仍为 `npm run dev`（`base: /`）；仅 CI 构建使用 `/Conquer-the-Three-Kingdoms/` 前缀。
+
 ## 环境变量
 
 见仓库根目录 `.env.example`。

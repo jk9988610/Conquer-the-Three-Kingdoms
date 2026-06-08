@@ -15,17 +15,20 @@ async function startApp(): Promise<void> {
     throw new Error('未找到 #app 容器');
   }
 
-  renderBootStatus(app, '加载卡图资源…');
+  let showBoot = false;
+  const bootTimer = window.setTimeout(() => {
+    showBoot = true;
+    renderBootStatus(app, '加载卡图资源…');
+  }, 280);
 
   await bootstrapCardArt({
     onProgress: ({ loaded, total }) => {
-      if (total <= 0) {
-        renderBootStatus(app, '加载卡图资源…');
-        return;
-      }
+      if (!showBoot || total <= 0) return;
       renderBootStatus(app, `加载卡图资源… ${loaded}/${total}`);
     },
   });
+
+  window.clearTimeout(bootTimer);
 
   app.innerHTML = '';
 

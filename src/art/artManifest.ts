@@ -31,20 +31,36 @@ export interface ArtBootstrapOptions {
   onProgress?: (progress: ArtBootstrapProgress) => void;
 }
 
-const DEFAULT_MANIFEST_URL = '/cards/manifest.json';
+/** 未配置 VITE_ART_MANIFEST_URL 时，使用仓库内 public/cards（兼容 GitHub Pages base） */
+function defaultManifestUrl(): string {
+  const base = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  return `${base}cards/manifest.json`;
+}
 
 function isPixelArtKey(key: string): key is PixelArtKey {
   return (PIXEL_ART_KEYS as readonly string[]).includes(key);
 }
 
 function normalizeBaseUrl(baseUrl: string | undefined): string {
-  const raw = (baseUrl ?? '/cards').trim() || '/cards';
+  const raw = (baseUrl ?? 'cards').trim() || 'cards';
   return raw.replace(/\/+$/, '');
 }
 
-function joinAssetUrl(baseUrl: string, path: string): string {
-  const p = path.replace(/^\/+/, '');
-  return `${baseUrl}/${p}`;
+/** 绝对 URL（Supabase）原样拼接；相对路径按 Vite base + 当前站点解析 */
+function joinAssetUrl(baseUrl: string, filePath: string): string {
+  const file = filePath.replace(/^\/+/, '');
+  if (/^https?:\/\//i.test(baseUrl)) {
+    return `${baseUrl.replace(/\/+$/, '')}/${file}`;
+  }
+  const siteBase = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  const assetBase = baseUrl.startsWith('/')
+    ? baseUrl.replace(/^\//, '')
+    : baseUrl.replace(/^\/+/, '');
+  return new URL(`${assetBase}/${file}`, new URL(siteBase, window.location.origin)).href;
 }
 
 function entryFromMeta(meta: ArtCardMetaV1, png: string): ArtManifestEntryV1 {
@@ -118,7 +134,8 @@ export async function applyArtManifest(
 }
 
 export async function bootstrapCardArt(options: ArtBootstrapOptions = {}): Promise<ArtManifestV1 | null> {
-  const manifestUrl = options.manifestUrl ?? import.meta.env.VITE_ART_MANIFEST_URL ?? DEFAULT_MANIFEST_URL;
+  const manifestUrl =
+    options.manifestUrl ?? import.meta.env.VITE_ART_MANIFEST_URL ?? defaultManifestUrl();
 
   try {
     const res = await fetch(manifestUrl, { cache: 'no-cache' });
