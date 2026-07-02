@@ -17,3 +17,7 @@ export function getCardArtManifestUrl(): string {
 export function isCloudArtConfigured(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
+
+/** Card World 美术商店（UGC）；绘制页「查看商店」打开此页并定位到商店 Tab */
+export const CARD_WORLD_ART_SHOP_URL =
+  'https://jk9988610.github.io/Card-World/?gallery=shop';

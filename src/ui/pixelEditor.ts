@@ -1,4 +1,5 @@
 import { uploadArtToCloud } from '../art/artCloudUpload';
+import { CARD_WORLD_ART_SHOP_URL } from '../art/cloudConfig';
 import { createArtCardMeta, downloadJsonFile } from '../art/artMeta';
 import { formatArtMemoryReport } from '../art/artMemoryStats';
 import {
@@ -631,6 +632,7 @@ export function openPixelEditor(onApplied: () => void): void {
             <button type="button" class="btn" data-export>导出 PNG</button>
             <button type="button" class="btn" data-export-bundle title="下载 PNG + 渲染层 meta.json">导出资源包</button>
             <button type="button" class="btn btn--accent" data-upload-cloud title="上传至 Supabase，玩家刷新后自动加载">上传云端</button>
+            <button type="button" class="btn" data-view-shop title="打开 Card World 美术商店">查看商店</button>
           </div>
         </div>
     </section>
@@ -2032,6 +2034,10 @@ export function openPixelEditor(onApplied: () => void): void {
         }, 2200);
       }
     })();
+  });
+
+  panel.querySelector('[data-view-shop]')?.addEventListener('click', () => {
+    window.open(CARD_WORLD_ART_SHOP_URL, '_blank', 'noopener,noreferrer');
   });
 
   function updateTransparentFlashBtn(): void {
