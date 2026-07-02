@@ -1,5 +1,4 @@
 import { uploadArtToCloud } from '../art/artCloudUpload';
-import { CARD_WORLD_ART_SHOP_URL } from '../art/cloudConfig';
 import { createArtCardMeta, downloadJsonFile } from '../art/artMeta';
 import { formatArtMemoryReport } from '../art/artMemoryStats';
 import {
@@ -18,6 +17,7 @@ import {
   setCustomArtHighlight,
   type Pixel,
   PIXEL_ART_KEYS,
+  upscaleGridToArtSize,
 } from '../art/pixelArt';
 import {
   argbEquals,
@@ -67,6 +67,7 @@ import type { PixelArtKey } from '../game/types';
 import { createColorPicker, type ColorPickerValue } from './colorPicker';
 import { ART_PREVIEW_HEIGHT, ART_PREVIEW_WIDTH } from '../tcg/dimensions';
 import { getModalOverlayMount } from './overlayRoot';
+import { openArtShopModal } from './artShopModal';
 
 const MIN_CELL_PX = 1;
 const PANE_INSET_PX = 4;
@@ -2037,7 +2038,19 @@ export function openPixelEditor(onApplied: () => void): void {
   });
 
   panel.querySelector('[data-view-shop]')?.addEventListener('click', () => {
-    window.open(CARD_WORLD_ART_SHOP_URL, '_blank', 'noopener,noreferrer');
+    openArtShopModal({
+      onImportPixelGrid: (pixelGrid) => {
+        flattenEditorGrid();
+        grid = clonePackedGrid(gridToPacked(upscaleGridToArtSize(pixelGrid)));
+        highlightGrid = createEmptyDisplayHighlight();
+        selection = null;
+        selectStart = null;
+        selectionFloating = false;
+        resetHistory();
+        refreshAll();
+        persistDraft();
+      },
+    });
   });
 
   function updateTransparentFlashBtn(): void {

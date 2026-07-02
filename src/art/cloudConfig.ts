@@ -6,6 +6,10 @@ export const SUPABASE_ANON_KEY =
 
 export const CARD_ART_BUCKET = 'card-art';
 
+/** Card World 用户美术商店（与 card-art 正式库分离） */
+export const ART_SHOP_BUCKET = 'art';
+export const ART_STORE_PREFIX = 'art-store';
+
 export function getCardArtPublicBaseUrl(): string {
   return `${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/${CARD_ART_BUCKET}`;
 }
@@ -17,7 +21,3 @@ export function getCardArtManifestUrl(): string {
 export function isCloudArtConfigured(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
-
-/** Card World 美术商店（UGC）；绘制页「查看商店」打开此页并定位到商店 Tab */
-export const CARD_WORLD_ART_SHOP_URL =
-  'https://jk9988610.github.io/Card-World/?gallery=shop';
