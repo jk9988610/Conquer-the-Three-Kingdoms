@@ -10,7 +10,7 @@ export interface ArtShopItem {
   previewUrl?: string | null;
 }
 
-export type ArtShopListSource = 'cloud' | 'builtin';
+export type ArtShopListSource = 'cloud' | 'cache' | 'builtin';
 
 export interface ArtShopListResult {
   items: ArtShopItem[];

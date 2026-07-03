@@ -1,5 +1,4 @@
 import { listArtShopItems, type ArtShopItem, type ArtShopListSource } from '../art/artShopStorage';
-import { isCloudArtConfigured } from '../art/cloudConfig';
 import type { PixelGrid } from '../art/pixelArt';
 import { pixelV1ToPixelGrid, type PixelV1Image } from '../art/pixelV1';
 import { getModalOverlayMount } from './overlayRoot';
@@ -42,21 +41,23 @@ function renderList(
 ): void {
   listEl.innerHTML = '';
   if (!items.length) {
-    statusEl.textContent = meta?.cloudError ? '云端不可用' : '商店暂无作品';
+    statusEl.textContent = meta?.cloudError ? '云端不可用' : '暂无卡图';
     const empty = document.createElement('p');
     empty.className = 'art-shop-empty';
     empty.textContent = meta?.cloudError
-      ? `${meta.cloudError}。当前没有可显示的作品。`
-      : '还没有人上传作品。可在 Card World 画板中上传至商店。';
+      ? `${meta.cloudError}。当前没有可显示的卡图。`
+      : '还没有上传卡图。在绘制页画好后点「上传云端」即可出现在这里。';
     listEl.append(empty);
     return;
   }
-  if (meta?.source === 'builtin') {
-    statusEl.textContent = `内置卡图 · ${items.length} 张`;
+  if (meta?.source === 'cloud') {
+    statusEl.textContent = `云端卡图 · ${items.length} 张`;
+  } else if (meta?.source === 'cache') {
+    statusEl.textContent = `本地缓存 · ${items.length} 张`;
   } else {
-    statusEl.textContent = `共 ${items.length} 件作品`;
+    statusEl.textContent = `内置卡图 · ${items.length} 张`;
   }
-  if (meta?.cloudError && meta.source === 'builtin') {
+  if (meta?.cloudError && meta.source !== 'cloud') {
     const hint = document.createElement('p');
     hint.className = 'art-shop-empty art-shop-empty--hint';
     hint.textContent = meta.cloudError;
@@ -125,7 +126,7 @@ export function openArtShopModal(options: ArtShopModalOptions = {}): void {
   panel.className = 'art-shop-panel';
   panel.innerHTML = `
     <header class="art-shop-panel__head">
-      <h2 class="art-shop-panel__title">美术商店</h2>
+      <h2 class="art-shop-panel__title">卡图库</h2>
       <span class="art-shop-panel__status" data-status>加载中…</span>
       <div class="art-shop-panel__head-actions">
         <button type="button" class="btn art-shop-panel__btn" data-fullscreen>全屏</button>
@@ -179,16 +180,6 @@ export function openArtShopModal(options: ArtShopModalOptions = {}): void {
   updateFullscreenBtn();
 
   void (async () => {
-    if (!isCloudArtConfigured()) {
-      statusEl.textContent = '未配置云端';
-      listEl.innerHTML = '<p class="art-shop-empty">Supabase 未配置，无法加载商店。</p>';
-      return;
-    }
-    if (!navigator.onLine) {
-      statusEl.textContent = '需要网络';
-      listEl.innerHTML = '<p class="art-shop-empty">请连接网络后重试。</p>';
-      return;
-    }
     try {
       const result = await listArtShopItems();
       renderList(listEl, statusEl, result.items, options, {
