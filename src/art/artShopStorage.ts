@@ -4,18 +4,12 @@ import {
   SUPABASE_URL,
   isCloudArtConfigured,
 } from './cloudConfig';
+import { listBuiltinArtShopItems } from './artShopFallback';
+import type { ArtShopItem, ArtShopListResult } from './artShopTypes';
 import type { PixelV1Image } from './pixelV1';
 import { getSupabaseClient } from './supabaseClient';
 
-export interface ArtShopItem {
-  id: string;
-  title: string;
-  text: string;
-  image?: PixelV1Image | null;
-  publishedAt?: string;
-  pngPath?: string;
-  previewUrl?: string | null;
-}
+export type { ArtShopItem, ArtShopListResult, ArtShopListSource } from './artShopTypes';
 
 function formatStorageError(err: { message?: string } | null): string {
   const msg = err?.message ?? '未知错误';
@@ -28,13 +22,31 @@ function formatStorageError(err: { message?: string } | null): string {
   return msg;
 }
 
+function isNetworkFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed') ||
+    msg.includes('load failed')
+  );
+}
+
+function formatCloudError(err: unknown): string {
+  if (isNetworkFetchError(err)) {
+    return '无法连接云端（Supabase 未就绪或网络受限），已显示内置卡图';
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 function publicUrl(path: string): string {
   const base = `${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/${ART_SHOP_BUCKET}`;
   return `${base}/${path.replace(/^\//, '')}`;
 }
 
-export async function listArtShopItems(): Promise<ArtShopItem[]> {
-  if (!isCloudArtConfigured()) return [];
+async function listCloudArtShopItems(): Promise<ArtShopItem[]> {
   const sb = getSupabaseClient();
 
   const { data: rows, error: dbError } = await sb
@@ -96,4 +108,33 @@ export async function listArtShopItems(): Promise<ArtShopItem[]> {
   }
   items.sort((a, b) => new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime());
   return items;
+}
+
+export async function listArtShopItems(): Promise<ArtShopListResult> {
+  if (!isCloudArtConfigured()) {
+    const items = await listBuiltinArtShopItems();
+    return { items, source: 'builtin' };
+  }
+
+  try {
+    const items = await listCloudArtShopItems();
+    if (items.length > 0) {
+      return { items, source: 'cloud' };
+    }
+    return { items, source: 'cloud' };
+  } catch (err) {
+    console.warn('Art shop cloud load failed:', err);
+    try {
+      const items = await listBuiltinArtShopItems();
+      return {
+        items,
+        source: 'builtin',
+        cloudError: formatCloudError(err),
+      };
+    } catch (fallbackErr) {
+      const cloudMsg = formatCloudError(err);
+      const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      throw new Error(`${cloudMsg}；内置卡图也加载失败：${fallbackMsg}`);
+    }
+  }
 }

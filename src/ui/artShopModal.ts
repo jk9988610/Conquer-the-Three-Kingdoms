@@ -1,4 +1,4 @@
-import { listArtShopItems, type ArtShopItem } from '../art/artShopStorage';
+import { listArtShopItems, type ArtShopItem, type ArtShopListSource } from '../art/artShopStorage';
 import { isCloudArtConfigured } from '../art/cloudConfig';
 import type { PixelGrid } from '../art/pixelArt';
 import { pixelV1ToPixelGrid, type PixelV1Image } from '../art/pixelV1';
@@ -37,18 +37,31 @@ function renderList(
   listEl: HTMLElement,
   statusEl: HTMLElement,
   items: ArtShopItem[],
-  options: ArtShopModalOptions
+  options: ArtShopModalOptions,
+  meta?: { source: ArtShopListSource; cloudError?: string }
 ): void {
   listEl.innerHTML = '';
   if (!items.length) {
-    statusEl.textContent = '商店暂无作品';
+    statusEl.textContent = meta?.cloudError ? '云端不可用' : '商店暂无作品';
     const empty = document.createElement('p');
     empty.className = 'art-shop-empty';
-    empty.textContent = '还没有人上传作品。可在 Card World 画板中上传至商店。';
+    empty.textContent = meta?.cloudError
+      ? `${meta.cloudError}。当前没有可显示的作品。`
+      : '还没有人上传作品。可在 Card World 画板中上传至商店。';
     listEl.append(empty);
     return;
   }
-  statusEl.textContent = `共 ${items.length} 件作品`;
+  if (meta?.source === 'builtin') {
+    statusEl.textContent = `内置卡图 · ${items.length} 张`;
+  } else {
+    statusEl.textContent = `共 ${items.length} 件作品`;
+  }
+  if (meta?.cloudError && meta.source === 'builtin') {
+    const hint = document.createElement('p');
+    hint.className = 'art-shop-empty art-shop-empty--hint';
+    hint.textContent = meta.cloudError;
+    listEl.append(hint);
+  }
   for (const item of items) {
     const row = document.createElement('article');
     row.className = 'art-shop-item';
@@ -177,8 +190,11 @@ export function openArtShopModal(options: ArtShopModalOptions = {}): void {
       return;
     }
     try {
-      const items = await listArtShopItems();
-      renderList(listEl, statusEl, items, options);
+      const result = await listArtShopItems();
+      renderList(listEl, statusEl, result.items, options, {
+        source: result.source,
+        cloudError: result.cloudError,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       statusEl.textContent = '加载失败';

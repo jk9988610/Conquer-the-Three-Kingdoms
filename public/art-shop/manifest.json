@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-03T00:12:00.000Z",
+  "items": [
+    {
+      "id": "settings",
+      "title": "设置",
+      "text": "Card World P0 卡图 · founders.settings",
+      "png": "settings.png"
+    },
+    {
+      "id": "pixel-board",
+      "title": "像素画板",
+      "text": "Card World P0 卡图 · art.tool.pixel",
+      "png": "pixel-board.png"
+    },
+    {
+      "id": "music-studio",
+      "title": "音乐台",
+      "text": "Card World P0 卡图 · music.tool.studio",
+      "png": "music-studio.png"
+    },
+    {
+      "id": "door",
+      "title": "门",
+      "text": "Card World P0 卡图 · content.door",
+      "png": "door.png"
+    }
+  ]
+}

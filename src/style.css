@@ -2573,6 +2573,12 @@ body {
   line-height: 1.5;
 }
 
+.art-shop-empty--hint {
+  padding: 0.75rem 1rem 0;
+  font-size: 0.9rem;
+  color: #f0ad4e;
+}
+
 .art-shop-item {
   display: grid;
   grid-template-columns: 84px 1fr auto;
