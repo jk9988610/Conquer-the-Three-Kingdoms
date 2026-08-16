@@ -5,7 +5,6 @@ import {
 import { gridDrawLayout } from '../art/packedGrid';
 import {
   applyPixelImportMixForEditor,
-  applyPixelImportMixOnDisplay,
   clonePixelImportMix,
   cloneRemoveBgBoxSelection,
   computeRemoveBgDisplayMask,
@@ -31,6 +30,7 @@ import {
   type RemoveBgMode,
   type RemoveBgModeInput,
 } from '../art/pixelGridEffects';
+import { runImportMixForEditor, runImportMixPreview } from '../art/pixelImportWorkerClient';
 import { drawGridToCanvas, prepareSharpCanvas, type PixelGrid } from '../art/pixelArt';
 import { loadImageFromFile } from '../art/imageToGrid';
 import { createRangeSliderRow } from './rangeSliderRow';
@@ -96,6 +96,7 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   let mattingGridCache: { source: PixelGrid; grid: PixelGrid } | null = null;
   let previewRafId = 0;
   let pendingPreviewQuality: 'fast' | 'full' = 'full';
+  let previewRenderGen = 0;
   const mix = createDefaultEffectMix();
   let removeBgMode: RemoveBgMode = DEFAULT_REMOVE_BG_MODE;
   let removeBgBoxes: RemoveBgBoxSelection = createEmptyRemoveBgBoxSelection();
@@ -735,6 +736,41 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   previewViewport.addEventListener('pointerup', onPreviewPointerEnd);
   previewViewport.addEventListener('pointercancel', onPreviewPointerEnd);
 
+  function drawPreviewOverlays(
+    ctx: CanvasRenderingContext2D,
+    display: PixelGrid,
+    fast: boolean
+  ): void {
+    if (!fast && transparentFlash && flashHighlight) {
+      ctx.fillStyle = 'rgba(255, 48, 140, 0.72)';
+      for (let y = 0; y < display.length; y++) {
+        const row = display[y] ?? [];
+        for (let x = 0; x < row.length; x++) {
+          if (row[x] !== null) continue;
+          fillPreviewDisplayCell(ctx, x, y);
+        }
+      }
+    }
+
+    if (!fast && maskOverlay && isRemoveBgActive()) {
+      const mask = computeRemoveBgDisplayMask(
+        getMattingGrid(),
+        mix.removeBg ?? 0,
+        mixOptions()
+      );
+      if (mask) {
+        ctx.fillStyle = 'rgba(255, 64, 48, 0.55)';
+        for (let y = 0; y < mask.length; y++) {
+          const row = mask[y] ?? [];
+          for (let x = 0; x < row.length; x++) {
+            if (!row[x]) continue;
+            fillPreviewDisplayCell(ctx, x, y);
+          }
+        }
+      }
+    }
+  }
+
   function renderPreview(quality: 'fast' | 'full' = 'full'): void {
     const fast = quality === 'fast';
     const rect = previewWrap.getBoundingClientRect();
@@ -774,40 +810,15 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
       displayRows: fast ? PREVIEW_FAST_DISPLAY_ROWS : ART_DISPLAY_ROWS,
       mattingGrid: fast ? undefined : getMattingGrid(),
     };
-    const display = applyPixelImportMixOnDisplay(currentGrid, mix, displayOpts);
-    drawGridToCanvas(ctx, display, cssW, cssH, 'fit');
+    const gen = ++previewRenderGen;
 
-    if (!fast && transparentFlash && flashHighlight) {
-      ctx.fillStyle = 'rgba(255, 48, 140, 0.72)';
-      for (let y = 0; y < display.length; y++) {
-        const row = display[y] ?? [];
-        for (let x = 0; x < row.length; x++) {
-          if (row[x] !== null) continue;
-          fillPreviewDisplayCell(ctx, x, y);
-        }
-      }
-    }
-
-    if (!fast && maskOverlay && isRemoveBgActive()) {
-      const mask = computeRemoveBgDisplayMask(
-        getMattingGrid(),
-        mix.removeBg ?? 0,
-        mixOptions()
-      );
-      if (mask) {
-        ctx.fillStyle = 'rgba(255, 64, 48, 0.55)';
-        for (let y = 0; y < mask.length; y++) {
-          const row = mask[y] ?? [];
-          for (let x = 0; x < row.length; x++) {
-            if (!row[x]) continue;
-            fillPreviewDisplayCell(ctx, x, y);
-          }
-        }
-      }
-    }
-
-    if (!fast) updateEdgePaletteSwatches();
-    updateBoxOverlay();
+    void runImportMixPreview(currentGrid, mix, displayOpts).then((display) => {
+      if (gen !== previewRenderGen) return;
+      drawGridToCanvas(ctx, display, cssW, cssH, 'fit');
+      drawPreviewOverlays(ctx, display, fast);
+      if (!fast) updateEdgePaletteSwatches();
+      updateBoxOverlay();
+    });
   }
 
   function resetMix(): void {
@@ -827,9 +838,16 @@ export function openImageImportEffectModal(options: ImageImportEffectModalOption
   }
 
   function finishConfirm(): void {
-    const processed = applyPixelImportMixForEditor(currentGrid, mix, mixOptions());
-    closeImageImportEffectModal();
-    onConfirm(processed);
+    void runImportMixForEditor(currentGrid, mix, mixOptions())
+      .then((processed) => {
+        closeImageImportEffectModal();
+        onConfirm(processed);
+      })
+      .catch(() => {
+        const processed = applyPixelImportMixForEditor(currentGrid, mix, mixOptions());
+        closeImageImportEffectModal();
+        onConfirm(processed);
+      });
   }
 
   function finishCancel(): void {
