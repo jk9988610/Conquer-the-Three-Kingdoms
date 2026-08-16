@@ -6,15 +6,20 @@ const DB_VERSION = 1;
 const STORE_MANIFEST = 'manifest';
 const STORE_ASSETS = 'assets';
 
+/** IndexedDB 中最多保留的卡图 PNG 条数（LRU 淘汰最久未写入/访问的） */
+export const MAX_CACHED_ART_ASSETS = 48;
+
 export interface CachedArtAsset {
   artKey: PixelArtKey;
   updatedAt: string;
   pngBlob: Blob;
   highlightB64?: string;
   highlightBreathSpeed?: number;
+  /** 最近写入或 touch 时间，用于 LRU */
+  savedAt?: number;
 }
 
-interface CachedManifestRecord {
+export interface CachedManifestRecord {
   manifest: ArtManifestV1;
   savedAt: number;
 }
@@ -48,6 +53,18 @@ function idbGet<T>(storeName: string, key: IDBValidKey): Promise<T | null> {
   );
 }
 
+function idbGetAll<T>(storeName: string): Promise<T[]> {
+  return openDb().then(
+    (db) =>
+      new Promise<T[]>((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readonly');
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve((req.result as T[]) ?? []);
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB 读取失败'));
+      })
+  );
+}
+
 function idbPut(storeName: string, value: unknown, key?: IDBValidKey): Promise<void> {
   return openDb().then(
     (db) =>
@@ -61,8 +78,12 @@ function idbPut(storeName: string, value: unknown, key?: IDBValidKey): Promise<v
   );
 }
 
+export async function getCachedManifestRecord(): Promise<CachedManifestRecord | null> {
+  return idbGet<CachedManifestRecord>(STORE_MANIFEST, 'current');
+}
+
 export async function getCachedManifest(): Promise<ArtManifestV1 | null> {
-  const row = await idbGet<CachedManifestRecord>(STORE_MANIFEST, 'current');
+  const row = await getCachedManifestRecord();
   return row?.manifest ?? null;
 }
 
@@ -75,8 +96,28 @@ export async function getCachedAsset(artKey: PixelArtKey): Promise<CachedArtAsse
   return idbGet<CachedArtAsset>(STORE_ASSETS, artKey);
 }
 
+export async function touchCachedAsset(artKey: PixelArtKey): Promise<void> {
+  const asset = await getCachedAsset(artKey);
+  if (!asset) return;
+  await idbPut(STORE_ASSETS, { ...asset, savedAt: Date.now() });
+}
+
+export async function evictExcessCachedAssets(maxCount = MAX_CACHED_ART_ASSETS): Promise<void> {
+  if (maxCount <= 0) return;
+  const all = await idbGetAll<CachedArtAsset>(STORE_ASSETS);
+  if (all.length <= maxCount) return;
+  const sorted = [...all].sort((a, b) => (a.savedAt ?? 0) - (b.savedAt ?? 0));
+  const removeCount = all.length - maxCount;
+  for (let i = 0; i < removeCount; i++) {
+    const key = sorted[i]?.artKey;
+    if (key) await clearCachedAsset(key);
+  }
+}
+
 export async function saveCachedAsset(asset: CachedArtAsset): Promise<void> {
-  await idbPut(STORE_ASSETS, asset);
+  const record: CachedArtAsset = { ...asset, savedAt: Date.now() };
+  await idbPut(STORE_ASSETS, record);
+  await evictExcessCachedAssets(MAX_CACHED_ART_ASSETS);
 }
 
 export async function clearCachedAsset(artKey: PixelArtKey): Promise<void> {
