@@ -996,6 +996,16 @@ export function openPixelEditor(onApplied: () => void): void {
     updateSelectionBox();
   }
 
+  let strokeRefreshRaf = 0;
+  function scheduleStrokeRefresh(): void {
+    if (strokeRefreshRaf) return;
+    strokeRefreshRaf = requestAnimationFrame(() => {
+      strokeRefreshRaf = 0;
+      refreshEditCanvas();
+      redrawGridLayer();
+    });
+  }
+
   function logicBlockForDisplayCell(dx: number, dy: number) {
     const x0 = Math.floor((dx * gridCols) / ART_DISPLAY_COLS);
     const y0 = Math.floor((dy * gridRows) / ART_DISPLAY_ROWS);
@@ -1418,7 +1428,7 @@ export function openPixelEditor(onApplied: () => void): void {
       stampBrushAtDisplay(dc.dx, dc.dy, colorArgb);
     }
     lastPaintCell = { x: dc.dx, y: dc.dy };
-    refreshAll();
+    scheduleStrokeRefresh();
   }
 
   function sampleColorAtDisplay(dx: number, dy: number): void {
@@ -1756,6 +1766,7 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     if (strokeUndoPushed && (tool === 'paint' || tool === 'eraser')) {
       commitUndoBatch();
+      refreshPreview();
     }
     if (highlightStrokeUndoPushed && isRenderPaintTool(tool)) {
       commitHighlightUndoBatch();
