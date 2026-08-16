@@ -1,4 +1,11 @@
 import './style.css';
+import {
+  checkWebOtaStatus,
+  isNativeShell,
+  notifyAppReadyNative,
+  runOtaBootstrapNative,
+} from './ota/native-bridge';
+import { SITE_OTA_VERSION } from './site-build';
 import { bootstrapCardArt } from './art/artManifest';
 import { DEFAULT_SHOP_LISTINGS, defaultPlayerHand } from './game/catalog';
 import { createInitialState } from './game/state';
@@ -56,4 +63,21 @@ async function startApp(): Promise<void> {
   });
 }
 
-void startApp();
+async function bootstrap(): Promise<void> {
+  if (isNativeShell()) {
+    const ota = await runOtaBootstrapNative();
+    if (ota.updated) {
+      window.location.reload();
+      return;
+    }
+    if (ota.status) console.info('[ota]', ota.status);
+  } else {
+    const web = await checkWebOtaStatus(SITE_OTA_VERSION);
+    if (web.status) console.info('[ota]', web.status);
+  }
+
+  await startApp();
+  await notifyAppReadyNative();
+}
+
+void bootstrap();

@@ -1,0 +1,13 @@
+{
+  "appId": "com.tcg.threekingdoms",
+  "appName": "征战三国",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false
+    }
+  }
+}

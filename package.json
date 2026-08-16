@@ -6,15 +6,27 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:pages": "GITHUB_PAGES=true npm run build",
     "preview": "vite preview",
+    "prepare:www": "node scripts/prepare-www.mjs",
+    "cap:sync": "npm run prepare:www && npx cap sync android",
+    "cap:open": "npx cap open android",
+    "apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "ota:build": "node scripts/build-ota.mjs",
     "build-art-manifest": "node scripts/build-art-manifest.mjs",
     "upload-art": "node scripts/upload-art-supabase.mjs",
     "sync-art": "npm run build-art-manifest && npm run upload-art"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.2.0",
+    "@capgo/capacitor-updater": "^7.50.2",
     "@supabase/supabase-js": "^2.49.8"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.2.0",
+    "@capacitor/cli": "^7.2.0",
+    "@capgo/cli": "^7.125.4",
     "typescript": "~6.0.2",
     "vite": "^5.4.11"
   }
