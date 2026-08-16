@@ -3,12 +3,11 @@ import {
   ART_MANIFEST_VERSION,
   type ArtManifestEntryV1,
   type ArtManifestV1,
-  parseArtManifest,
 } from './artManifest';
 import type { ArtCardMetaV1 } from './artMeta';
 import { saveCachedAsset, saveCachedManifest } from './artCache';
-import { getCardArtManifestUrl, getCardArtPublicBaseUrl } from './cloudConfig';
-import { getCardArtBucket, getSupabaseClient } from './supabaseClient';
+import { getCardArtPublicBaseUrl } from './cloudConfig';
+import { fetchRemoteManifest } from './artCloudManifest';
 
 function formatStorageError(err: { message?: string } | null): string {
   const msg = err?.message ?? '未知错误';
@@ -30,16 +29,6 @@ function createEmptyManifest(): ArtManifestV1 {
   };
 }
 
-export async function fetchRemoteManifest(): Promise<ArtManifestV1 | null> {
-  const url = getCardArtManifestUrl();
-  const res = await fetch(url, { cache: 'no-cache' });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`清单加载失败: ${res.status}`);
-  const manifest = parseArtManifest(await res.json());
-  if (!manifest) throw new Error('清单格式无效');
-  return manifest;
-}
-
 function metaToManifestEntry(meta: ArtCardMetaV1, updatedAt: string): ArtManifestEntryV1 {
   return {
     png: `${meta.artKey}.png`,
@@ -56,6 +45,7 @@ export async function uploadArtToCloud(
   pngBlob: Blob,
   meta: ArtCardMetaV1
 ): Promise<{ publicPngUrl: string }> {
+  const { getCardArtBucket, getSupabaseClient } = await import('./supabaseClient');
   const sb = getSupabaseClient();
   const bucket = getCardArtBucket();
   const now = new Date().toISOString();

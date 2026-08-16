@@ -1,7 +1,7 @@
 import { drawArtImageToCanvas } from './artImage';
 import { ART_DISPLAY_COLS, ART_DISPLAY_ROWS } from './gridConfig';
 import {
-  downsamplePackedGrid,
+  downsamplePackedGridCached,
   gridDrawLayout,
   gridIndex,
   type GridDrawMode,
@@ -212,7 +212,7 @@ export function drawPackedDisplayWithHighlight(
   dstCols = ART_DISPLAY_COLS,
   dstRows = ART_DISPLAY_ROWS
 ): void {
-  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const display = downsamplePackedGridCached(packed, srcCols, srcRows, dstCols, dstRows);
 
   if (mode === 'fit') {
     const cellPx = Math.min(Math.floor(width / dstCols), Math.floor(height / dstRows));
@@ -313,6 +313,72 @@ export function drawImageDisplayWithHighlight(
   if (!bctx) return;
 
   drawArtImageToCanvas(bctx, image, dstCols, dstRows, 'fit');
+  fillDisplayPackedWithHighlight(
+    bctx,
+    display,
+    highlightGrid,
+    1,
+    0,
+    0,
+    breathSpeed,
+    nowMs,
+    dstCols,
+    dstRows,
+    { skipBasePixels: true }
+  );
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(buffer, 0, 0, dstCols, dstRows, ox, oy, dw, dh);
+}
+
+/** 仅叠加渲染层高亮（透明底，用于分层 canvas 的顶层） */
+export function drawDisplayHighlightOverlay(
+  ctx: CanvasRenderingContext2D,
+  display: PackedGrid,
+  width: number,
+  height: number,
+  highlightGrid: DisplayHighlightGrid,
+  mode: GridDrawMode = 'fit',
+  breathSpeed = 50,
+  nowMs = performance.now(),
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): void {
+  if (!hasAnyDisplayHighlight(highlightGrid)) return;
+
+  if (mode === 'fit') {
+    const cellPx = Math.min(Math.floor(width / dstCols), Math.floor(height / dstRows));
+    if (cellPx >= 1) {
+      const drawW = dstCols * cellPx;
+      const drawH = dstRows * cellPx;
+      const ox = Math.floor((width - drawW) / 2);
+      const oy = Math.floor((height - drawH) / 2);
+      fillDisplayPackedWithHighlight(
+        ctx,
+        display,
+        highlightGrid,
+        cellPx,
+        ox,
+        oy,
+        breathSpeed,
+        nowMs,
+        dstCols,
+        dstRows,
+        { skipBasePixels: true }
+      );
+      return;
+    }
+  }
+
+  const { cell, ox, oy } = gridDrawLayout(dstCols, dstRows, width, height, mode);
+  const dw = dstCols * cell;
+  const dh = dstRows * cell;
+
+  const buffer = document.createElement('canvas');
+  buffer.width = dstCols;
+  buffer.height = dstRows;
+  const bctx = buffer.getContext('2d');
+  if (!bctx) return;
   fillDisplayPackedWithHighlight(
     bctx,
     display,

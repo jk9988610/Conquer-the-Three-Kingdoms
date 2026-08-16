@@ -315,6 +315,38 @@ export function downsamplePackedGridMajority(
   return out;
 }
 
+const displayDownsampleCache = new WeakMap<PackedGrid, Map<string, PackedGrid>>();
+
+function downsampleCacheKey(
+  srcCols: number,
+  srcRows: number,
+  dstCols: number,
+  dstRows: number
+): string {
+  return `${srcCols}x${srcRows}->${dstCols}x${dstRows}`;
+}
+
+/** 带 WeakMap 缓存的下采样（同一 PackedGrid 引用重复绘制时复用） */
+export function downsamplePackedGridCached(
+  src: PackedGrid,
+  srcCols = ART_GRID_COLS,
+  srcRows = ART_GRID_ROWS,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PackedGrid {
+  const key = downsampleCacheKey(srcCols, srcRows, dstCols, dstRows);
+  let map = displayDownsampleCache.get(src);
+  const hit = map?.get(key);
+  if (hit) return hit;
+  const result = downsamplePackedGrid(src, srcCols, srcRows, dstCols, dstRows);
+  if (!map) {
+    map = new Map();
+    displayDownsampleCache.set(src, map);
+  }
+  map.set(key, result);
+  return result;
+}
+
 /** 将逻辑网格下采样到展示分辨率（中心取样，保持像素块感） */
 export function downsamplePackedGrid(
   src: PackedGrid,
@@ -374,7 +406,7 @@ export function drawDisplayPackedAtCellSize(
   dstCols = ART_DISPLAY_COLS,
   dstRows = ART_DISPLAY_ROWS
 ): void {
-  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const display = downsamplePackedGridCached(packed, srcCols, srcRows, dstCols, dstRows);
   fillDisplayPackedCells(ctx, display, cellPx, originX, originY, dstCols, dstRows);
 }
 
@@ -390,7 +422,7 @@ export function drawPackedDisplayToCanvas(
   dstCols = ART_DISPLAY_COLS,
   dstRows = ART_DISPLAY_ROWS
 ): void {
-  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const display = downsamplePackedGridCached(packed, srcCols, srcRows, dstCols, dstRows);
 
   if (mode === 'fit') {
     const cellPx = Math.min(Math.floor(width / dstCols), Math.floor(height / dstRows));
@@ -427,7 +459,7 @@ export function flattenPackedToDisplayBlocks(
   dstCols = ART_DISPLAY_COLS,
   dstRows = ART_DISPLAY_ROWS
 ): PackedGrid {
-  const display = downsamplePackedGrid(packed, srcCols, srcRows, dstCols, dstRows);
+  const display = downsamplePackedGridCached(packed, srcCols, srcRows, dstCols, dstRows);
   const out = createPackedGrid(srcCols, srcRows);
   for (let y = 0; y < srcRows; y++) {
     const dy = Math.min(dstRows - 1, Math.floor((y * dstRows) / srcRows));

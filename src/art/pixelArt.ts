@@ -9,6 +9,7 @@ import {
   anyDisplayHighlightBreath,
   cloneDisplayHighlight,
   createEmptyDisplayHighlight,
+  drawDisplayHighlightOverlay,
   drawImageDisplayWithHighlight,
   drawPackedDisplayWithHighlight,
   hasAnyDisplayHighlight,
@@ -23,6 +24,7 @@ import {
 import {
   clonePackedGrid,
   createDefaultCardArtPacked,
+  downsamplePackedGridCached,
   drawPackedDisplayToCanvas,
   gridDrawLayout,
   gridToPacked,
@@ -276,6 +278,72 @@ export interface DrawPixelArtOptions {
   mode?: GridDrawMode;
   highlight?: DisplayHighlightGrid;
   highlightBreathSpeed?: number;
+}
+
+/** 卡面底图（不含渲染层高亮） */
+export function drawPixelArtBase(
+  ctx: CanvasRenderingContext2D,
+  key: PixelArtKey,
+  width: number,
+  height: number,
+  options: Pick<DrawPixelArtOptions, 'transparent' | 'mode'> = {}
+): void {
+  const { transparent = false, mode = 'fit' } = options;
+  ctx.clearRect(0, 0, width, height);
+
+  if (!transparent) {
+    const bg = ctx.createLinearGradient(0, 0, 0, height);
+    bg.addColorStop(0, '#2a3a52');
+    bg.addColorStop(1, '#1a2438');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  if (hasCustomArtImage(key)) {
+    drawArtImageToCanvas(ctx, getCustomArtImage(key)!, width, height, mode);
+    return;
+  }
+
+  drawPackedDisplayToCanvas(ctx, getArtPacked(key), width, height, mode);
+}
+
+/** 仅绘制渲染层高亮（透明底，叠在底图 canvas 上） */
+export function drawPixelArtHighlightOverlay(
+  ctx: CanvasRenderingContext2D,
+  key: PixelArtKey,
+  width: number,
+  height: number,
+  options: Pick<DrawPixelArtOptions, 'mode' | 'highlight' | 'highlightBreathSpeed'> = {}
+): void {
+  const { mode = 'fit' } = options;
+  const highlight = options.highlight ?? getArtHighlight(key);
+  if (!hasAnyDisplayHighlight(highlight)) return;
+
+  const breathSpeed = options.highlightBreathSpeed ?? getArtHighlightBreathSpeed(key);
+  const nowMs = performance.now();
+
+  const displayPacked = hasCustomArtImage(key)
+    ? getCustomArtDisplayPacked(key)
+    : downsamplePackedGridCached(
+        getArtPacked(key),
+        ART_GRID_COLS,
+        ART_GRID_ROWS,
+        ART_DISPLAY_COLS,
+        ART_DISPLAY_ROWS
+      );
+
+  if (!displayPacked) return;
+
+  drawDisplayHighlightOverlay(
+    ctx,
+    displayPacked,
+    width,
+    height,
+    highlight,
+    mode,
+    breathSpeed,
+    nowMs
+  );
 }
 
 export function drawPixelArt(
