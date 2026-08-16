@@ -54,10 +54,20 @@ async function startApp(): Promise<void> {
     },
   });
 
+  const entryCount = manifest ? Object.keys(manifest.entries).length : 0;
+  const loaded = countLoadedCustomArtImages();
   setBootStatus({
     artManifestUrl: getResolvedArtManifestUrl(),
-    artEntryCount: manifest ? Object.keys(manifest.entries).length : 0,
-    artImageLoaded: countLoadedCustomArtImages(),
+    artEntryCount: entryCount,
+    artImageLoaded: loaded,
+    artLoadHint:
+      loaded === 0 && entryCount === 0
+        ? '卡图未加载：请先在网页「绘制」上传云端，再 Termux 执行 npm run cap:sync 重打 APK'
+        : loaded === 0 && entryCount > 0
+          ? '卡图清单已读但 PNG 未解码，请检查网络或重打 APK'
+          : loaded < entryCount
+            ? `部分卡图已加载（${loaded}/${entryCount}）`
+            : '',
   });
 
   window.clearTimeout(bootTimer);

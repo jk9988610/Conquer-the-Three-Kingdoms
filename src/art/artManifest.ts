@@ -9,9 +9,10 @@ import {
   type CachedArtAsset,
 } from './artCache';
 import { artManifestMatchesCached } from './artManifestCompare';
-import { getCardArtManifestUrl, isCloudArtConfigured } from './cloudConfig';
+import { getCardArtManifestUrl, getCardArtPublicBaseUrl, isCloudArtConfigured } from './cloudConfig';
+import { isNativeShell } from '../ota/native-bridge';
 import { applyArtCardMeta, parseArtCardMeta, type ArtCardMetaV1 } from './artMeta';
-import { loadArtImageFromBlob } from './artImage';
+import { loadArtImageFromBlob, loadArtImageFromUrl } from './artImage';
 import { PIXEL_ART_KEYS } from './pixelArt';
 
 export const ART_MANIFEST_VERSION = 1 as const;
@@ -59,6 +60,8 @@ function defaultManifestUrl(): string {
 /** APK / 本地构建未注入 env 时，回退到 Supabase 公共清单 */
 function resolveManifestUrl(explicit?: string): string {
   if (explicit) return explicit;
+  // APK 优先读构建时打入 www/cards/ 的本地清单（不依赖运行时外网）
+  if (isNativeShell()) return defaultManifestUrl();
   const fromEnv = import.meta.env.VITE_ART_MANIFEST_URL;
   if (fromEnv) return fromEnv;
   if (isCloudArtConfigured()) return getCardArtManifestUrl();
@@ -80,6 +83,15 @@ function isPixelArtKey(key: string): key is PixelArtKey {
 function normalizeBaseUrl(baseUrl: string | undefined): string {
   const raw = (baseUrl ?? 'cards').trim() || 'cards';
   return raw.replace(/\/+$/, '');
+}
+
+/** 清单里 baseUrl 为相对路径时：APK 用本地 www/cards/，网页用 Supabase */
+function resolveArtAssetBaseUrl(manifest: ArtManifestV1): string {
+  const raw = normalizeBaseUrl(manifest.baseUrl);
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (isNativeShell()) return raw;
+  if (isCloudArtConfigured()) return getCardArtPublicBaseUrl();
+  return raw;
 }
 
 /** 绝对 URL（Supabase）原样拼接；相对路径按 Vite base + 当前站点解析 */
@@ -177,10 +189,26 @@ async function loadArtEntry(
 
   try {
     const pngUrl = joinAssetUrl(baseUrl, entry.png);
-    const res = await fetch(pngUrl, { cache: 'default' });
-    if (!res.ok) throw new Error(`PNG ${res.status}`);
-    const pngBlob = await res.blob();
-    await loadArtImageFromBlob(artKey, pngBlob);
+    let pngBlob: Blob | null = null;
+
+    try {
+      const res = await fetch(pngUrl, { cache: 'default', mode: 'cors', credentials: 'omit' });
+      if (!res.ok) throw new Error(`PNG ${res.status}`);
+      pngBlob = await res.blob();
+      await loadArtImageFromBlob(artKey, pngBlob);
+    } catch (fetchErr) {
+      if (isNativeShell()) {
+        await loadArtImageFromUrl(artKey, pngUrl);
+        const retry = await fetch(pngUrl, { cache: 'default', mode: 'cors', credentials: 'omit' });
+        if (retry.ok) pngBlob = await retry.blob();
+      } else {
+        throw fetchErr;
+      }
+    }
+
+    if (!pngBlob) {
+      throw new Error('PNG 未加载');
+    }
 
     let meta: ArtCardMetaV1 | null = null;
     if (entry.meta) {
@@ -210,7 +238,7 @@ export async function applyArtManifest(
   onProgress?: (progress: ArtBootstrapProgress) => void,
   options: { preferNetwork?: boolean; keys?: PixelArtKey[] } = {}
 ): Promise<void> {
-  const baseUrl = normalizeBaseUrl(manifest.baseUrl);
+  const baseUrl = resolveArtAssetBaseUrl(manifest);
   const allKeys = Object.keys(manifest.entries).filter(isPixelArtKey);
   const keys =
     options.keys && options.keys.length > 0

@@ -282,6 +282,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.game-board__stat-line--warn {
+  font-size: 0.62rem;
+  color: #f0a060;
+  line-height: 1.35;
+}
+
 .game-board__stat-k {
   color: var(--tcg-muted);
 }

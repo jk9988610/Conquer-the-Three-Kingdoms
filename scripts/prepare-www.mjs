@@ -28,4 +28,13 @@ if (!existsSync(join(www, 'index.html'))) {
   process.exit(1);
 }
 
+execSync('node scripts/bundle-card-art-for-www.mjs', {
+  cwd: root,
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    VITE_ART_MANIFEST_URL: artManifestUrl,
+  },
+});
+
 console.log('www/ 已就绪（Vite outDir=www，base=./，供 Capacitor / OTA 使用）');
