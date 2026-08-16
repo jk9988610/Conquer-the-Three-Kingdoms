@@ -54,13 +54,42 @@ Termux 完整路径示例：
 adb: no devices/emulators found
 ```
 
-本机 Termux 不会自动出现在 `adb devices` 里。请用 **复制到「下载」+ 点安装**：
+本机 Termux 不会自动出现在 `adb devices` 里。请用 **复制到「下载」+ 点安装**。
+
+**推荐（一条命令复制）：**
 
 ```bash
-termux-setup-storage   # 首次需要，按提示点「允许」
+cd ~/Conquer-the-Three-Kingdoms
+npm run apk:copy
+```
 
-cp ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.apk \
-   ~/storage/shared/Download/tcg-debug.apk
+然后在 **文件管理器 → 下载 → tcg-debug.apk** 点安装。
+
+**首次若提示找不到 Download 目录**，分两步（**不要在一行里混着输**）：
+
+```bash
+termux-setup-storage
+```
+
+出现 `Do you want to continue? (y/n)` 时 **只输入 `y` 再回车**，等脚本结束。
+
+```bash
+npm run apk:copy
+```
+
+**手动复制（等价于 apk:copy）：**
+
+```bash
+cp android/app/build/outputs/apk/debug/app-debug.apk \
+  ~/storage/shared/Download/tcg-debug.apk
+```
+
+注意：`tcg-debug.apk` 是 **要复制到的文件路径**，不要单独敲路径当命令（会报 Permission denied）。
+
+若共享存储仍不可用，可先放到主目录：
+
+```bash
+cp android/app/build/outputs/apk/debug/app-debug.apk ~/tcg-debug.apk
 ```
 
 打开 **文件管理器 → 下载 → tcg-debug.apk** 安装。若提示不允许安装未知应用，给文件管理器或 Termux 开安装权限。
@@ -68,9 +97,7 @@ cp ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.ap
 **或用系统安装器直接拉起：**
 
 ```bash
-termux-setup-storage
-cp ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.apk \
-   ~/storage/shared/Download/tcg-debug.apk
+npm run apk:copy
 
 am start -a android.intent.action.VIEW \
   -d file:///storage/emulated/0/Download/tcg-debug.apk \
@@ -232,6 +259,8 @@ npm run apk:debug
 ```
 
 - 已装旧 APK 也可 **联网打开 App** 等待 OTA 热更（合并 `main` 后 CI 会发布新 bundle）。
+- 打开游戏 **状态** 面板可查看：`热更 1.0.xx`、`已载 PNG` 数量；点 **检查热更** 可确认是否更新成功。
+- **v0.3.54** 是应用版本号（`package.json`），**不会**因 OTA 变化；热更版本显示为 **热更 1.0.xx**。
 - 构建时可显式指定（与 CI 相同）：
 
 ```bash

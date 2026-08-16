@@ -12,6 +12,7 @@
     "cap:sync": "npm run prepare:www && npx cap sync android",
     "cap:open": "npx cap open android",
     "apk:debug": "node scripts/setup-android-sdk.mjs && npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "apk:copy": "bash scripts/copy-debug-apk.sh",
     "android:sdk": "node scripts/setup-android-sdk.mjs",
     "ota:build": "node scripts/build-ota.mjs",
     "build-art-manifest": "node scripts/build-art-manifest.mjs",
