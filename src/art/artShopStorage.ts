@@ -1,5 +1,5 @@
 import { getCachedManifest } from './artCache';
-import { fetchRemoteManifest } from './artCloudUpload';
+import { fetchRemoteManifest } from './artCloudManifest';
 import type { ArtManifestV1 } from './artManifest';
 import { getCardArtPublicBaseUrl, isCloudArtConfigured } from './cloudConfig';
 import { listBuiltinArtShopItems } from './artShopFallback';

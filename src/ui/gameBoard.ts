@@ -17,10 +17,9 @@ import {
   openCharacterModal,
 } from './characterModal';
 import { attachCardTap } from './cardTap';
-import { createCardElement, createDragGhost } from './cardElement';
+import { createCardElement, createDragGhost, updateCardElement } from './cardElement';
 import { cardSizeForZone } from './layout';
 import { attachPointerDrag } from './pointerDrag';
-import { openPixelEditor } from './pixelEditor';
 import { APP_VERSION } from '../version';
 
 export interface GameBoardCallbacks {
@@ -36,8 +35,13 @@ export class GameBoard {
   private state: GameState;
   private callbacks: GameBoardCallbacks;
   private cardSize: TcgScaledSize | null = null;
-  private dragCleanups: (() => void)[] = [];
-  private tapCleanups: (() => void)[] = [];
+  private dragCleanups = new Map<HTMLElement, () => void>();
+  private tapCleanups = new Map<HTMLElement, () => void>();
+  private topZoneMode: 'shop' | 'enemy' | null = null;
+  private layoutCache: {
+    zones: Partial<Record<'top' | 'player' | 'hand', DOMRect>>;
+    fieldCards: Map<string, DOMRect>;
+  } | null = null;
   private music = new MidiSampler();
   private musicOn = false;
   private modalCharacterId: string | null = null;
@@ -195,7 +199,8 @@ export class GameBoard {
 
     this.root
       .querySelector('[data-action="pixel-editor"]')
-      ?.addEventListener('click', () => {
+      ?.addEventListener('click', async () => {
+        const { openPixelEditor } = await import('./pixelEditor');
         openPixelEditor(() => this.render());
       });
 
@@ -244,11 +249,25 @@ export class GameBoard {
     this.render();
   }
 
-  private clearDrags(): void {
-    for (const fn of this.dragCleanups) fn();
-    this.dragCleanups = [];
-    for (const fn of this.tapCleanups) fn();
-    this.tapCleanups = [];
+  private unbindElement(el: HTMLElement): void {
+    const dragFn = this.dragCleanups.get(el);
+    if (dragFn) {
+      dragFn();
+      this.dragCleanups.delete(el);
+    }
+    const tapFn = this.tapCleanups.get(el);
+    if (tapFn) {
+      tapFn();
+      this.tapCleanups.delete(el);
+    }
+  }
+
+  private unbindDrag(el: HTMLElement): void {
+    const dragFn = this.dragCleanups.get(el);
+    if (dragFn) {
+      dragFn();
+      this.dragCleanups.delete(el);
+    }
   }
 
   private zoneBody(id: 'top' | 'player' | 'hand'): HTMLElement | null {
@@ -256,6 +275,10 @@ export class GameBoard {
   }
 
   private pointInZone(x: number, y: number, id: 'top' | 'player' | 'hand'): boolean {
+    const cached = this.layoutCache?.zones[id];
+    if (cached) {
+      return x >= cached.left && x <= cached.right && y >= cached.top && y <= cached.bottom;
+    }
     const z = this.zoneBody(id);
     if (!z) return false;
     const r = z.getBoundingClientRect();
@@ -289,10 +312,13 @@ export class GameBoard {
     const cards = this.root.querySelectorAll<HTMLElement>(
       `.tcg-card[data-field="${field}"]`
     );
+    const fieldCache = this.layoutCache?.fieldCards;
     for (const el of cards) {
-      const r = el.getBoundingClientRect();
+      const instanceId = el.dataset.instanceId;
+      if (!instanceId) continue;
+      const r = fieldCache?.get(instanceId) ?? el.getBoundingClientRect();
       if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-        return el.dataset.instanceId ?? null;
+        return instanceId;
       }
     }
     return null;
@@ -422,7 +448,9 @@ export class GameBoard {
     source: DragSource,
     card?: CardInstance
   ): void {
-    this.dragCleanups.push(
+    if (this.dragCleanups.has(el)) return;
+    this.dragCleanups.set(
+      el,
       attachPointerDrag({
         source: el,
         createGhost: createDragGhost,
@@ -517,7 +545,9 @@ export class GameBoard {
     instanceId: string,
     side: 'player' | 'enemy'
   ): void {
-    this.tapCleanups.push(
+    if (this.tapCleanups.has(el)) return;
+    this.tapCleanups.set(
+      el,
       attachCardTap(el, () => {
         const list =
           side === 'player'
@@ -529,9 +559,33 @@ export class GameBoard {
     );
   }
 
+  private removeStaleZoneChildren(body: HTMLElement, desiredKeys: Set<string>): void {
+    for (const child of [...body.children]) {
+      const el = child as HTMLElement;
+      const key = el.dataset.zoneKey;
+      if (!key || !desiredKeys.has(key)) {
+        this.unbindElement(el);
+        el.remove();
+      }
+    }
+  }
+
+  private refreshLayoutCache(): void {
+    const zones: Partial<Record<'top' | 'player' | 'hand', DOMRect>> = {};
+    const fieldCards = new Map<string, DOMRect>();
+    for (const id of ['top', 'player', 'hand'] as const) {
+      const z = this.zoneBody(id);
+      if (z) zones[id] = z.getBoundingClientRect();
+    }
+    for (const el of this.root.querySelectorAll<HTMLElement>('.tcg-card[data-field]')) {
+      const instanceId = el.dataset.instanceId;
+      if (instanceId) fieldCards.set(instanceId, el.getBoundingClientRect());
+    }
+    this.layoutCache = { zones, fieldCards };
+  }
+
   private render(): void {
     if (!this.cardSize) return;
-    this.clearDrags();
     hideCardBrief();
 
     const size = this.cardSize;
@@ -558,41 +612,84 @@ export class GameBoard {
 
     this.updateDebugPanel();
 
-    topBody.innerHTML = '';
-    playerBody.innerHTML = '';
-    handBody.innerHTML = '';
+    const nextTopMode = isPrep ? 'shop' : 'enemy';
+    if (this.topZoneMode !== nextTopMode) {
+      for (const child of [...topBody.children]) {
+        this.unbindElement(child as HTMLElement);
+      }
+      topBody.innerHTML = '';
+      this.topZoneMode = nextTopMode;
+    }
+
+    const topKeys = new Set<string>();
 
     if (isPrep) {
       for (const listing of this.state.shopListings) {
+        const key = `shop:${listing.template.id}`;
+        topKeys.add(key);
         const soldOut = listing.stock === 0;
         const display = createCardInstance(listing.template);
-        const el = createCardElement(display, {
-          size,
-          showPrice: listing.template.price,
-          soldOut,
-        });
-        el.dataset.shop = '1';
+        let el = topBody.querySelector<HTMLElement>(`[data-zone-key="${key}"]`);
+        if (el) {
+          updateCardElement(el, display, {
+            size,
+            showPrice: listing.template.price,
+            soldOut,
+          });
+        } else {
+          el = createCardElement(display, {
+            size,
+            showPrice: listing.template.price,
+            soldOut,
+          });
+          el.dataset.zoneKey = key;
+          el.dataset.shop = '1';
+          topBody.append(el);
+        }
         if (!soldOut) {
           this.bindDrag(el, { kind: 'shop', templateId: listing.template.id });
+        } else {
+          this.unbindDrag(el);
         }
-        topBody.append(el);
       }
     } else {
       for (const card of this.state.zones.enemyBattlefield) {
-        const el = createCardElement(card, { size, onField: 'enemy' });
-        this.bindFieldTap(el, card.instanceId, 'enemy');
-        topBody.append(el);
+        const key = `enemy:${card.instanceId}`;
+        topKeys.add(key);
+        let el = topBody.querySelector<HTMLElement>(`[data-zone-key="${key}"]`);
+        if (el) {
+          updateCardElement(el, card, { size, onField: 'enemy' });
+        } else {
+          el = createCardElement(card, { size, onField: 'enemy' });
+          el.dataset.zoneKey = key;
+          topBody.append(el);
+          this.bindFieldTap(el, card.instanceId, 'enemy');
+        }
       }
     }
 
-    for (const card of this.state.zones.playerBattlefield) {
-      const el = createCardElement(card, { size, onField: 'player' });
-      this.bindFieldTap(el, card.instanceId, 'player');
-      playerBody.append(el);
-    }
+    this.removeStaleZoneChildren(topBody, topKeys);
 
+    const playerKeys = new Set<string>();
+    for (const card of this.state.zones.playerBattlefield) {
+      const key = `player:${card.instanceId}`;
+      playerKeys.add(key);
+      let el = playerBody.querySelector<HTMLElement>(`[data-zone-key="${key}"]`);
+      if (el) {
+        updateCardElement(el, card, { size, onField: 'player' });
+      } else {
+        el = createCardElement(card, { size, onField: 'player' });
+        el.dataset.zoneKey = key;
+        playerBody.append(el);
+        this.bindFieldTap(el, card.instanceId, 'player');
+      }
+    }
+    this.removeStaleZoneChildren(playerBody, playerKeys);
+
+    const handKeys = new Set<string>();
     for (const card of this.state.zones.hand) {
-      const el = createCardElement(card, { size });
+      const key = `hand:${card.instanceId}`;
+      handKeys.add(key);
       const canDrag =
         card.data.tags.includes('character') ||
         card.data.tags.includes('equipment') ||
@@ -600,10 +697,22 @@ export class GameBoard {
         (card.data.tags.includes('action') &&
           card.data.actionKind === 'attack' &&
           this.state.phase === 'battle');
+      let el = handBody.querySelector<HTMLElement>(`[data-zone-key="${key}"]`);
+      if (el) {
+        updateCardElement(el, card, { size });
+      } else {
+        el = createCardElement(card, { size });
+        el.dataset.zoneKey = key;
+        handBody.append(el);
+      }
       if (canDrag) {
         this.bindDrag(el, { kind: 'hand', instanceId: card.instanceId }, card);
+      } else {
+        this.unbindDrag(el);
       }
-      handBody.append(el);
     }
+    this.removeStaleZoneChildren(handBody, handKeys);
+
+    this.refreshLayoutCache();
   }
 }
