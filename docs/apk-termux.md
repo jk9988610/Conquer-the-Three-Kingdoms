@@ -217,6 +217,24 @@ elecdog 与征战三国 **共用同一 SDK**，无需重复安装；只需每个
 - OTA 版本须为 `1.0.x`，与 APK `versionName 1.0` 一致。
 - 确认 CI 日志中 `build-ota.mjs` 成功且 zip 体积合理（非几十 KB）。
 
-**卡图不显示**
+**卡图不显示 / APK 没有加载图片**
 
-- APK 与网页均依赖 Supabase 卡图清单；构建时可设 `VITE_ART_MANIFEST_URL`（CI 已配置）。
+- 卡图默认从 **Supabase 云端** 拉取，App 需 **联网**。
+- Termux 打 APK 时若未注入清单 URL，会误读空的 `cards/manifest.json`（已修复：运行时自动回退 Supabase）。
+- **修复后**在 Termux 执行：
+
+```bash
+cd ~/Conquer-the-Three-Kingdoms
+git pull origin main
+npm run cap:sync
+npm run apk:debug
+# 再复制到 Download 安装，或覆盖安装
+```
+
+- 已装旧 APK 也可 **联网打开 App** 等待 OTA 热更（合并 `main` 后 CI 会发布新 bundle）。
+- 构建时可显式指定（与 CI 相同）：
+
+```bash
+export VITE_ART_MANIFEST_URL='https://yjqkotqmglxjhlrhynsu.supabase.co/storage/v1/object/public/card-art/manifest.json'
+npm run cap:sync
+```
