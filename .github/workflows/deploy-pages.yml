@@ -33,10 +33,21 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - name: Install and build
+      - name: Stamp OTA site version
         run: |
-          npm ci
-          npm run build
+          VERSION="1.0.${GITHUB_RUN_NUMBER}"
+          printf '%s\n' \
+            '/** OTA 网页构建版本 — CI 生成 */' \
+            "export const SITE_OTA_VERSION = '${VERSION}';" \
+            > src/site-build.ts
+
+      - name: Install and build Pages
+        run: npm ci && npm run build
+
+      - name: Build OTA bundle
+        run: node scripts/build-ota.mjs
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

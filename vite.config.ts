@@ -3,9 +3,20 @@ import { defineConfig } from 'vite';
 /** GitHub Pages 项目页：https://jk9988610.github.io/Conquer-the-Three-Kingdoms/ */
 const REPO_BASE = '/Conquer-the-Three-Kingdoms/';
 
+function viteBase(): string {
+  if (process.env.CAPACITOR_BUILD === 'true') return './';
+  if (process.env.GITHUB_PAGES === 'true') return REPO_BASE;
+  return '/';
+}
+
+function viteOutDir(): string {
+  return process.env.CAPACITOR_BUILD === 'true' ? 'www' : 'dist';
+}
+
 export default defineConfig({
-  base: process.env.GITHUB_PAGES === 'true' ? REPO_BASE : '/',
+  base: viteBase(),
   build: {
+    outDir: viteOutDir(),
     rollupOptions: {
       output: {
         manualChunks(id) {

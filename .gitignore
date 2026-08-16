@@ -10,7 +10,17 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+www
 *.local
+
+# Capacitor / OTA
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.idea/
+updates/www-*.zip
+updates/www.json
 
 # Editor directories and files
 .vscode/*
