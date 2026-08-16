@@ -39,11 +39,7 @@ export async function loadArtImageFromBlob(key: PixelArtKey, blob: Blob): Promis
   try {
     const img = new Image();
     img.decoding = 'async';
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('无法解码缓存卡图'));
-      img.src = url;
-    });
+    await waitForImage(img, url, 15000);
     setCustomArtImage(key, img);
     return img;
   } finally {
@@ -55,13 +51,26 @@ export async function loadArtImageFromUrl(key: PixelArtKey, url: string): Promis
   const img = new Image();
   img.decoding = 'async';
   img.crossOrigin = 'anonymous';
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error(`无法加载卡图: ${url}`));
-    img.src = url;
-  });
+  await waitForImage(img, url, 15000);
   setCustomArtImage(key, img);
   return img;
+}
+
+function waitForImage(img: HTMLImageElement, src: string, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`图片加载超时 (${timeoutMs}ms)`));
+    }, timeoutMs);
+    img.onload = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    img.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error(`无法加载卡图: ${src}`));
+    };
+    img.src = src;
+  });
 }
 
 /** 将 60×84 PNG 按与 PackedGrid 相同的 fit/cover 规则绘制到卡面 */

@@ -94,7 +94,6 @@ function resolveArtAssetBaseUrl(manifest: ArtManifestV1): string {
   return raw;
 }
 
-/** 绝对 URL（Supabase）原样拼接；相对路径按 Vite base + 当前站点解析 */
 function joinAssetUrl(baseUrl: string, filePath: string): string {
   const file = filePath.replace(/^\/+/, '');
   if (/^https?:\/\//i.test(baseUrl)) {
@@ -107,6 +106,21 @@ function joinAssetUrl(baseUrl: string, filePath: string): string {
     ? baseUrl.replace(/^\//, '')
     : baseUrl.replace(/^\/+/, '');
   return new URL(`${assetBase}/${file}`, new URL(siteBase, window.location.origin)).href;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ctrl.signal,
+      cache: 'no-store',
+      mode: 'cors',
+      credentials: 'omit',
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 function entryFromMeta(meta: ArtCardMetaV1, png: string): ArtManifestEntryV1 {
@@ -130,12 +144,6 @@ export function parseArtManifest(raw: unknown): ArtManifestV1 | null {
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : undefined,
     entries: obj.entries,
   };
-}
-
-async function loadMetaFile(url: string): Promise<ArtCardMetaV1 | null> {
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return parseArtCardMeta(await res.json());
 }
 
 function entryRevision(manifest: ArtManifestV1, entry: ArtManifestEntryV1): string {
@@ -192,14 +200,14 @@ async function loadArtEntry(
     let pngBlob: Blob | null = null;
 
     try {
-      const res = await fetch(pngUrl, { cache: 'default', mode: 'cors', credentials: 'omit' });
+      const res = await fetchWithTimeout(pngUrl);
       if (!res.ok) throw new Error(`PNG ${res.status}`);
       pngBlob = await res.blob();
       await loadArtImageFromBlob(artKey, pngBlob);
     } catch (fetchErr) {
       if (isNativeShell()) {
         await loadArtImageFromUrl(artKey, pngUrl);
-        const retry = await fetch(pngUrl, { cache: 'default', mode: 'cors', credentials: 'omit' });
+        const retry = await fetchWithTimeout(pngUrl);
         if (retry.ok) pngBlob = await retry.blob();
       } else {
         throw fetchErr;
@@ -233,6 +241,16 @@ async function loadArtEntry(
   }
 }
 
+async function loadMetaFile(url: string): Promise<ArtCardMetaV1 | null> {
+  try {
+    const res = await fetchWithTimeout(url, 8000);
+    if (!res.ok) return null;
+    return parseArtCardMeta(await res.json());
+  } catch {
+    return null;
+  }
+}
+
 export async function applyArtManifest(
   manifest: ArtManifestV1,
   onProgress?: (progress: ArtBootstrapProgress) => void,
@@ -254,15 +272,17 @@ export async function applyArtManifest(
 
   report();
 
-  await Promise.all(
-    keys.map(async (artKey) => {
-      const entry = manifest.entries[artKey];
-      if (!entry?.png) return;
+  for (const artKey of keys) {
+    const entry = manifest.entries[artKey];
+    if (!entry?.png) continue;
+    try {
       await loadArtEntry(manifest, artKey, entry, baseUrl, preferNetwork);
       loaded += 1;
       report(artKey);
-    })
-  );
+    } catch (err) {
+      console.warn(`[art] 跳过 ${artKey}`, err);
+    }
+  }
 }
 
 async function loadManifestForBootstrap(manifestUrl: string): Promise<{
@@ -277,7 +297,7 @@ async function loadManifestForBootstrap(manifestUrl: string): Promise<{
   }
 
   try {
-    const res = await fetch(manifestUrl, { cache: 'no-store' });
+    const res = await fetchWithTimeout(manifestUrl);
     if (res.status === 404) {
       return { manifest: cached, fromNetwork: false };
     }
@@ -342,7 +362,8 @@ export async function bootstrapCardArt(options: ArtBootstrapOptions = {}): Promi
 
   if (deferred.length > 0) {
     scheduleIdleTask(() => {
-      void applyArtManifest(manifest, options.onProgress, {
+      // 后台加载：勿传 onProgress，避免覆盖已启动的游戏界面
+      void applyArtManifest(manifest, undefined, {
         preferNetwork: fromNetwork,
         keys: deferred,
       });
