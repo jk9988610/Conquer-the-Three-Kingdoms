@@ -15,10 +15,15 @@ cd Conquer-the-Three-Kingdoms
 # 2. 安装依赖
 npm install
 
-# 3. 同步 www + Android（内部会 CAPACITOR_BUILD 构建到 www/）
+# 3. 配置 Android SDK（新仓库必须；与 elecdog 共用同一 SDK）
+node scripts/setup-android-sdk.mjs
+# 若 elecdog 能编而这里失败，直接复制：
+# cp ~/elecdog/android/local.properties android/local.properties
+
+# 4. 同步 www + Android（内部会 CAPACITOR_BUILD 构建到 www/）
 npm run cap:sync
 
-# 4. 打 debug APK
+# 5. 打 debug APK
 npm run apk:debug
 ```
 
@@ -95,6 +100,26 @@ versionName "1.0"    // 与 OTA 主版本一致
 ---
 
 ## 六、常见问题
+
+**SDK location not found**
+
+Gradle 报错 `SDK location not found` / 缺少 `android/local.properties`：
+
+```bash
+# 方法一（推荐）：从已能编译的 elecdog 复制
+cp ~/elecdog/android/local.properties android/local.properties
+
+# 方法二：自动探测
+node scripts/setup-android-sdk.mjs
+
+# 方法三：手动指定
+export ANDROID_HOME=$HOME/android-sdk   # 你的实际 SDK 路径
+echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+npm run apk:debug
+```
+
+elecdog 与征战三国 **共用同一 SDK**，无需重复安装；只需每个仓库各有一份 `local.properties`（该文件不入 git）。
 
 **白屏**
 
