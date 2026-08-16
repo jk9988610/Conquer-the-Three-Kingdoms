@@ -47,10 +47,24 @@ export async function loadArtImageFromBlob(key: PixelArtKey, blob: Blob): Promis
   }
 }
 
+function shouldUseCrossOrigin(url: string): boolean {
+  try {
+    const resolved = new URL(url, window.location.href);
+    if (resolved.origin === window.location.origin) return false;
+    // Capacitor WebView 本地资源；不设 crossOrigin 避免 CORS 拦截
+    if (/^https?:\/\/localhost/i.test(resolved.origin)) return false;
+    return /^https?:/i.test(resolved.protocol);
+  } catch {
+    return false;
+  }
+}
+
 export async function loadArtImageFromUrl(key: PixelArtKey, url: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.decoding = 'async';
-  img.crossOrigin = 'anonymous';
+  if (shouldUseCrossOrigin(url)) {
+    img.crossOrigin = 'anonymous';
+  }
   await waitForImage(img, url, 15000);
   setCustomArtImage(key, img);
   return img;

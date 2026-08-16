@@ -12,7 +12,7 @@ import { artManifestMatchesCached } from './artManifestCompare';
 import { getCardArtManifestUrl, getCardArtPublicBaseUrl, isCloudArtConfigured } from './cloudConfig';
 import { isNativeShell } from '../ota/native-bridge';
 import { applyArtCardMeta, parseArtCardMeta, type ArtCardMetaV1 } from './artMeta';
-import { loadArtImageFromBlob, loadArtImageFromUrl } from './artImage';
+import { loadArtImageFromBlob, loadArtImageFromUrl, hasCustomArtImage } from './artImage';
 import { PIXEL_ART_KEYS } from './pixelArt';
 
 export const ART_MANIFEST_VERSION = 1 as const;
@@ -198,23 +198,40 @@ async function loadArtEntry(
   try {
     const pngUrl = joinAssetUrl(baseUrl, entry.png);
     let pngBlob: Blob | null = null;
+    const nativeLocal =
+      isNativeShell() &&
+      (!/^https?:\/\//i.test(baseUrl) || /^https?:\/\/localhost/i.test(pngUrl));
 
     try {
-      const res = await fetchWithTimeout(pngUrl);
-      if (!res.ok) throw new Error(`PNG ${res.status}`);
-      pngBlob = await res.blob();
-      await loadArtImageFromBlob(artKey, pngBlob);
-    } catch (fetchErr) {
-      if (isNativeShell()) {
+      if (nativeLocal) {
         await loadArtImageFromUrl(artKey, pngUrl);
-        const retry = await fetchWithTimeout(pngUrl);
-        if (retry.ok) pngBlob = await retry.blob();
+        try {
+          const res = await fetchWithTimeout(pngUrl);
+          if (res.ok) pngBlob = await res.blob();
+        } catch {
+          /* Image 已加载，缓存 blob 可选 */
+        }
       } else {
+        const res = await fetchWithTimeout(pngUrl);
+        if (!res.ok) throw new Error(`PNG ${res.status}`);
+        pngBlob = await res.blob();
+        await loadArtImageFromBlob(artKey, pngBlob);
+      }
+    } catch (fetchErr) {
+      if (isNativeShell() && !nativeLocal) {
+        await loadArtImageFromUrl(artKey, pngUrl);
+        try {
+          const retry = await fetchWithTimeout(pngUrl);
+          if (retry.ok) pngBlob = await retry.blob();
+        } catch {
+          /* Image 已加载 */
+        }
+      } else if (!nativeLocal) {
         throw fetchErr;
       }
     }
 
-    if (!pngBlob) {
+    if (!pngBlob && !hasCustomArtImage(artKey)) {
       throw new Error('PNG 未加载');
     }
 
@@ -224,13 +241,15 @@ async function loadArtEntry(
     }
     applyEntryMeta(artKey, entry, meta);
 
-    await saveCachedAsset({
-      artKey,
-      updatedAt: revision,
-      pngBlob,
-      highlightB64: meta?.highlightB64 ?? entry.highlightB64,
-      highlightBreathSpeed: meta?.highlightBreathSpeed ?? entry.highlightBreathSpeed,
-    });
+    if (pngBlob) {
+      await saveCachedAsset({
+        artKey,
+        updatedAt: revision,
+        pngBlob,
+        highlightB64: meta?.highlightB64 ?? entry.highlightB64,
+        highlightBreathSpeed: meta?.highlightBreathSpeed ?? entry.highlightBreathSpeed,
+      });
+    }
   } catch (err) {
     if (cached) {
       console.warn(`[art] 网络加载 ${artKey} 失败，使用本地缓存`, err);
