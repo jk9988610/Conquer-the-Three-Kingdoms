@@ -244,11 +244,13 @@ elecdog 与征战三国 **共用同一 SDK**，无需重复安装；只需每个
 - OTA 版本须为 `1.0.x`，与 APK `versionName 1.0` 一致。
 - 确认 CI 日志中 `build-ota.mjs` 成功且 zip 体积合理（非几十 KB）。
 
-**卡图不显示 / APK 没有加载图片**
+**卡图不显示 / APK 没有加载图片 / 蓝色色块**
 
-- 卡图默认从 **Supabase 云端** 拉取，App 需 **联网**。
-- Termux 打 APK 时若未注入清单 URL，会误读空的 `cards/manifest.json`（已修复：运行时自动回退 Supabase）。
-- **修复后**在 Termux 执行：
+- **热更包必须含 `cards/*.png`**：若 CI 只打出约 125KB 的 zip、无卡图，热更后仍会显示蓝色默认块（`1.0.19` 即此类包，无法靠该版本修复）。
+- 合并本修复后，CI 会在 **未捆绑卡图时直接失败**，避免再发布空卡图 OTA。
+- 卡图来源：网页「绘制」**上传云端**（Supabase `card-art`），或把 `*.png` 放入 `public/cards/` 后 `npm run build-art-manifest`。
+- Termux 打 APK 时 `cap:sync` 日志应出现 **「已捆绑 N 张卡图」**；若无，检查联网与 Supabase 清单。
+- App 需 **联网** 才能从 Supabase 回退拉取（本地 `www/cards/` 为空时）。
 
 ```bash
 cd ~/Conquer-the-Three-Kingdoms

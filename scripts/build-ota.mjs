@@ -57,6 +57,12 @@ if (!checksum || !existsSync(builtPath)) {
 if (existsSync(destZip)) rmSync(destZip);
 renameSync(builtPath, destZip);
 
+execSync(`node scripts/verify-ota-cards.mjs "${destZip}"`, {
+  cwd: root,
+  stdio: 'inherit',
+  env: process.env,
+});
+
 const wwwJson = {
   version,
   url: `${pagesBase}/${zipName}.zip`,
