@@ -8,6 +8,7 @@ import {
   type CachedArtAsset,
 } from './artCache';
 import { artManifestMatchesCached } from './artManifestCompare';
+import { getCardArtManifestUrl, isCloudArtConfigured } from './cloudConfig';
 import { applyArtCardMeta, parseArtCardMeta, type ArtCardMetaV1 } from './artMeta';
 import { loadArtImageFromBlob } from './artImage';
 import { PIXEL_ART_KEYS } from './pixelArt';
@@ -52,6 +53,19 @@ function defaultManifestUrl(): string {
     ? import.meta.env.BASE_URL
     : `${import.meta.env.BASE_URL}/`;
   return `${base}cards/manifest.json`;
+}
+
+/** APK / 本地构建未注入 env 时，回退到 Supabase 公共清单 */
+function resolveManifestUrl(explicit?: string): string {
+  if (explicit) return explicit;
+  const fromEnv = import.meta.env.VITE_ART_MANIFEST_URL;
+  if (fromEnv) return fromEnv;
+  if (isCloudArtConfigured()) return getCardArtManifestUrl();
+  return defaultManifestUrl();
+}
+
+function manifestHasEntries(manifest: ArtManifestV1 | null): manifest is ArtManifestV1 {
+  return Boolean(manifest && Object.keys(manifest.entries).length > 0);
 }
 
 function isPixelArtKey(key: string): key is PixelArtKey {
@@ -258,12 +272,18 @@ function scheduleIdleTask(task: () => void): void {
 }
 
 export async function bootstrapCardArt(options: ArtBootstrapOptions = {}): Promise<ArtManifestV1 | null> {
-  const manifestUrl =
-    options.manifestUrl ?? import.meta.env.VITE_ART_MANIFEST_URL ?? defaultManifestUrl();
+  const primaryUrl = resolveManifestUrl(options.manifestUrl);
+  let { manifest, fromNetwork } = await loadManifestForBootstrap(primaryUrl);
 
-  const { manifest, fromNetwork } = await loadManifestForBootstrap(manifestUrl);
+  const cloudUrl = isCloudArtConfigured() ? getCardArtManifestUrl() : null;
+  if (!manifestHasEntries(manifest) && cloudUrl && cloudUrl !== primaryUrl) {
+    console.info('[art] 本地清单为空，尝试 Supabase 卡图清单');
+    const retry = await loadManifestForBootstrap(cloudUrl);
+    manifest = retry.manifest;
+    fromNetwork = retry.fromNetwork;
+  }
 
-  if (!manifest || Object.keys(manifest.entries).length === 0) {
+  if (!manifestHasEntries(manifest)) {
     return null;
   }
 
