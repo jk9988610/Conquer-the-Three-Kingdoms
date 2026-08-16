@@ -420,6 +420,17 @@ export interface PixelImportMixOptions {
   removeBgBoxes?: RemoveBgBoxSelection;
 }
 
+/** 效果预览快速路径：半分辨率展示格（30×42） */
+export const PREVIEW_FAST_DISPLAY_COLS = 30;
+export const PREVIEW_FAST_DISPLAY_ROWS = 42;
+
+export interface PixelImportDisplayOptions extends PixelImportMixOptions {
+  displayCols?: number;
+  displayRows?: number;
+  /** 已算好的 matting 展示格（全分辨率），避免重复下采样 */
+  mattingGrid?: PixelGrid;
+}
+
 /** 边缘参考色（供 UI 展示） */
 export interface RemoveBgEdgeColor {
   key: string;
@@ -1307,16 +1318,28 @@ export function logicalGridToDisplayGrid(grid: PixelGrid): PixelGrid {
 }
 
 /** 逻辑网格 → 展示网格（色桶多数票 + 桶内均值，专供去背景算掩码） */
-export function logicalGridToDisplayGridMatting(grid: PixelGrid): PixelGrid {
+export function logicalGridToDisplayGridMatting(
+  grid: PixelGrid,
+  dstCols = ART_DISPLAY_COLS,
+  dstRows = ART_DISPLAY_ROWS
+): PixelGrid {
+  return logicalGridToDisplayGridMattingSized(grid, dstCols, dstRows);
+}
+
+export function logicalGridToDisplayGridMattingSized(
+  grid: PixelGrid,
+  dstCols: number,
+  dstRows: number
+): PixelGrid {
   const packed = gridToPacked(grid, ART_GRID_COLS, ART_GRID_ROWS);
   const displayPacked = downsamplePackedGridBucketMajority(
     packed,
     ART_GRID_COLS,
     ART_GRID_ROWS,
-    ART_DISPLAY_COLS,
-    ART_DISPLAY_ROWS
+    dstCols,
+    dstRows
   );
-  return packedToGrid(displayPacked, ART_DISPLAY_COLS, ART_DISPLAY_ROWS);
+  return packedToGrid(displayPacked, dstCols, dstRows);
 }
 
 /** 展示网格 → 逻辑网格（每块填色，与编辑器 flatten 一致） */
@@ -1347,9 +1370,22 @@ export function displayGridToLogicalGrid(display: PixelGrid): PixelGrid {
 export function applyPixelImportMixOnDisplay(
   grid: PixelGrid,
   mix: PixelImportEffectMix,
-  options?: PixelImportMixOptions
+  options?: PixelImportDisplayOptions
 ): PixelGrid {
-  let display = logicalGridToDisplayGridMatting(grid);
+  const displayCols = options?.displayCols ?? ART_DISPLAY_COLS;
+  const displayRows = options?.displayRows ?? ART_DISPLAY_ROWS;
+  const fullSize =
+    displayCols === ART_DISPLAY_COLS && displayRows === ART_DISPLAY_ROWS;
+
+  let display: PixelGrid;
+  if (options?.mattingGrid && fullSize) {
+    display = options.mattingGrid.map((row) => [...row]);
+  } else if (fullSize) {
+    display = logicalGridToDisplayGridMatting(grid);
+  } else {
+    display = logicalGridToDisplayGridMattingSized(grid, displayCols, displayRows);
+  }
+
   if (shouldApplyRemoveBg(mix, options)) {
     display = applyRemoveBgToDisplayGrid(display, mix.removeBg ?? 0, options);
   }

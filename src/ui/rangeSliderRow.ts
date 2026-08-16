@@ -7,6 +7,9 @@ export interface RangeSliderRowOptions {
   value?: number;
   className?: string;
   formatValue?: (value: number) => string;
+  /** 滑条拖动过程中（input） */
+  onInput?: (value: number) => void;
+  /** 松手或步进按钮（change / click） */
   onChange: (value: number) => void;
 }
 
@@ -93,6 +96,16 @@ export function createRangeSliderRow(options: RangeSliderRowOptions): RangeSlide
 
   range.addEventListener('input', () => {
     value = clamp(Number(range.value) || min, min, max);
+    valEl.textContent = format(value);
+    range.value = String(value);
+    if (options.onInput) options.onInput(value);
+    else emitChange();
+  });
+
+  range.addEventListener('change', () => {
+    value = clamp(Number(range.value) || min, min, max);
+    valEl.textContent = format(value);
+    range.value = String(value);
     emitChange();
   });
 
