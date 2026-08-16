@@ -79,6 +79,9 @@ const MAX_UNDO = 10;
 const MAX_BRUSH = 12;
 const MIN_VIEW_ZOOM = 0.15;
 const MAX_VIEW_ZOOM = 12;
+/** 编辑区单轴 CSS 像素上限，避免高 zoom / 大视口时 canvas 过大 */
+const MAX_EDIT_CANVAS_CSS_PX = 2048;
+const MAX_CANVAS_PHYSICAL_PX = 4096;
 
 interface CellPatch {
   i: number;
@@ -716,8 +719,15 @@ export function openPixelEditor(onApplied: () => void): void {
     const cssW = Math.max(1, Math.floor(w));
     const cssH = Math.max(1, Math.floor(h));
     const ratio = Math.max(1, dpr);
-    canvas.width = Math.max(1, Math.floor(cssW * ratio));
-    canvas.height = Math.max(1, Math.floor(cssH * ratio));
+    let physW = Math.max(1, Math.floor(cssW * ratio));
+    let physH = Math.max(1, Math.floor(cssH * ratio));
+    if (physW > MAX_CANVAS_PHYSICAL_PX || physH > MAX_CANVAS_PHYSICAL_PX) {
+      const shrink = Math.min(MAX_CANVAS_PHYSICAL_PX / physW, MAX_CANVAS_PHYSICAL_PX / physH);
+      physW = Math.max(1, Math.floor(physW * shrink));
+      physH = Math.max(1, Math.floor(physH * shrink));
+    }
+    canvas.width = physW;
+    canvas.height = physH;
     if (options.fillParent) {
       canvas.style.width = '100%';
       canvas.style.height = '100%';
@@ -731,7 +741,9 @@ export function openPixelEditor(onApplied: () => void): void {
     }
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      const scaleX = physW / cssW;
+      const scaleY = physH / cssH;
+      ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
       ctx.imageSmoothingEnabled = false;
     }
     return ctx;
@@ -857,10 +869,11 @@ export function openPixelEditor(onApplied: () => void): void {
       ART_DISPLAY_ROWS,
       Math.floor(editViewport.clientHeight) - frame
     );
-    cellSize = Math.max(
-      MIN_CELL_PX,
-      Math.floor(Math.min(availW / ART_DISPLAY_COLS, availH / ART_DISPLAY_ROWS))
+    const rawCell = Math.floor(Math.min(availW / ART_DISPLAY_COLS, availH / ART_DISPLAY_ROWS));
+    const maxCell = Math.floor(
+      Math.min(MAX_EDIT_CANVAS_CSS_PX / ART_DISPLAY_COLS, MAX_EDIT_CANVAS_CSS_PX / ART_DISPLAY_ROWS)
     );
+    cellSize = Math.max(MIN_CELL_PX, Math.min(rawCell, maxCell));
     gridPixelW = ART_DISPLAY_COLS * cellSize;
     gridPixelH = ART_DISPLAY_ROWS * cellSize;
     syncEditSurfaceSize();
