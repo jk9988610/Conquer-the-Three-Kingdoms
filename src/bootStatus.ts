@@ -10,6 +10,7 @@ export interface BootStatus {
   artManifestUrl: string;
   artEntryCount: number;
   artImageLoaded: number;
+  artLoadHint: string;
   nativeShell: boolean;
 }
 
@@ -21,6 +22,7 @@ const bootStatus: BootStatus = {
   artManifestUrl: '',
   artEntryCount: 0,
   artImageLoaded: 0,
+  artLoadHint: '',
   nativeShell: false,
 };
 

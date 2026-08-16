@@ -110,6 +110,7 @@ export class GameBoard {
           <p class="game-board__stat-line game-board__stat-line--hint" data-ota-detail title=""></p>
           <p class="game-board__stat-line"><span class="game-board__stat-k">卡图清单</span> <span data-art-manifest></span></p>
           <p class="game-board__stat-line"><span class="game-board__stat-k">已载 PNG</span> <span data-art-loaded></span></p>
+          <p class="game-board__stat-line game-board__stat-line--warn" data-art-hint hidden></p>
           <p class="game-board__stat-line game-board__stat-line--hint" data-hint title=""></p>
         </div>
       </aside>
@@ -551,6 +552,18 @@ export class GameBoard {
     const artLoaded = this.root.querySelector<HTMLElement>('[data-art-loaded]');
     if (artLoaded) {
       artLoaded.textContent = `${status.artImageLoaded} / ${status.artEntryCount}`;
+    }
+
+    const artHint = this.root.querySelector<HTMLElement>('[data-art-hint]');
+    if (artHint) {
+      const hint = status.artLoadHint;
+      if (hint) {
+        artHint.hidden = false;
+        artHint.textContent = hint;
+      } else {
+        artHint.hidden = true;
+        artHint.textContent = '';
+      }
     }
   }
 
