@@ -1,4 +1,5 @@
 import { MidiSampler } from '../audio/midiSampler';
+import { formatVersionLine, getBootStatus, setBootStatus } from '../bootStatus';
 import { maxAllyAttack } from '../game/catalog';
 import {
   attackEnemyFromHand,
@@ -20,7 +21,12 @@ import { attachCardTap } from './cardTap';
 import { createCardElement, createDragGhost, updateCardElement } from './cardElement';
 import { cardSizeForZone } from './layout';
 import { attachPointerDrag } from './pointerDrag';
-import { APP_VERSION } from '../version';
+import {
+  checkWebOtaStatus,
+  isNativeShell,
+  runOtaBootstrapNative,
+} from '../ota/native-bridge';
+import { SITE_OTA_VERSION } from '../site-build';
 
 export interface GameBoardCallbacks {
   onStateChange: (state: GameState) => void;
@@ -65,6 +71,7 @@ export class GameBoard {
           <header class="game-board__topbar">
             <h1 class="game-board__title">征战三国 <span class="game-board__ver" data-version></span></h1>
             <div class="game-board__topbar-actions">
+              <button type="button" class="btn game-board__topbar-btn" data-action="check-ota">检查热更</button>
               <button type="button" class="btn game-board__topbar-btn" data-action="toggle-status">状态</button>
               <button type="button" class="btn game-board__topbar-btn" data-action="toggle-debug">调试</button>
               <button type="button" class="btn" data-action="toggle-phase">阶段</button>
@@ -98,6 +105,11 @@ export class GameBoard {
         <div class="game-board__drawer-body">
           <p class="game-board__stat-line"><span class="game-board__stat-k">金币</span> <span data-gold></span></p>
           <p class="game-board__stat-line"><span class="game-board__stat-k">阶段</span> <span data-phase-label></span></p>
+          <p class="game-board__stat-line"><span class="game-board__stat-k">版本</span> <span data-runtime-version></span></p>
+          <p class="game-board__stat-line"><span class="game-board__stat-k">热更</span> <span data-ota-bundle></span></p>
+          <p class="game-board__stat-line game-board__stat-line--hint" data-ota-detail title=""></p>
+          <p class="game-board__stat-line"><span class="game-board__stat-k">卡图清单</span> <span data-art-manifest></span></p>
+          <p class="game-board__stat-line"><span class="game-board__stat-k">已载 PNG</span> <span data-art-loaded></span></p>
           <p class="game-board__stat-line game-board__stat-line--hint" data-hint title=""></p>
         </div>
       </aside>
@@ -112,7 +124,7 @@ export class GameBoard {
       </aside>
     `;
 
-    this.root.querySelector('[data-version]')!.textContent = `v${APP_VERSION}`;
+    this.refreshRuntimeStatusUi();
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
     this.bindControls();
     this.updateBoardDrawerUi();
@@ -150,6 +162,13 @@ export class GameBoard {
   }
 
   private bindControls(): void {
+    this.root
+      .querySelector('[data-action="check-ota"]')
+      ?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void this.handleCheckOta();
+      });
+
     this.root
       .querySelector('[data-action="toggle-status"]')
       ?.addEventListener('click', (e) => {
@@ -480,6 +499,61 @@ export class GameBoard {
     }
   }
 
+  private async handleCheckOta(): Promise<void> {
+    if (isNativeShell()) {
+      const ota = await runOtaBootstrapNative();
+      setBootStatus({ otaBundleLabel: ota.label, otaDetail: ota.status });
+      this.refreshRuntimeStatusUi();
+      if (ota.updated) {
+        window.location.reload();
+      } else {
+        this.setHint(ota.status || '热更检查完成');
+      }
+      return;
+    }
+
+    const web = await checkWebOtaStatus(SITE_OTA_VERSION);
+    setBootStatus({ otaDetail: web.status });
+    this.refreshRuntimeStatusUi();
+    this.setHint(web.status);
+  }
+
+  private refreshRuntimeStatusUi(): void {
+    const status = getBootStatus();
+    const versionEl = this.root.querySelector<HTMLElement>('[data-version]');
+    if (versionEl) versionEl.textContent = formatVersionLine(status);
+
+    const runtimeVer = this.root.querySelector<HTMLElement>('[data-runtime-version]');
+    if (runtimeVer) {
+      runtimeVer.textContent = `应用 v${status.appVersion} · 网页包 ${status.siteOtaVersion}`;
+    }
+
+    const otaBundle = this.root.querySelector<HTMLElement>('[data-ota-bundle]');
+    if (otaBundle) {
+      otaBundle.textContent = status.nativeShell
+        ? status.otaBundleLabel || '（未知）'
+        : '非 APK';
+    }
+
+    const otaDetail = this.root.querySelector<HTMLElement>('[data-ota-detail]');
+    if (otaDetail) {
+      otaDetail.textContent = status.otaDetail || '—';
+      otaDetail.title = status.otaDetail || '';
+    }
+
+    const artManifest = this.root.querySelector<HTMLElement>('[data-art-manifest]');
+    if (artManifest) {
+      const shortUrl = status.artManifestUrl.replace(/^https?:\/\//, '');
+      artManifest.textContent = `${status.artEntryCount} 条 · ${shortUrl}`;
+      artManifest.title = status.artManifestUrl;
+    }
+
+    const artLoaded = this.root.querySelector<HTMLElement>('[data-art-loaded]');
+    if (artLoaded) {
+      artLoaded.textContent = `${status.artImageLoaded} / ${status.artEntryCount}`;
+    }
+  }
+
   private setHint(text: string): void {
     const el = this.root.querySelector<HTMLElement>('[data-hint]');
     if (!el) return;
@@ -500,6 +574,12 @@ export class GameBoard {
       `ally field: ${z.playerBattlefield.length}`,
       `enemy field: ${z.enemyBattlefield.length}`,
       `max ally ATK: ${maxAtk}`,
+      `--- runtime ---`,
+      `app: v${getBootStatus().appVersion}`,
+      `site OTA: ${getBootStatus().siteOtaVersion}`,
+      `bundle: ${getBootStatus().otaBundleLabel}`,
+      `ota: ${getBootStatus().otaDetail}`,
+      `art PNG: ${getBootStatus().artImageLoaded}/${getBootStatus().artEntryCount}`,
     ].join('\n');
   }
 

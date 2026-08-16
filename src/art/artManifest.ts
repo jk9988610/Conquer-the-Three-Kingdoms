@@ -4,6 +4,7 @@ import {
   getCachedManifestRecord,
   saveCachedAsset,
   saveCachedManifest,
+  clearCachedManifest,
   touchCachedAsset,
   type CachedArtAsset,
 } from './artCache';
@@ -62,6 +63,10 @@ function resolveManifestUrl(explicit?: string): string {
   if (fromEnv) return fromEnv;
   if (isCloudArtConfigured()) return getCardArtManifestUrl();
   return defaultManifestUrl();
+}
+
+export function getResolvedArtManifestUrl(explicit?: string): string {
+  return resolveManifestUrl(explicit);
 }
 
 function manifestHasEntries(manifest: ArtManifestV1 | null): manifest is ArtManifestV1 {
@@ -237,10 +242,14 @@ async function loadManifestForBootstrap(manifestUrl: string): Promise<{
   fromNetwork: boolean;
 }> {
   const cachedRecord = await getCachedManifestRecord();
-  const cached = cachedRecord?.manifest ?? null;
+  let cached = cachedRecord?.manifest ?? null;
+  if (cached && Object.keys(cached.entries).length === 0) {
+    cached = null;
+    await clearCachedManifest();
+  }
 
   try {
-    const res = await fetch(manifestUrl, { cache: 'default' });
+    const res = await fetch(manifestUrl, { cache: 'no-store' });
     if (res.status === 404) {
       return { manifest: cached, fromNetwork: false };
     }
@@ -250,6 +259,11 @@ async function loadManifestForBootstrap(manifestUrl: string): Promise<{
 
     const remote = parseArtManifest(await res.json());
     if (!remote) throw new Error('卡图清单格式无效');
+
+    if (Object.keys(remote.entries).length === 0) {
+      console.warn('[art] 远程清单无卡图条目', manifestUrl);
+      return { manifest: cached, fromNetwork: false };
+    }
 
     if (cached && artManifestMatchesCached(remote, cached)) {
       return { manifest: cached, fromNetwork: false };
@@ -284,6 +298,7 @@ export async function bootstrapCardArt(options: ArtBootstrapOptions = {}): Promi
   }
 
   if (!manifestHasEntries(manifest)) {
+    console.warn('[art] 无可用卡图清单', { primaryUrl, cloudUrl });
     return null;
   }
 

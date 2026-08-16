@@ -92,6 +92,18 @@ export async function saveCachedManifest(manifest: ArtManifestV1): Promise<void>
   await idbPut(STORE_MANIFEST, record, 'current');
 }
 
+export async function clearCachedManifest(): Promise<void> {
+  return openDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_MANIFEST, 'readwrite');
+        const req = tx.objectStore(STORE_MANIFEST).delete('current');
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB 删除失败'));
+      })
+  );
+}
+
 export async function getCachedAsset(artKey: PixelArtKey): Promise<CachedArtAsset | null> {
   return idbGet<CachedArtAsset>(STORE_ASSETS, artKey);
 }

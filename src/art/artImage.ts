@@ -10,6 +10,10 @@ export function hasCustomArtImage(key: PixelArtKey): boolean {
   return customArtImages.has(key);
 }
 
+export function countLoadedCustomArtImages(): number {
+  return customArtImages.size;
+}
+
 export function getCustomArtImage(key: PixelArtKey): HTMLImageElement | undefined {
   return customArtImages.get(key);
 }
