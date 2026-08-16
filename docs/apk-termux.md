@@ -46,17 +46,47 @@ Termux 完整路径示例：
 
 ## 二、APK 在哪、要不要复制、怎么安装
 
+### 平板 Termux 装到本机（最常见）
+
+在 **同一台平板** 的 Termux 里编译时，**不要用 `adb install`**，通常会报：
+
+```text
+adb: no devices/emulators found
+```
+
+本机 Termux 不会自动出现在 `adb devices` 里。请用 **复制到「下载」+ 点安装**：
+
+```bash
+termux-setup-storage   # 首次需要，按提示点「允许」
+
+cp ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.apk \
+   ~/storage/shared/Download/tcg-debug.apk
+```
+
+打开 **文件管理器 → 下载 → tcg-debug.apk** 安装。若提示不允许安装未知应用，给文件管理器或 Termux 开安装权限。
+
+**或用系统安装器直接拉起：**
+
+```bash
+termux-setup-storage
+cp ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.apk \
+   ~/storage/shared/Download/tcg-debug.apk
+
+am start -a android.intent.action.VIEW \
+  -d file:///storage/emulated/0/Download/tcg-debug.apk \
+  -t application/vnd.android.package-archive
+```
+
 ### 要不要手动复制？
 
-| 用途 | 要不要复制 |
-|------|------------|
-| Termux 里用 `adb install` 安装 | **不用复制**，直接用路径安装 |
-| 拷到平板「下载」等目录，用文件管理器点安装 | **需要复制** |
-| 传到别的设备 | 需要复制或 `scp` |
+| 场景 | 做法 |
+|------|------|
+| **平板 Termux → 装到本机** | 复制到 Download，**不用 adb** |
+| **电脑 USB 连平板** | 电脑上 `adb install -r …` |
+| **无线调试**（Android 11+） | `adb pair` + `adb connect` 后再 `adb install` |
+| 传到别的设备 | 复制、`scp` 或网盘 |
 
 ### 确认文件位置
-
-在 APK 目录下（或任意位置用完整路径）：
 
 ```bash
 cd ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug
@@ -64,45 +94,31 @@ realpath app-debug.apk
 ls -lh app-debug.apk
 ```
 
-### 复制到方便找的位置
-
-**复制到 Termux 主目录：**
+### 复制到 Termux 主目录（备份用）
 
 ```bash
 cp app-debug.apk ~/tcg-debug.apk
 ```
 
-**复制到平板「下载」目录（用文件管理器安装）：**
+### 用 adb 安装（电脑或已配对无线调试）
+
+**在电脑** 通过 USB（平板已开 USB 调试）：
 
 ```bash
-mkdir -p /sdcard/Download
-cp app-debug.apk /sdcard/Download/tcg-debug.apk
-```
-
-然后在 **文件管理器 → 下载** 里找到 `tcg-debug.apk` 点击安装。
-
-若 `/sdcard` 不可用，先授权存储再复制：
-
-```bash
-termux-setup-storage   # 按提示在系统里点「允许」
-cp app-debug.apk ~/storage/shared/Download/tcg-debug.apk
-```
-
-### 用 adb 安装（无需复制）
-
-在仓库根目录：
-
-```bash
+adb devices          # 应显示 device
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-若已在 `apk/debug` 目录：
+**无线调试**（开发者选项 → 无线调试 → 配对码）：
 
 ```bash
-adb install -r app-debug.apk
+adb pair 192.168.x.x:xxxxx    # 配对端口 + 配对码
+adb connect 192.168.x.x:xxxxx # 连接端口
+adb devices
+adb install -r ~/Conquer-the-Three-Kingdoms/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-覆盖安装（保留数据）同样用 `-r`。
+覆盖安装（保留数据）用 `-r`。
 
 ---
 
@@ -185,6 +201,10 @@ npm run apk:debug
 ```
 
 elecdog 与征战三国 **共用同一 SDK**，无需重复安装；只需每个仓库各有一份 `local.properties`（该文件不入 git）。
+
+**adb: no devices/emulators found**
+
+在 **平板 Termux 本机** 执行 `adb install` 时出现此报错是正常的：本机不会自动作为 adb 设备出现。请改用上文 **「平板 Termux 装到本机」** 的复制 + 点安装方式；只有电脑 USB 或无线调试配对成功后才用 `adb install`。
 
 **白屏**
 
