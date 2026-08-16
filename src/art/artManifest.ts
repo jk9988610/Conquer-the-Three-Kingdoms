@@ -1,11 +1,13 @@
 import type { PixelArtKey } from '../game/types';
 import {
   getCachedAsset,
-  getCachedManifest,
+  getCachedManifestRecord,
   saveCachedAsset,
   saveCachedManifest,
+  touchCachedAsset,
   type CachedArtAsset,
 } from './artCache';
+import { artManifestMatchesCached } from './artManifestCompare';
 import { applyArtCardMeta, parseArtCardMeta, type ArtCardMetaV1 } from './artMeta';
 import { loadArtImageFromBlob } from './artImage';
 import { PIXEL_ART_KEYS } from './pixelArt';
@@ -40,6 +42,8 @@ export interface ArtBootstrapProgress {
 export interface ArtBootstrapOptions {
   manifestUrl?: string;
   onProgress?: (progress: ArtBootstrapProgress) => void;
+  /** 启动时优先加载的 artKey；其余在 requestIdleCallback 后台加载 */
+  priorityArtKeys?: PixelArtKey[];
 }
 
 /** 未配置 VITE_ART_MANIFEST_URL 时，使用仓库内 public/cards（兼容 GitHub Pages base） */
@@ -129,6 +133,7 @@ async function applyCachedAssetRecord(cached: CachedArtAsset): Promise<void> {
     highlightB64: cached.highlightB64,
     highlightBreathSpeed: cached.highlightBreathSpeed,
   });
+  await touchCachedAsset(cached.artKey);
 }
 
 async function loadArtEntry(
@@ -153,7 +158,7 @@ async function loadArtEntry(
 
   try {
     const pngUrl = joinAssetUrl(baseUrl, entry.png);
-    const res = await fetch(pngUrl, { cache: 'no-cache' });
+    const res = await fetch(pngUrl, { cache: 'default' });
     if (!res.ok) throw new Error(`PNG ${res.status}`);
     const pngBlob = await res.blob();
     await loadArtImageFromBlob(artKey, pngBlob);
@@ -184,10 +189,14 @@ async function loadArtEntry(
 export async function applyArtManifest(
   manifest: ArtManifestV1,
   onProgress?: (progress: ArtBootstrapProgress) => void,
-  options: { preferNetwork?: boolean } = {}
+  options: { preferNetwork?: boolean; keys?: PixelArtKey[] } = {}
 ): Promise<void> {
   const baseUrl = normalizeBaseUrl(manifest.baseUrl);
-  const keys = Object.keys(manifest.entries).filter(isPixelArtKey);
+  const allKeys = Object.keys(manifest.entries).filter(isPixelArtKey);
+  const keys =
+    options.keys && options.keys.length > 0
+      ? options.keys.filter((k) => manifest.entries[k]?.png)
+      : allKeys;
   const total = keys.length;
   let loaded = 0;
   const preferNetwork = options.preferNetwork ?? true;
@@ -209,36 +218,74 @@ export async function applyArtManifest(
   );
 }
 
+async function loadManifestForBootstrap(manifestUrl: string): Promise<{
+  manifest: ArtManifestV1 | null;
+  fromNetwork: boolean;
+}> {
+  const cachedRecord = await getCachedManifestRecord();
+  const cached = cachedRecord?.manifest ?? null;
+
+  try {
+    const res = await fetch(manifestUrl, { cache: 'default' });
+    if (res.status === 404) {
+      return { manifest: cached, fromNetwork: false };
+    }
+    if (!res.ok) {
+      throw new Error(`卡图清单加载失败: ${res.status}`);
+    }
+
+    const remote = parseArtManifest(await res.json());
+    if (!remote) throw new Error('卡图清单格式无效');
+
+    if (cached && artManifestMatchesCached(remote, cached)) {
+      return { manifest: cached, fromNetwork: false };
+    }
+
+    await saveCachedManifest(remote);
+    return { manifest: remote, fromNetwork: true };
+  } catch (err) {
+    console.warn('[art] 远程清单不可用，尝试本地缓存', err);
+    return { manifest: cached, fromNetwork: false };
+  }
+}
+
+function scheduleIdleTask(task: () => void): void {
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => task(), { timeout: 8000 });
+  } else {
+    window.setTimeout(task, 120);
+  }
+}
+
 export async function bootstrapCardArt(options: ArtBootstrapOptions = {}): Promise<ArtManifestV1 | null> {
   const manifestUrl =
     options.manifestUrl ?? import.meta.env.VITE_ART_MANIFEST_URL ?? defaultManifestUrl();
 
-  let manifest: ArtManifestV1 | null = null;
-  let fromNetwork = false;
-
-  try {
-    const res = await fetch(manifestUrl, { cache: 'no-cache' });
-    if (res.ok) {
-      manifest = parseArtManifest(await res.json());
-      if (!manifest) throw new Error('卡图清单格式无效');
-      fromNetwork = true;
-      await saveCachedManifest(manifest);
-    } else if (res.status !== 404) {
-      throw new Error(`卡图清单加载失败: ${res.status}`);
-    }
-  } catch (err) {
-    console.warn('[art] 远程清单不可用，尝试本地缓存', err);
-  }
-
-  if (!manifest) {
-    manifest = await getCachedManifest();
-  }
+  const { manifest, fromNetwork } = await loadManifestForBootstrap(manifestUrl);
 
   if (!manifest || Object.keys(manifest.entries).length === 0) {
     return null;
   }
 
-  await applyArtManifest(manifest, options.onProgress, { preferNetwork: fromNetwork });
+  const allKeys = Object.keys(manifest.entries).filter(isPixelArtKey);
+  const priority = (options.priorityArtKeys ?? []).filter((k) => allKeys.includes(k));
+  const deferred = priority.length > 0 ? allKeys.filter((k) => !priority.includes(k)) : [];
+  const blockingKeys = priority.length > 0 ? priority : allKeys;
+
+  await applyArtManifest(manifest, options.onProgress, {
+    preferNetwork: fromNetwork,
+    keys: blockingKeys,
+  });
+
+  if (deferred.length > 0) {
+    scheduleIdleTask(() => {
+      void applyArtManifest(manifest, options.onProgress, {
+        preferNetwork: fromNetwork,
+        keys: deferred,
+      });
+    });
+  }
+
   return manifest;
 }
 
